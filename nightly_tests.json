@@ -1,0 +1,11 @@
+{
+  "enabled": true,
+  "schedule": "0 3 * * *",
+  "timezone": "local",
+  "command": "npm",
+  "args": ["test"],
+  "timeoutMinutes": 10,
+  "resultsDir": ".featureboard/nightly",
+  "keepRuns": 30,
+  "notifyOnFailureOnly": true
+}

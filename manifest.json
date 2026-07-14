@@ -1,0 +1,215 @@
+{
+  "manifest_version": "0.2",
+  "name": "featureboard",
+  "display_name": "FeatureBoard",
+  "version": "0.3.1",
+  "description": "A local, file-backed feature/bug board for agentic projects. Claude reads and writes your featurelist.md / buglist.md boards directly.",
+  "long_description": "FeatureBoard turns your project's markdown task files into a first-class board that Claude can manage. It keeps the same `featurelist.md` / `buglist.md` format used by the original FeatureBoard app, with FBF-/FBB- ticket IDs, statuses (Todo / In Progress / Done), due dates, products, labels, linked issues and completion summaries. Because Claude is now the agent, workflow tools like brainstorm (bulk-add) and decompose fit naturally: Claude generates the ideas, the board persists them. Read-only analytics summarize velocity and open/closed counts.",
+  "author": {
+    "name": "Lewis Valentine"
+  },
+  "license": "SEE LICENSE IN LICENSE.md",
+  "icon": "icon.png",
+  "server": {
+    "type": "node",
+    "entry_point": "server/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": [
+        "${__dirname}/server/index.js"
+      ],
+      "env": {
+        "FEATUREBOARD_DATA_DIR": "${user_config.data_dir}"
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "list_projects",
+      "description": "List all boards (projects) under the configured boards folder."
+    },
+    {
+      "name": "create_project",
+      "description": "Create a new board folder with empty featurelist.md and buglist.md. Returns the derived ticket prefix."
+    },
+    {
+      "name": "list_tasks",
+      "description": "List features and/or bugs on a board, most-recent first. Filter by type, status, product, label, or search. Returns a compact one-line-per-ticket view by default and is paginated (limit/offset) so large boards don't blow the context budget — set compact:false for full details, and raise limit or page with offset to see more. Use get_metrics for a pure overview."
+    },
+    {
+      "name": "get_task",
+      "description": "Get the full details of a single task by its ticket ID (e.g. FBF-12)."
+    },
+    {
+      "name": "add_feature",
+      "description": "Add a feature to a board's featurelist.md. Returns the new ticket (FBF-###)."
+    },
+    {
+      "name": "log_bug",
+      "description": "Log a bug to a board's buglist.md. Returns the new ticket (FBB-###)."
+    },
+    {
+      "name": "add_features_bulk",
+      "description": "Add several features at once. Use this after brainstorming: you generate the ideas, this persists them. Returns the created tickets."
+    },
+    {
+      "name": "import_tasks",
+      "description": "Import a backlog from raw text into a board. Accepts a markdown checklist (- [ ] Title: desc), CSV (with a header row: title, description, product, priority, type, due, labels, status), or a JSON array/object ({features:[…], bugs:[…]} or a flat array). Format is auto-detected. Set dryRun to preview the parsed tasks without writing them."
+    },
+    {
+      "name": "plan_work",
+      "description": "Turn a user request into board items in one step. Optionally creates the project, then adds the features and bugs you list. Use this as the FIRST step when starting a substantive request, then work the tickets one at a time. Returns all created tickets."
+    },
+    {
+      "name": "next_task",
+      "description": "Return the next open ticket to work (status Todo or In Progress), so you can pull work one item at a time. Prefers In Progress, then earliest due date, then oldest ticket. Returns null when the board is clear."
+    },
+    {
+      "name": "update_task",
+      "description": "Update fields on an existing task. Only provided fields change."
+    },
+    {
+      "name": "set_status",
+      "description": "Move a task between Todo / In Progress / Done. When moving to Done you can also record structured completion metadata (model, tokens, additions, deletions) — these are written to the work log and roll up into velocity/metrics."
+    },
+    {
+      "name": "decompose_feature",
+      "description": "Replace one feature with a set of linked subtasks. You provide the subtasks; this creates them (each linked to the parent) and deletes the parent. Returns the new tickets."
+    },
+    {
+      "name": "link_tasks",
+      "description": "Set the linked issue on a task (e.g. link a bug to the feature it affects)."
+    },
+    {
+      "name": "add_attachment",
+      "description": "Attach a file path or URL to a ticket (stored as [Attachments: ...] on the ticket line). Idempotent: attaching the same item twice is a no-op."
+    },
+    {
+      "name": "remove_attachment",
+      "description": "Detach a previously attached file path or URL from a ticket."
+    },
+    {
+      "name": "delete_task",
+      "description": "Permanently remove a task from its board."
+    },
+    {
+      "name": "get_metrics",
+      "description": "Read-only snapshot: feature/bug counts by status, completions by date, and velocity from the work log (tokens, additions/deletions, active days, recent tokens)."
+    },
+    {
+      "name": "get_project_config",
+      "description": "Read a board's settings: products, code location, agent model, prefixes, website, description. Merges MCP-managed config over the legacy project_config.json."
+    },
+    {
+      "name": "set_project_config",
+      "description": "Update a board's settings (only provided fields change). Writes to the MCP-managed config; never mutates legacy project_config.json."
+    },
+    {
+      "name": "add_product",
+      "description": "Add a product to a board's product list (used for tagging tickets via [Product: …])."
+    },
+    {
+      "name": "remove_product",
+      "description": "Remove a product from a board's product list (existing ticket tags are left as-is)."
+    },
+    {
+      "name": "get_scratchpad",
+      "description": "Read a board's freeform scratchpad.md - a per-project notes surface for context, decisions, and reminders that Claude and the board share. Returns the raw markdown."
+    },
+    {
+      "name": "set_scratchpad",
+      "description": "Overwrite a board's scratchpad.md with new content. Use append_scratchpad to add a note without replacing existing content."
+    },
+    {
+      "name": "append_scratchpad",
+      "description": "Append a line or block to a board's scratchpad.md, preserving existing notes. Mention a ticket id (e.g. FBF-12) to have it surface in that ticket's work packet."
+    },
+    {
+      "name": "log_work",
+      "description": "Append a work event to the board's work log: a summary plus optional tokens, additions/deletions, and model, tied to a ticket. Feeds velocity and health."
+    },
+    {
+      "name": "get_work_log",
+      "description": "Read work-log entries, most-recent first. Optionally filter to one ticket. Returns entries plus a velocity rollup."
+    },
+    {
+      "name": "get_health",
+      "description": "Composite 0-100 health score with grade and breakdown: bug pressure, feature progress, momentum (recent tokens), and freshness (staleness of open work)."
+    },
+    {
+      "name": "get_work_packet",
+      "description": "Assemble a focused brief for one ticket before you work it: scope, linked-issue details, code location + custom project prompt, scratchpad mentions, the ticket's recent work log, files to read, and a definition of done. Read the files it points to rather than dumping them."
+    },
+    {
+      "name": "suggest_test_stub",
+      "description": "Generate a boilerplate test file (path + node:test content) for a ticket, derived from its title/description and the board's code location. Agent-native 'fixtest': call it when creating or starting a ticket, then write the returned file. Read-only — it returns the stub, it does not create the file."
+    },
+    {
+      "name": "bug_impact_scan",
+      "description": "Given a bug (by ticket, or an ad-hoc title/description), rank the existing features most likely affected, by keyword overlap and shared product. Use it when logging a bug to spot regressions and linkage candidates."
+    },
+    {
+      "name": "log_test_run",
+      "description": "Record a test run's result (passed/failed/skipped, optional suite + ticket + summary) to the board's test_runs.md. You run the tests (e.g. via the shell); this stores the report so the board can surface pass/fail over time."
+    },
+    {
+      "name": "get_test_runs",
+      "description": "Read recorded test runs (most-recent first) plus a summary: total runs, latest result, and whether the latest is passing."
+    },
+    {
+      "name": "get_regressions",
+      "description": "Regression view: bugs grouped under the feature they're linked to (sorted by open-bug count), plus unlinked bugs. Surfaces which shipped features are at risk. Link bugs to features (link_tasks) to populate it."
+    },
+    {
+      "name": "license_status",
+      "description": "Report the current licensing state: usage tier, whether writes are allowed, and (for a commercial trial) time remaining. Call this if a write was blocked, or during onboarding."
+    }
+  ],
+  "prompts": [
+    {
+      "name": "project_from_chat",
+      "description": "Turn the current conversation into a FeatureBoard project (features + bugs).",
+      "arguments": [
+        "name"
+      ],
+      "text": "Turn our conversation so far into a FeatureBoard project. If a name is given use it, otherwise propose one. Extract features (new work) and bugs (issues raised) and call plan_work once with createProject:true to persist them, then show the created tickets grouped by feature/bug."
+    },
+    {
+      "name": "process_next",
+      "description": "Pull the top ticket off the priority queue and work it end-to-end with the work-packet loop.",
+      "arguments": [
+        "project",
+        "continuous"
+      ],
+      "text": "Work the FeatureBoard queue using the work-packet loop: call next_task for the top open ticket, set it In Progress, call get_work_packet and read the files it points to, do and verify the work (dispatch substantial tickets to a fresh sub-agent), then set_status Done with a completionSummary and log_work. Repeat until the queue is clear if continuous is 'yes'."
+    }
+  ],
+  "tools_generated": false,
+  "keywords": [
+    "kanban",
+    "tasks",
+    "features",
+    "bugs",
+    "project-management",
+    "board",
+    "markdown"
+  ],
+  "user_config": {
+    "data_dir": {
+      "type": "directory",
+      "title": "Boards folder",
+      "description": "Folder that holds your project boards. Each subfolder with a featurelist.md or buglist.md is treated as a board. Existing FeatureBoard 'projectpads' work as-is.",
+      "required": true
+    }
+  },
+  "compatibility": {
+    "claude_desktop": ">=0.10.0",
+    "platforms": [
+      "darwin",
+      "win32"
+    ],
+    "runtimes": {
+      "node": ">=18.0.0"
+    }
+  }
+}

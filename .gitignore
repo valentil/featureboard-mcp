@@ -1,0 +1,8 @@
+node_modules/
+*.mcpb
+.featureboard/
+*.tmp-*
+
+# NEVER commit the licensing private key
+owner/keys/
+owner/keys/private.pem

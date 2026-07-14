@@ -1,0 +1,511 @@
+/**
+ * FeatureBoard v0.3 metadata: project config, work log + velocity, health score.
+ *
+ * All functions take a Board instance (from storage.js) and a project name, and
+ * work against the project's folder on disk:
+ *   - <project>/agent_work_log.md   work events (tokens, additions/deletions per ticket)
+ *   - <project>/project_config.json legacy config (read-only merge source)
+ *   - <project>/.featureboard.config.json  MCP-managed config (products, settings)
+ *
+ * The work-log line format matches the original app so its analyzers still work:
+ *   YYYY-MM-DD HH:MM:SS, <summary>, Task: FBF-1, Add: 2, Del: 0, tokens: 45000, inputTokens: 40000, outputTokens: 5000
+ * grouped under "## [YYYY-MM-DD]" date headers.
+ */
+
+import fs from "node:fs";
+import path from "node:path";
+
+const WORK_LOG = "agent_work_log.md";
+const LEGACY_CONFIG = "project_config.json";
+const MANAGED_CONFIG = ".featureboard.config.json";
+
+function readFileSafe(p) {
+  try {
+    return fs.readFileSync(p, "utf8");
+  } catch {
+    return null;
+  }
+}
+function atomicWrite(p, content) {
+  const tmp = `${p}.tmp-${process.pid}-${Date.now()}`;
+  fs.writeFileSync(tmp, content, "utf8");
+  fs.renameSync(tmp, p);
+}
+
+// ---------------------------------------------------------------------------
+// Project config
+// ---------------------------------------------------------------------------
+
+const CONFIG_KEYS = ["products", "codeLocation", "agentModel", "description", "website", "featurePrefix", "bugPrefix", "customPrompt", "brandTitle", "brandSubtitle"];
+
+/** Merged view: managed config overlaid on legacy project_config.json. */
+export function getProjectConfig(board, project) {
+  const dir = board.projectDir(project);
+  let legacy = {};
+  const lc = readFileSafe(path.join(dir, LEGACY_CONFIG));
+  if (lc) {
+    try {
+      const j = JSON.parse(lc);
+      legacy = {
+        products: Array.isArray(j.products) ? j.products : [],
+        codeLocation: j.codeLocation || null,
+        agentModel: j.agentModel || null,
+        website: j.website || null,
+        featurePrefix: j.featurePrefix || null,
+        bugPrefix: j.bugPrefix || null,
+        customPrompt: j.customPrompt || null,
+      };
+    } catch {}
+  }
+  let managed = {};
+  const mc = readFileSafe(path.join(dir, MANAGED_CONFIG));
+  if (mc) {
+    try {
+      managed = JSON.parse(mc);
+    } catch {}
+  }
+  const merged = { project };
+  for (const k of CONFIG_KEYS) {
+    if (managed[k] !== undefined) merged[k] = managed[k];
+    else if (legacy[k] !== undefined && legacy[k] !== null) merged[k] = legacy[k];
+  }
+  merged.products = merged.products || [];
+  return merged;
+}
+
+/** Write patch to the managed config (never touches legacy project_config.json). */
+export function setProjectConfig(board, project, patch) {
+  const dir = board.projectDir(project);
+  const p = path.join(dir, MANAGED_CONFIG);
+  let managed = {};
+  const mc = readFileSafe(p);
+  if (mc) {
+    try {
+      managed = JSON.parse(mc);
+    } catch {}
+  }
+  for (const k of CONFIG_KEYS) {
+    if (patch[k] !== undefined) managed[k] = patch[k];
+  }
+  managed.updatedAt = new Date().toISOString();
+  atomicWrite(p, JSON.stringify(managed, null, 2));
+  return getProjectConfig(board, project);
+}
+
+export function addProduct(board, project, name) {
+  const cfg = getProjectConfig(board, project);
+  const products = cfg.products.slice();
+  if (!products.some((p) => p.toLowerCase() === name.toLowerCase())) products.push(name);
+  return setProjectConfig(board, project, { products });
+}
+export function removeProduct(board, project, name) {
+  const cfg = getProjectConfig(board, project);
+  const products = cfg.products.filter((p) => p.toLowerCase() !== name.toLowerCase());
+  return setProjectConfig(board, project, { products });
+}
+
+// ---------------------------------------------------------------------------
+// Scratchpad - freeform per-project notes (scratchpad.md)
+// ---------------------------------------------------------------------------
+
+const SCRATCHPAD = "scratchpad.md";
+
+/** Read a project's scratchpad.md (empty string if none yet). */
+export function getScratchpad(board, project) {
+  const content = readFileSafe(path.join(board.projectDir(project), SCRATCHPAD)) || "";
+  return { project, content, exists: content !== "", bytes: Buffer.byteLength(content, "utf8") };
+}
+
+/** Overwrite the scratchpad with new content (atomic). */
+export function setScratchpad(board, project, content) {
+  const body = content == null ? "" : String(content);
+  atomicWrite(path.join(board.projectDir(project), SCRATCHPAD), body);
+  return { project, content: body, bytes: Buffer.byteLength(body, "utf8") };
+}
+
+/** Append a line/block to the scratchpad, keeping existing content. */
+export function appendScratchpad(board, project, text) {
+  const p = path.join(board.projectDir(project), SCRATCHPAD);
+  const existing = readFileSafe(p) || "";
+  const addition = String(text || "").trim();
+  const body = existing.trim()
+    ? existing.replace(/\s*$/, "") + "\n" + addition + "\n"
+    : addition + "\n";
+  atomicWrite(p, body);
+  return { project, content: body, bytes: Buffer.byteLength(body, "utf8") };
+}
+
+// ---------------------------------------------------------------------------
+// Work log
+// ---------------------------------------------------------------------------
+
+function pad(n) {
+  return String(n).padStart(2, "0");
+}
+function stamp(d = new Date()) {
+  return {
+    date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
+    time: `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`,
+  };
+}
+
+/** Append a work-log entry in the legacy-compatible format. */
+export function logWork(board, project, e) {
+  const dir = board.projectDir(project);
+  const p = path.join(dir, WORK_LOG);
+  let content = readFileSafe(p) || "";
+  const { date, time } = stamp();
+  const parts = [`${date} ${time}`, (e.summary || "").replace(/\s+/g, " ").trim()];
+  if (e.ticket) parts.push(`Task: ${e.ticket}`);
+  if (e.additions != null) parts.push(`Add: ${e.additions}`);
+  if (e.deletions != null) parts.push(`Del: ${e.deletions}`);
+  if (e.tokens != null) parts.push(`tokens: ${e.tokens}`);
+  if (e.inputTokens != null) parts.push(`inputTokens: ${e.inputTokens}`);
+  if (e.outputTokens != null) parts.push(`outputTokens: ${e.outputTokens}`);
+  if (e.model) parts.push(`model: ${e.model}`);
+  const line = parts.join(", ");
+
+  // group under a "## [date]" header; add one if the file's latest header differs
+  const header = `## [${date}]`;
+  let out;
+  if (!content.trim()) out = `${header}\n${line}\n`;
+  else if (content.includes(header)) out = content.replace(/\s*$/, "") + `\n${line}\n`;
+  else out = content.replace(/\s*$/, "") + `\n\n${header}\n${line}\n`;
+  atomicWrite(p, out);
+  return { date, time, line, ...e };
+}
+
+/** Parse the work log into structured entries. */
+export function parseWorkLog(content) {
+  const entries = [];
+  if (!content) return entries;
+  for (const raw of content.split(/\r?\n/)) {
+    const line = raw.trim();
+    const dm = line.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}),?\s*(.*)$/);
+    if (!dm) continue;
+    const rest = dm[3];
+    const num = (re) => {
+      const m = rest.match(re);
+      return m ? parseInt(m[1], 10) : null;
+    };
+    const ticketM = rest.match(/Task:\s*([A-Z][A-Z0-9]*-\d+)/);
+    const modelM = rest.match(/model:\s*([^,]+)/i);
+    entries.push({
+      date: dm[1],
+      time: dm[2],
+      ticket: ticketM ? ticketM[1] : null,
+      tokens: num(/(?:^|[,\s])tokens:\s*(\d+)/),
+      inputTokens: num(/inputTokens:\s*(\d+)/),
+      outputTokens: num(/outputTokens:\s*(\d+)/),
+      additions: num(/(?:Add|additions):\s*(\d+)/i),
+      deletions: num(/(?:Del|deletions):\s*(\d+)/i),
+      model: modelM ? modelM[1].trim() : null,
+      text: rest.replace(/,?\s*(Task:|Add:|Del:|additions:|deletions:|tokens:|inputTokens:|outputTokens:|model:).*$/i, "").trim(),
+    });
+  }
+  return entries;
+}
+
+export function readWorkLog(board, project) {
+  return parseWorkLog(readFileSafe(path.join(board.projectDir(project), WORK_LOG)));
+}
+
+/** Aggregate velocity from work-log entries. */
+export function velocity(entries) {
+  const byDate = {};
+  const byTicket = {};
+  let tokens = 0, additions = 0, deletions = 0, events = entries.length;
+  for (const e of entries) {
+    tokens += e.tokens || 0;
+    additions += e.additions || 0;
+    deletions += e.deletions || 0;
+    const d = (byDate[e.date] = byDate[e.date] || { tokens: 0, additions: 0, deletions: 0, events: 0 });
+    d.tokens += e.tokens || 0;
+    d.additions += e.additions || 0;
+    d.deletions += e.deletions || 0;
+    d.events += 1;
+    if (e.ticket) {
+      const t = (byTicket[e.ticket] = byTicket[e.ticket] || { tokens: 0, additions: 0, deletions: 0, events: 0, model: null });
+      t.tokens += e.tokens || 0;
+      t.additions += e.additions || 0;
+      t.deletions += e.deletions || 0;
+      t.events += 1;
+      if (e.model) t.model = e.model;
+    }
+  }
+  const dates = Object.keys(byDate).sort();
+  const recent = (days) => {
+    const cut = Date.now() - days * 86400000;
+    return dates.filter((d) => Date.parse(d) >= cut).reduce((s, d) => s + byDate[d].tokens, 0);
+  };
+  return {
+    totals: { tokens, additions, deletions, events, activeDays: dates.length },
+    tokensLast7Days: recent(7),
+    tokensLast30Days: recent(30),
+    byDate,
+    byTicket,
+  };
+}
+
+/** Metrics for a single ticket, from the work log. */
+export function ticketMetrics(board, project, ticket) {
+  const v = velocity(readWorkLog(board, project).filter((e) => e.ticket === ticket));
+  const t = v.byTicket[ticket];
+  return t || null;
+}
+
+// ---------------------------------------------------------------------------
+// Testing center (FBMCPF-34) — record & read test runs
+// ---------------------------------------------------------------------------
+
+const TEST_LOG = "test_runs.md";
+
+/** Append a structured test-run entry to <project>/test_runs.md. */
+export function logTestRun(board, project, e) {
+  const p = path.join(board.projectDir(project), TEST_LOG);
+  const content = readFileSafe(p) || "# Test Runs\n";
+  const { date, time } = stamp();
+  const parts = [`${date} ${time}`, `passed: ${e.passed || 0}`, `failed: ${e.failed || 0}`];
+  if (e.skipped != null) parts.push(`skipped: ${e.skipped}`);
+  if (e.suite) parts.push(`suite: ${String(e.suite).replace(/,/g, " ")}`);
+  if (e.ticket) parts.push(`Task: ${e.ticket}`);
+  if (e.summary) parts.push((e.summary || "").replace(/\s+/g, " ").trim());
+  const line = parts.join(", ");
+  atomicWrite(p, content.replace(/\s*$/, "") + "\n" + line + "\n");
+  return { date, time, line, ...e };
+}
+
+/** Parse test_runs.md into structured entries (most-recent last on disk). */
+export function readTestRuns(board, project) {
+  const content = readFileSafe(path.join(board.projectDir(project), TEST_LOG));
+  const out = [];
+  if (!content) return out;
+  for (const raw of content.split(/\r?\n/)) {
+    const m = raw.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}),\s*(.*)$/);
+    if (!m) continue;
+    const rest = m[3];
+    const num = (re) => { const x = rest.match(re); return x ? parseInt(x[1], 10) : null; };
+    const suiteM = rest.match(/suite:\s*([^,]+)/);
+    const ticketM = rest.match(/Task:\s*([A-Z][A-Z0-9]*-\d+)/);
+    out.push({
+      date: m[1], time: m[2],
+      passed: num(/passed:\s*(\d+)/), failed: num(/failed:\s*(\d+)/), skipped: num(/skipped:\s*(\d+)/),
+      suite: suiteM ? suiteM[1].trim() : null,
+      ticket: ticketM ? ticketM[1] : null,
+      text: rest,
+    });
+  }
+  return out;
+}
+
+/** Summarize the latest test run + pass-rate trend. */
+export function testSummary(board, project) {
+  const runs = readTestRuns(board, project);
+  if (!runs.length) return { runs: 0, latest: null, totalPassed: 0, totalFailed: 0 };
+  const latest = runs[runs.length - 1];
+  const totalPassed = runs.reduce((s, r) => s + (r.passed || 0), 0);
+  const totalFailed = runs.reduce((s, r) => s + (r.failed || 0), 0);
+  return { runs: runs.length, latest, totalPassed, totalFailed, passing: (latest.failed || 0) === 0 };
+}
+
+// ---------------------------------------------------------------------------
+// Health score
+// ---------------------------------------------------------------------------
+
+/** Composite 0-100 health score with a breakdown. */
+export function computeHealth(board, project) {
+  const features = board.listTasks(project, { type: "feature" });
+  const bugs = board.listTasks(project, { type: "bug" });
+  const openBugs = bugs.filter((t) => t.status !== "Done").length;
+  const openFeatures = features.filter((t) => t.status !== "Done").length;
+  const doneFeatures = features.filter((t) => t.status === "Done").length;
+  const v = velocity(readWorkLog(board, project));
+
+  // 1. Bug pressure: open bugs relative to total open work (fewer is better)
+  const openTotal = openBugs + openFeatures;
+  const bugRatio = openTotal ? openBugs / openTotal : 0;
+  const bugScore = Math.round((1 - bugRatio) * 100);
+
+  // 2. Progress: completed features vs all features
+  const totalF = features.length || 1;
+  const progressScore = Math.round((doneFeatures / totalF) * 100);
+
+  // 3. Momentum: any token activity in the last 7 days
+  const momentumScore = v.tokensLast7Days > 0 ? 100 : v.tokensLast30Days > 0 ? 60 : 20;
+
+  // 4. Staleness: age of the oldest open ticket (younger is better)
+  const openDates = [...features, ...bugs]
+    .filter((t) => t.status !== "Done" && t.createdDate)
+    .map((t) => Date.parse(t.createdDate))
+    .filter((n) => !isNaN(n));
+  let stalenessScore = 100;
+  if (openDates.length) {
+    const oldestDays = (Date.now() - Math.min(...openDates)) / 86400000;
+    stalenessScore = Math.max(0, Math.round(100 - Math.min(oldestDays, 180) / 1.8));
+  }
+
+  const weights = { bugScore: 0.3, progressScore: 0.25, momentumScore: 0.25, stalenessScore: 0.2 };
+  const score = Math.round(
+    bugScore * weights.bugScore +
+      progressScore * weights.progressScore +
+      momentumScore * weights.momentumScore +
+      stalenessScore * weights.stalenessScore
+  );
+  const grade = score >= 85 ? "A" : score >= 70 ? "B" : score >= 55 ? "C" : score >= 40 ? "D" : "F";
+
+  return {
+    project,
+    score,
+    grade,
+    breakdown: {
+      bugPressure: { score: bugScore, openBugs, openFeatures },
+      progress: { score: progressScore, doneFeatures, totalFeatures: features.length },
+      momentum: { score: momentumScore, tokensLast7Days: v.tokensLast7Days, tokensLast30Days: v.tokensLast30Days },
+      freshness: { score: stalenessScore },
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Agent monitor (FBMCPF-18) — surface currently-running (In Progress) work
+// ---------------------------------------------------------------------------
+
+/**
+ * Pure core: given the In Progress tickets and the parsed work log, describe
+ * each active ticket's latest activity, cumulative work, idle time, and whether
+ * it looks stalled (In Progress but no recent progress). The original app
+ * streamed `currentlyRunningTasks` over SSE; here the board's own state (status
+ * + work log) is the source of truth, so this is a pull snapshot.
+ */
+export function computeActiveWork({ inProgress = [], log = [], asOf, stallHours = 24 } = {}) {
+  const now = asOf ? new Date(asOf) : new Date();
+  const active = inProgress.map((t) => {
+    const entries = log.filter((e) => e.ticket === t.ticketNumber);
+    const last = entries.length ? entries[entries.length - 1] : null; // log is oldest-first
+    const work = entries.reduce(
+      (a, e) => ({
+        tokens: a.tokens + (e.tokens || 0),
+        additions: a.additions + (e.additions || 0),
+        deletions: a.deletions + (e.deletions || 0),
+        events: a.events + 1,
+      }),
+      { tokens: 0, additions: 0, deletions: 0, events: 0 }
+    );
+    let idleHours = null;
+    let stalled = true; // no activity yet => stalled until proven otherwise
+    let lastActivity = null;
+    if (last) {
+      lastActivity = { date: last.date, time: last.time, summary: last.text, model: last.model };
+      const ts = Date.parse(`${last.date}T${last.time}`);
+      if (!isNaN(ts)) {
+        idleHours = Math.round(((now - ts) / 3600000) * 10) / 10;
+        stalled = idleHours > stallHours;
+      } else {
+        stalled = false;
+      }
+    }
+    return {
+      ticket: t.ticketNumber,
+      title: t.title,
+      product: t.product || null,
+      priority: t.priority != null ? t.priority : null,
+      dueDate: t.dueDate || null,
+      lastActivity,
+      idleHours,
+      stalled,
+      work,
+    };
+  });
+  // most recently active first; never-touched / stalest sink to the bottom
+  active.sort((a, b) => (a.idleHours == null ? Infinity : a.idleHours) - (b.idleHours == null ? Infinity : b.idleHours));
+  return {
+    project: null,
+    asOf: now.toISOString(),
+    activeCount: active.length,
+    stalledCount: active.filter((a) => a.stalled).length,
+    active,
+  };
+}
+
+/** Board wrapper: monitor a project's currently-running (In Progress) tickets. */
+export function agentMonitor(board, project, opts = {}) {
+  const inProgress = board.listTasks(project, {}).filter((t) => t.status === "In Progress");
+  const log = readWorkLog(board, project);
+  const result = computeActiveWork({
+    inProgress,
+    log,
+    asOf: opts.asOf,
+    stallHours: opts.stallHours != null ? opts.stallHours : 24,
+  });
+  return { ...result, project };
+}
+
+// ---------------------------------------------------------------------------
+// Work packet — a focused per-ticket brief for processing one ticket
+// ---------------------------------------------------------------------------
+
+const PATH_RE = /[A-Za-z]:\\[\\\w.\-]+|\/[\w./\-]+\.\w{1,5}/g;
+
+export function getWorkPacket(board, project, ticket) {
+  const task = board.getTask(project, ticket);
+  if (!task) throw new Error(`Ticket ${ticket} not found in "${project}".`);
+  const cfg = getProjectConfig(board, project);
+
+  const linkedTask = task.linkedIssue ? board.getTask(project, task.linkedIssue) : null;
+  const linked = linkedTask
+    ? {
+        ticket: linkedTask.ticketNumber,
+        title: linkedTask.title,
+        status: linkedTask.status,
+        description: linkedTask.description,
+        completionSummary: linkedTask.completionSummary,
+      }
+    : task.linkedIssue || null;
+
+  const scratch = readFileSafe(path.join(board.projectDir(project), "scratchpad.md"));
+  const scratchpadMentions = scratch
+    ? scratch.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && l.toLowerCase().includes(ticket.toLowerCase()))
+    : [];
+
+  const recentWork = readWorkLog(board, project).filter((e) => e.ticket === ticket).slice(-10);
+
+  const mentioned = new Set();
+  const scan = (s) => { (String(s || "").match(PATH_RE) || []).forEach((p) => mentioned.add(p)); };
+  scan(task.description);
+  recentWork.forEach((e) => scan(e.text));
+  const filesToRead = [cfg.codeLocation, ...mentioned].filter(Boolean);
+
+  const definitionOfDone =
+    task.type === "bug"
+      ? ["Reproduce the issue", "Fix the root cause (edit at the code location, not projectpads)", "Verify the fix", "Add or adjust a test that would have caught it", "Record the fix in the completion summary"]
+      : ["Implement the described behaviour", "Verify it works end to end", "Add or adjust a test", "Update docs if user-facing", "Summarize what was built"];
+
+  return {
+    ticket: task.ticketNumber,
+    type: task.type,
+    status: task.status,
+    title: task.title,
+    description: task.description,
+    product: task.product,
+    labels: task.labels,
+    priority: task.priority,
+    dueDate: task.dueDate,
+    ref: task.ref,
+    newFile: task.newFile,
+    website: task.website,
+    linked,
+    project: {
+      name: project,
+      codeLocation: cfg.codeLocation || null,
+      customPrompt: cfg.customPrompt || null,
+      agentModel: cfg.agentModel || null,
+      website: cfg.website || null,
+    },
+    filesToRead,
+    scratchpadMentions,
+    recentWork,
+    definitionOfDone,
+    closeOut:
+      "When done: set_status Done with a one-line completionSummary, then log_work with additions/deletions (and model). Only the orchestrator writes to the board; work one ticket at a time.",
+  };
+}

@@ -1,0 +1,954 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FeatureBoard</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #f6f7f9; color: #1c2333;
+    font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 12px 16px; background: #fff; border-bottom: 1px solid #e5e8ee;
+    position: sticky; top: 0; z-index: 5;
+  }
+  h1 { font-size: 17px; margin: 0; font-weight: 800; letter-spacing: -.02em; white-space: nowrap; }
+  h1 small { font-weight: 500; color: #8a63d2; font-style: italic; font-family: "Segoe Script", "Snell Roundhand", "Brush Script MT", cursive; font-size: 14px; margin-left: 2px; }
+  select, button, input {
+    font: inherit; border-radius: 8px; border: 1px solid #d3d8e2; background: #fff;
+    padding: 6px 10px; color: inherit;
+  }
+  button { cursor: pointer; }
+  button.primary { background: #4b5bdc; color: #fff; border-color: #4b5bdc; }
+  button.ghost { background: #f0f2f7; border-color: transparent; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .spacer { flex: 1; }
+  .metrics { display: flex; gap: 14px; color: #59617a; font-size: 12px; }
+  .metrics b { color: #1c2333; font-size: 13px; }
+  .seg { display: inline-flex; border: 1px solid #d3d8e2; border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; background: #fff; padding: 6px 10px; }
+  .seg button.on { background: #4b5bdc; color: #fff; }
+  .badge { padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+  .badge.free { background: #e5f5ec; color: #1a7d47; }
+  .badge.trial { background: #fff4e0; color: #a15c00; }
+  .badge.frozen { background: #fde8e8; color: #b3261e; }
+  .badge.lic { background: #e8ecfd; color: #384bcc; }
+  .badge.h-A { background: #e5f5ec; color: #1a7d47; }
+  .badge.h-B { background: #eaf6e9; color: #3d8b40; }
+  .badge.h-C { background: #fff4e0; color: #a15c00; }
+  .badge.h-D { background: #fdecdf; color: #b3591e; }
+  .badge.h-F { background: #fde8e8; color: #b3261e; }
+
+  .banner {
+    margin: 12px 16px 0; padding: 10px 14px; border-radius: 10px;
+    background: #fff7ec; border: 1px solid #f2d9a8; color: #7a5310;
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  }
+  .banner.stop { background: #fdecec; border-color: #f2b8b4; color: #8a231c; }
+
+  .board { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding: 16px; }
+  .col { background: #eef0f5; border-radius: 12px; padding: 10px; min-height: 120px; }
+  .col h2 {
+    font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: #6a7288;
+    margin: 4px 6px 10px; display: flex; justify-content: space-between;
+  }
+  .card {
+    background: #fff; border: 1px solid #e6e9f0; border-radius: 10px; padding: 10px;
+    margin-bottom: 8px; box-shadow: 0 1px 2px rgba(20,30,60,.04);
+  }
+  .card .top { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+  .tk { font-size: 11px; font-weight: 700; padding: 2px 6px; border-radius: 6px; }
+  .tk.feature { background: #e8ecfd; color: #384bcc; }
+  .tk.bug { background: #fde8e8; color: #b3261e; }
+  .title { font-weight: 600; margin: 2px 0 6px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+  .chip { font-size: 11px; padding: 2px 7px; border-radius: 999px; background: #eef0f5; color: #59617a; }
+  .chip.due { background: #eaf3ff; color: #2b6cb0; }
+  .chip.ref { background: #f3ecff; color: #7c3aed; }
+  .chip.prod { background: #edf7ee; color: #2f7d43; }
+  .chip.att { background: #eef1fb; color: #4b5bdc; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  html[data-theme="dark"] .chip.att { background: #2b2d3a; color: #b7bdf0; }
+  .empty { color: #9aa1b3; font-size: 12px; text-align: center; padding: 18px 0; }
+  .card[draggable="true"] { cursor: grab; }
+  .card.dragging { opacity: .45; }
+  .card { position: relative; }
+  .card .del { position: absolute; top: 6px; right: 6px; border: 0; background: transparent; color: #b7bcc9; font-size: 14px; line-height: 1; padding: 2px 5px; border-radius: 6px; cursor: pointer; opacity: 0; }
+  .card:hover .del { opacity: 1; }
+  .card .del:hover { background: #fde8e8; color: #b3261e; }
+  .card .split { position: absolute; top: 6px; right: 26px; border: 0; background: transparent; color: #b7bcc9; font-size: 13px; line-height: 1; padding: 2px 5px; border-radius: 6px; cursor: pointer; opacity: 0; }
+  .card:hover .split { opacity: 1; }
+  .card .split:hover { background: #e8ecfd; color: #384bcc; }
+  html[data-theme="dark"] .card .split:hover { background: #2f2937; color: #c3a7e0; }
+  .card.reorder-target { border-top: 2px solid #4b5bdc; }
+  .upnext { display: inline-block; font-size: 10px; font-weight: 700; color: #fff; background: #4b5bdc; border-radius: 5px; padding: 1px 6px; margin-left: 6px; vertical-align: middle; }
+  .prio { font-size: 10px; font-weight: 700; color: #6a7288; background: #eef0f5; border-radius: 5px; padding: 1px 5px; }
+  #addBtn { background: #4b5bdc; color: #fff; border-color: #4b5bdc; font-weight: 600; }
+  html[data-theme="dark"] .card .del:hover { background: #3a2e2a; color: #e88f7a; }
+  html[data-theme="dark"] .upnext, html[data-theme="dark"] #addBtn { background: #d97757; color: #241f1c; }
+  html[data-theme="dark"] .prio { background: #3a3830; color: #c8c3b5; }
+  html[data-theme="dark"] .card.reorder-target { border-top-color: #d97757; }
+  .col.over { outline: 2px dashed #4b5bdc; outline-offset: -2px; background: #e7eaf6; }
+  .hint { color: #9aa1b3; font-size: 11px; margin: 2px 6px 8px; }
+
+  .overlay {
+    position: fixed; inset: 0; background: rgba(20,26,45,.45); display: none;
+    align-items: center; justify-content: center; z-index: 20; padding: 16px;
+  }
+  .overlay.show { display: flex; }
+  .modal { background: #fff; border-radius: 14px; padding: 20px; max-width: 460px; width: 100%; }
+  .modal h3 { margin: 0 0 6px; }
+  .modal p { color: #59617a; margin: 0 0 14px; }
+  .tier { display: block; width: 100%; text-align: left; border: 1px solid #d8dce6; border-radius: 10px; padding: 12px; margin-bottom: 8px; background: #fff; }
+  .tier:hover { border-color: #4b5bdc; background: #f7f8ff; }
+  .tier b { display: block; }
+  .tier span { color: #6a7288; font-size: 12px; }
+  .modal label { display: block; font-size: 12px; color: #59617a; margin: 8px 0 3px; }
+  .modal input, .modal textarea { width: 100%; }
+  .modal .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+  .toast {
+    position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+    background: #1c2333; color: #fff; padding: 9px 16px; border-radius: 10px; font-size: 13px;
+    opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 30; max-width: 80%;
+  }
+  .toast.show { opacity: 1; }
+  .loading { padding: 40px; text-align: center; color: #8a90a2; }
+  .subbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 16px; background: #fff; border-bottom: 1px solid #eef0f5; }
+  .subbar .lbl { font-size: 12px; font-weight: 700; color: #59617a; }
+  .subbar input[type=date] { padding: 4px 8px; }
+  .rangeInfo { font-size: 12px; color: #8a90a2; }
+  .colsub { display: block; font-size: 11px; color: #8a90a2; margin: -4px 6px 8px; }
+  .showmore { width: 100%; margin-top: 4px; background: #e7eaf6; border: 0; color: #4b5bdc; border-radius: 8px; padding: 6px; font-size: 12px; font-weight: 600; cursor: pointer; }
+  .showmore:hover { background: #dbe0f5; }
+  /* dark theme (FBMCPF-21) — Claude warm palette (FBMCPF-56) */
+  html[data-theme="dark"] body { background: #1f1e1c; color: #f2f0e9; }
+  html[data-theme="dark"] header, html[data-theme="dark"] .subbar { background: #262624; border-color: #37352f; }
+  html[data-theme="dark"] h1 { color: #f7f5ef; }
+  html[data-theme="dark"] h1 small { color: #d9a08a; }
+  html[data-theme="dark"] select, html[data-theme="dark"] input, html[data-theme="dark"] button { background: #302f2b; border-color: #45433c; color: #f2f0e9; }
+  html[data-theme="dark"] button.ghost { background: #34332e; }
+  html[data-theme="dark"] button.primary { background: #d97757; border-color: #d97757; color: #241f1c; }
+  html[data-theme="dark"] .seg { border-color: #45433c; }
+  html[data-theme="dark"] .seg button { background: #302f2b; color: #f2f0e9; }
+  html[data-theme="dark"] .seg button.on { background: #d97757; color: #241f1c; }
+  html[data-theme="dark"] .metrics { color: #a8a49a; }
+  html[data-theme="dark"] .metrics b { color: #f2f0e9; }
+  html[data-theme="dark"] .col { background: #2a2926; }
+  html[data-theme="dark"] .col h2 { color: #a8a49a; }
+  html[data-theme="dark"] .card { background: #302f2b; border-color: #3d3b35; box-shadow: none; color: #f2f0e9; }
+  html[data-theme="dark"] .chip { background: #3a3830; color: #c8c3b5; }
+  html[data-theme="dark"] .chip.due { background: #26333a; color: #9cc4db; }
+  html[data-theme="dark"] .chip.prod { background: #263329; color: #a7d3b0; }
+  html[data-theme="dark"] .chip.ref { background: #2f2937; color: #c3a7e0; }
+  html[data-theme="dark"] .tk.feature { background: #33322c; color: #e0a58a; }
+  html[data-theme="dark"] .tk.bug { background: #3a2e2a; color: #e88f7a; }
+  html[data-theme="dark"] .modal { background: #262624; color: #f2f0e9; }
+  html[data-theme="dark"] .tier { background: #302f2b; border-color: #45433c; }
+  html[data-theme="dark"] .tier:hover { background: #38362f; border-color: #d97757; }
+  html[data-theme="dark"] .tier span, html[data-theme="dark"] .hint, html[data-theme="dark"] .colsub,
+  html[data-theme="dark"] .rangeInfo, html[data-theme="dark"] .loading, html[data-theme="dark"] .empty,
+  html[data-theme="dark"] .subbar .lbl, html[data-theme="dark"] .modal p { color: #a8a49a; }
+  html[data-theme="dark"] .showmore { background: #34332e; color: #e0876a; }
+  html[data-theme="dark"] .card.dragging { opacity: .5; }
+  html[data-theme="dark"] .col.over { outline-color: #d97757; background: #33322c; }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="brandTitle">FeatureBoard <small id="brandSub">by Lewis Valentine</small></h1>
+  <select id="board"></select>
+  <div class="seg" id="typeSeg">
+    <button data-type="all" class="on">All</button>
+    <button data-type="feature">Features</button>
+    <button data-type="bug">Bugs</button>
+  </div>
+  <select id="productFilter" title="Filter by product"><option value="">All products</option></select>
+  <div class="spacer"></div>
+  <div class="metrics" id="metrics"></div>
+  <span class="badge" id="healthBadge" style="display:none"></span>
+  <span class="badge lic" id="licBadge" style="display:none"></span>
+  <button id="themeBtn" class="ghost" title="Toggle dark mode">🌙</button>
+</header>
+
+<div id="banner"></div>
+<div class="subbar">
+  <span class="lbl">Done shows:</span>
+  <div class="seg" id="rangeSeg">
+    <button data-range="day">Day</button>
+    <button data-range="week">Week</button>
+    <button data-range="month">Month</button>
+    <button data-range="all">All</button>
+  </div>
+  <input type="date" id="refDate" />
+  <button class="ghost" id="rangeToday">Today</button>
+  <span class="rangeInfo" id="rangeInfo"></span>
+  <div class="spacer" style="flex:1"></div>
+  <button class="ghost" id="brainstormBtn" title="Bulk-add brainstormed features">💡 Brainstorm</button>
+  <button class="ghost" id="importBtn" title="Import tasks from markdown / CSV / JSON">⬇ Import</button>
+  <button class="ghost" id="linksBtn" title="Linked issues & epics">🔗 Links</button>
+  <button class="ghost" id="testsBtn" title="Test runs & regressions">🧪 Tests</button>
+  <button class="ghost" id="prioBtn" title="Auto-prioritize Todo by due date">⚡ Prioritize</button>
+  <button class="ghost" id="notesBtn" title="Project scratchpad">📝 Notes</button>
+  <button class="ghost" id="settingsBtn" title="Board settings">⚙ Settings</button>
+  <button id="addBtn">+ Add task</button>
+</div>
+<div id="content"><div class="loading">Loading board…</div></div>
+
+<div class="overlay" id="overlay"><div class="modal" id="modal"></div></div>
+<div class="toast" id="toast"></div>
+
+<script>
+const FB = "mcp__FeatureBoard__";
+const $ = (s) => document.querySelector(s);
+const store = {
+  get: (k, d) => { try { return JSON.parse(localStorage.getItem("fb_"+k)) ?? d; } catch { return d; } },
+  set: (k, v) => { try { localStorage.setItem("fb_"+k, JSON.stringify(v)); } catch {} },
+};
+
+const today = () => new Date().toISOString().slice(0, 10);
+let state = {
+  board: store.get("board", null), type: store.get("type", "all"),
+  range: store.get("range", "week"), refDate: store.get("refDate", today()),
+  product: store.get("product", ""), license: null, canWrite: true, tasks: [],
+};
+const expanded = {}; // column -> show-all toggle
+
+// theme (FBMCPF-21): persisted dark/light toggle scoped to the artifact
+function applyTheme(t) {
+  document.documentElement.dataset.theme = t === "dark" ? "dark" : "";
+  const b = document.getElementById("themeBtn");
+  if (b) b.textContent = t === "dark" ? "☀️" : "🌙";
+}
+applyTheme(store.get("theme", "light"));
+document.getElementById("themeBtn").addEventListener("click", () => {
+  const next = store.get("theme", "light") === "dark" ? "light" : "dark";
+  store.set("theme", next); applyTheme(next);
+});
+
+async function call(tool, args = {}) {
+  const r = await window.cowork.callMcpTool(FB + tool, args);
+  const text = r && r.content && r.content[0] && r.content[0].text;
+  if (r && r.isError) { const e = new Error(text || "Tool error"); e.tool = tool; throw e; }
+  if (r && r.structuredContent !== undefined && r.structuredContent !== null) return r.structuredContent;
+  try { return JSON.parse(text); } catch { return text; }
+}
+
+function toast(msg) {
+  const t = $("#toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove("show"), 3200);
+}
+
+function normalize(t) {
+  const ticket = t.ticket || t.ticketNumber || "";
+  const type = t.type || (/B-\d+$/.test(ticket) ? "bug" : "feature");
+  return {
+    ticket, type, status: t.status || "Todo", title: t.title || "(untitled)",
+    due: t.due || t.dueDate || null,
+    created: t.created || t.createdDate || null,
+    completed: t.completed || t.completionDate || null,
+    product: t.product || null, labels: t.labels || [], ref: t.ref || null,
+    attachments: t.attachments || [],
+    newFile: t.newFile || false, website: t.website || null,
+    linked: t.linked || t.linkedIssue || null,
+    priority: t.priority != null ? t.priority : null,
+  };
+}
+
+async function loadTasks(board, type) {
+  let all = [], offset = 0, limit = 200;
+  for (let i = 0; i < 100; i++) {
+    let res;
+    try { res = await call("list_tasks", { project: board, type, limit, offset, compact: true }); }
+    catch (e) { toast(e.message); break; }
+    const tasks = Array.isArray(res) ? res : (res.tasks || []);
+    all = all.concat(tasks);
+    if (res && res.truncated && tasks.length) offset += limit; else break;
+  }
+  return all.map(normalize);
+}
+
+async function loadLicense() {
+  try { return await call("license_status"); }
+  catch { return null; } // server predates licensing (needs restart)
+}
+
+function renderLicense() {
+  const lic = state.license, badge = $("#licBadge"), banner = $("#banner");
+  banner.innerHTML = ""; badge.style.display = "none";
+  if (!lic) return;
+  state.canWrite = lic.allowWrites !== false;
+
+  if (lic.configured === false) { openOnboarding(); return; }
+
+  if (lic.status === "personal" || lic.status === "public") {
+    badge.style.display = ""; badge.className = "badge free"; badge.textContent = lic.status === "public" ? "Free · public" : "Free · personal";
+  } else if (lic.status === "trial-active") {
+    badge.style.display = ""; badge.className = "badge trial"; badge.textContent = "Trial · " + (lic.trialRemainingHours ?? "?") + "h left";
+    banner.innerHTML = '<div class="banner">⏳ Commercial trial — writes freeze in ' + (lic.trialRemainingHours ?? "?") + ' hours. <button class="ghost" onclick="openRequest()">Request license</button> <button class="ghost" onclick="openActivate()">Enter key</button></div>';
+  } else if (lic.status === "commercial-licensed") {
+    badge.style.display = ""; badge.className = "badge lic"; badge.textContent = "Licensed" + (lic.license && lic.license.licensee ? " · " + lic.license.licensee : "");
+  } else if (lic.allowWrites === false) {
+    badge.style.display = ""; badge.className = "badge frozen"; badge.textContent = "Writes frozen";
+    banner.innerHTML = '<div class="banner stop">🔒 ' + (lic.message || "Commercial license required.") + ' <button class="primary" onclick="openRequest()">Request commercial license</button> <button class="ghost" onclick="openActivate()">Activate key</button></div>';
+  }
+}
+
+let _refreshing = false;
+async function refresh(silent) {
+  if (!state.board || _refreshing) return;
+  _refreshing = true;
+  if (!silent) $("#content").innerHTML = '<div class="loading">Loading ' + state.board + '…</div>';
+  try {
+    const [tasks, metrics, health, cfg] = await Promise.all([
+      loadTasks(state.board, state.type),
+      call("get_metrics", { project: state.board }).catch(() => null),
+      call("get_health", { project: state.board }).catch(() => null),
+      call("get_project_config", { project: state.board }).catch(() => null),
+    ]);
+    state.tasks = tasks;
+    applyBranding(cfg);
+    renderMetrics(metrics);
+    renderHealth(health);
+    populateProducts(tasks);
+    renderBoard(state.tasks);
+  } finally { _refreshing = false; }
+}
+
+function fmtTokens(n) {
+  if (!n) return "0";
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
+  if (n >= 1e3) return (n / 1e3).toFixed(0) + "k";
+  return String(n);
+}
+function renderHealth(h) {
+  const el = $("#healthBadge");
+  if (!h || typeof h.score !== "number") { el.style.display = "none"; return; }
+  el.style.display = ""; el.className = "badge h-" + (h.grade || "C");
+  el.textContent = "Health " + h.score + " · " + (h.grade || "");
+  el.title = "bug pressure " + h.breakdown.bugPressure.score + " · progress " + h.breakdown.progress.score +
+    " · momentum " + h.breakdown.momentum.score + " · freshness " + h.breakdown.freshness.score;
+}
+function populateProducts(tasks) {
+  const set = new Set(tasks.map((t) => t.product).filter(Boolean));
+  const cur = state.product;
+  const opts = ['<option value="">All products</option>']
+    .concat([...set].sort().map((p) => '<option value="' + esc(p) + '"' + (p === cur ? " selected" : "") + '>' + esc(p) + '</option>'));
+  const sel = $("#productFilter");
+  sel.innerHTML = opts.join("");
+  if (![...set].includes(cur)) { state.product = ""; sel.value = ""; }
+}
+
+// Auto-refresh: on tab/window focus regain and a gentle background poll, so the
+// board reflects changes made elsewhere without manually switching projects.
+// Skips while a modal is open or a drag is in progress; silent = no loading flash.
+function autoRefresh() {
+  if (document.visibilityState !== "visible") return;
+  if ($("#overlay").classList.contains("show") || dragTicket) return;
+  if (!state.board) return;
+  refresh(true);
+}
+document.addEventListener("visibilitychange", autoRefresh);
+window.addEventListener("focus", autoRefresh);
+setInterval(autoRefresh, 30000);
+
+// branding (FBMCPF-27): configurable board title/subtitle from project config
+function applyBranding(cfg) {
+  const t = document.getElementById("brandTitle");
+  const sub = document.getElementById("brandSub");
+  const title = (cfg && cfg.brandTitle) || "FeatureBoard";
+  const subtitle = (cfg && cfg.brandSubtitle != null) ? cfg.brandSubtitle : "by Lewis Valentine";
+  if (t && t.firstChild) t.firstChild.textContent = title + " ";
+  if (sub) sub.textContent = subtitle;
+  if (title) document.title = title;
+}
+
+function renderMetrics(m) {
+  if (!m) { $("#metrics").innerHTML = ""; return; }
+  let html =
+    '<span><b>' + m.features.total + '</b> features · <b>' + m.features.done + '</b> done</span>' +
+    '<span><b>' + m.bugs.open + '</b> open bugs · <b>' + m.bugs.closed + '</b> closed</span>';
+  if (m.velocity && m.velocity.totals) {
+    html += '<span title="from the work log">⚡ <b>' + fmtTokens(m.velocity.tokensLast7Days) + '</b> 7d · <b>' +
+      fmtTokens(m.velocity.totals.tokens) + '</b> total</span>';
+  }
+  $("#metrics").innerHTML = html;
+}
+
+const COLS = ["Todo", "In Progress", "Done"];
+const CAP = 10;
+
+// effective date for a Done ticket: completion, else due, else created
+function effDate(t) { return t.completed || t.due || t.created || null; }
+function weekBounds(ref) {
+  const dt = new Date(ref + "T00:00:00");
+  const dow = (dt.getDay() + 6) % 7; // Mon=0
+  const mon = new Date(dt); mon.setDate(dt.getDate() - dow);
+  const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
+  const f = (x) => x.toISOString().slice(0, 10);
+  return [f(mon), f(sun)];
+}
+function inDoneRange(t) {
+  if (state.range === "all") return true;
+  const d = effDate(t); if (!d) return false;
+  if (state.range === "day") return d === state.refDate;
+  if (state.range === "month") return d.slice(0, 7) === state.refDate.slice(0, 7);
+  const [a, b] = weekBounds(state.refDate); return d >= a && d <= b;
+}
+function rangeLabel() {
+  if (state.range === "all") return "all time";
+  if (state.range === "day") return state.refDate;
+  if (state.range === "month") return state.refDate.slice(0, 7);
+  const [a, b] = weekBounds(state.refDate); return a + " → " + b;
+}
+function toggleCol(c) { expanded[c] = !expanded[c]; renderBoard(state.tasks); }
+
+const ticketNumOf = (tk) => parseInt((tk || "").replace(/\D+/g, ""), 10) || 0;
+// queue order: by manual priority (1 = top), unset last, then newest ticket first
+function sortForColumn(list, col) {
+  if (col === "Done") return list; // Done keeps recency/date order
+  return list.slice().sort((a, b) => {
+    const pa = a.priority == null ? Infinity : a.priority;
+    const pb = b.priority == null ? Infinity : b.priority;
+    return pa - pb || ticketNumOf(b.ticket) - ticketNumOf(a.ticket);
+  });
+}
+
+function renderBoard(tasks) {
+  if (state.product) tasks = tasks.filter((t) => t.product === state.product);
+  const byCol = { "Todo": [], "In Progress": [], "Done": [] };
+  tasks.forEach((t) => (byCol[t.status] || byCol["Todo"]).push(t));
+  const doneTotal = byCol["Done"].length;
+  byCol["Done"] = byCol["Done"].filter(inDoneRange);
+  byCol["Todo"] = sortForColumn(byCol["Todo"], "Todo");
+  byCol["In Progress"] = sortForColumn(byCol["In Progress"], "In Progress");
+  $("#rangeInfo").textContent = "showing " + byCol["Done"].length + " of " + doneTotal + " done · " + rangeLabel();
+
+  const hint = state.canWrite
+    ? '<div class="hint">Drag cards between columns to change status.</div>'
+    : '<div class="hint">Read-only — writes are frozen under the current license.</div>';
+  const html = COLS.map((c) => {
+    const list = byCol[c];
+    const isExp = expanded[c];
+    const shown = isExp ? list : list.slice(0, CAP);
+    const cards = shown.map((t, i) => cardHTML(t, { col: c, upNext: c === "Todo" && i === 0 })).join("") || '<div class="empty">No tickets</div>';
+    let more = "";
+    if (list.length > CAP) {
+      more = isExp
+        ? '<button class="showmore" onclick="toggleCol(\'' + c + '\')">Show less</button>'
+        : '<button class="showmore" onclick="toggleCol(\'' + c + '\')">Show ' + (list.length - CAP) + ' more</button>';
+    }
+    const sub = c === "Done" ? '<span class="colsub">' + rangeLabel() + (doneTotal > list.length ? " · " + doneTotal + " total" : "") + '</span>' : "";
+    return '<div class="col" data-status="' + c + '" ondragover="allow(event)" ondragleave="unhi(event)" ondrop="drop(event,\'' + c + '\')">' +
+      '<h2>' + c + '<span>' + list.length + '</span></h2>' + sub + cards + more + '</div>';
+  }).join("");
+  $("#content").innerHTML = hint + '<div class="board">' + html + '</div>';
+}
+
+function cardHTML(t, opts) {
+  opts = opts || {};
+  const meta = [];
+  if (t.priority != null) meta.push('<span class="prio">#' + t.priority + '</span>');
+  if (t.due) meta.push('<span class="chip due">📅 ' + t.due + '</span>');
+  if (t.product) meta.push('<span class="chip prod">' + esc(t.product) + '</span>');
+  if (t.ref) meta.push('<span class="chip ref">↔ ' + esc(t.ref) + '</span>');
+  if (t.linked) meta.push('<span class="chip ref" title="Linked issue">🔗 ' + esc(t.linked) + '</span>');
+  if (t.newFile) meta.push('<span class="chip" title="Build in a new file">📄 new file</span>');
+  if (t.website) meta.push('<span class="chip" title="' + esc(t.website) + '">🌐 ' + esc(t.website.replace(/^https?:\/\//, '')) + '</span>');
+  (t.attachments || []).forEach((a) => meta.push('<span class="chip att" title="' + esc(a) + '">📎 ' + esc(a.split(/[\\/]/).pop()) + '</span>'));
+  (t.labels || []).forEach((l) => meta.push('<span class="chip">' + esc(l) + '</span>'));
+  const canW = state.canWrite;
+  const dragAttrs = canW
+    ? ' draggable="true" ondragstart="drag(event,\'' + t.ticket + '\')" ondragend="dragEnd(event)"' +
+      ' ondragover="cardOver(event)" ondragleave="cardOut(event)" ondrop="cardDrop(event,\'' + t.ticket + '\')"'
+    : ' draggable="false"';
+  const del = canW ? '<button class="del" title="Delete" onclick="deleteCard(event,\'' + t.ticket + '\')">✕</button>' : "";
+  const split = (canW && t.type === "feature" && t.status !== "Done")
+    ? '<button class="split" title="Decompose into subtasks" onclick="openDecompose(event,\'' + t.ticket + '\')">⋔</button>' : "";
+  const next = opts.upNext ? '<span class="upnext">UP NEXT</span>' : "";
+  return '<div class="card" data-ticket="' + t.ticket + '" data-col="' + opts.col + '"' + dragAttrs + '>' + del + split +
+    '<div class="top"><span class="tk ' + t.type + '">' + esc(t.ticket) + '</span>' + next + '</div>' +
+    '<div class="title">' + esc(t.title) + '</div>' +
+    (meta.length ? '<div class="meta">' + meta.join("") + '</div>' : "") + '</div>';
+}
+
+/* ---------- drag and drop ---------- */
+let dragTicket = null;
+function drag(e, ticket) {
+  if (!state.canWrite) { e.preventDefault(); return; }
+  dragTicket = ticket;
+  e.dataTransfer.effectAllowed = "move";
+  try { e.dataTransfer.setData("text/plain", ticket); } catch {}
+  e.currentTarget.classList.add("dragging");
+}
+function dragEnd(e) { e.currentTarget.classList.remove("dragging"); }
+function allow(e) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; e.currentTarget.classList.add("over"); }
+function unhi(e) { e.currentTarget.classList.remove("over"); }
+function drop(e, status) {
+  e.preventDefault();
+  e.currentTarget.classList.remove("over");
+  const ticket = dragTicket || (e.dataTransfer && e.dataTransfer.getData("text/plain"));
+  dragTicket = null;
+  if (!ticket) return;
+  const src = state.tasks.find((t) => t.ticket === ticket);
+  if (src && src.status === status) return; // dropped on own column empty area — no-op
+  move(ticket, status);
+}
+
+// card-level drop enables within-column reordering (insert before the target card)
+function cardOver(e) { e.preventDefault(); e.stopPropagation(); e.currentTarget.classList.add("reorder-target"); }
+function cardOut(e) { e.currentTarget.classList.remove("reorder-target"); }
+function cardDrop(e, targetTicket) {
+  e.preventDefault(); e.stopPropagation();
+  e.currentTarget.classList.remove("reorder-target");
+  const ticket = dragTicket || (e.dataTransfer && e.dataTransfer.getData("text/plain"));
+  dragTicket = null;
+  if (!ticket || ticket === targetTicket) return;
+  const src = state.tasks.find((t) => t.ticket === ticket);
+  const tgt = state.tasks.find((t) => t.ticket === targetTicket);
+  if (!src || !tgt) return;
+  if (src.status !== tgt.status) { move(ticket, tgt.status); return; } // cross-column: status change
+  reorder(ticket, targetTicket, tgt.status);
+}
+
+async function reorder(ticket, targetTicket, col) {
+  let list = state.tasks.filter((t) => t.status === col && (!state.product || t.product === state.product));
+  list = sortForColumn(list, col);
+  const ids = list.map((t) => t.ticket).filter((x) => x !== ticket);
+  const at = ids.indexOf(targetTicket);
+  ids.splice(at < 0 ? ids.length : at, 0, ticket); // insert before target
+  const byId = Object.fromEntries(list.map((t) => [t.ticket, t]));
+  const writes = [];
+  ids.forEach((id, i) => {
+    const want = i + 1;
+    const t = byId[id];
+    if (t && t.priority !== want) writes.push(call("update_task", { project: state.board, ticket: id, priority: want }));
+  });
+  if (!writes.length) return;
+  try { await Promise.all(writes); toast("Reordered"); }
+  catch (e) { toast("Reorder needs the updated server (repack + restart): " + e.message.slice(0, 70)); }
+  await refresh(true);
+}
+
+/* ---------- add / delete tasks ---------- */
+function openAdd() {
+  const prods = [...new Set(state.tasks.map((t) => t.product).filter(Boolean))].sort();
+  showModal(
+    '<h3>Add task</h3>' +
+    '<label>Type</label><select id="adType"><option value="feature">Feature</option><option value="bug">Bug</option></select>' +
+    '<label>Title</label><input id="adTitle" placeholder="Short title">' +
+    '<label>Description</label><textarea id="adDesc" rows="2"></textarea>' +
+    '<label>Product</label><input id="adProd" list="adProdList" placeholder="optional"><datalist id="adProdList">' +
+      prods.map((p) => '<option value="' + esc(p) + '">').join("") + '</datalist>' +
+    '<label>Due date</label><input id="adDue" type="date">' +
+    '<label>Priority (1 = top, optional)</label><input id="adPrio" type="number" min="1">' +
+    '<div class="actions"><button class="ghost" onclick="closeModal()">Cancel</button><button class="primary" onclick="submitAdd()">Add</button></div>'
+  );
+}
+async function submitAdd() {
+  const type = $("#adType").value;
+  const title = $("#adTitle").value.trim();
+  if (!title) { toast("Title is required"); return; }
+  const args = { project: state.board, title };
+  const desc = $("#adDesc").value.trim(); if (desc) args.description = desc;
+  const prod = $("#adProd").value.trim(); if (prod) args.product = prod;
+  const due = $("#adDue").value; if (due) args.dueDate = due;
+  const prio = parseInt($("#adPrio").value, 10); if (prio) args.priority = prio;
+  try {
+    const t = await call(type === "bug" ? "log_bug" : "add_feature", args);
+    closeModal(); toast("Added " + (t.ticketNumber || t.ticket || "task"));
+    await refresh(true);
+  } catch (e) { toast(e.message.slice(0, 120)); }
+}
+async function deleteCard(e, ticket) {
+  e.stopPropagation();
+  if (!confirm("Delete " + ticket + "? This cannot be undone.")) return;
+  try { await call("delete_task", { project: state.board, ticket }); toast("Deleted " + ticket); await refresh(true); }
+  catch (err) { toast(err.message.slice(0, 120)); }
+}
+
+/* ---------- brainstorm (FBMCPF-29) ---------- */
+function openBrainstorm() {
+  const prods = [...new Set(state.tasks.map((t) => t.product).filter(Boolean))].sort();
+  const canAI = !!(window.cowork && window.cowork.askClaude);
+  showModal(
+    '<h3>💡 Brainstorm features</h3>' +
+    '<p>One feature per line. Use “Title: description” to add detail. Bulk-added to <b>' + esc(state.board) + '</b>.</p>' +
+    (canAI
+      ? '<label>Generate ideas from a goal (optional)</label>' +
+        '<div style="display:flex;gap:6px"><input id="bsGoal" placeholder="e.g. improve onboarding"><button class="ghost" id="bsGenBtn" onclick="generateIdeas()">✨ Generate</button></div>'
+      : '') +
+    '<label>Features</label><textarea id="bsBody" rows="8" placeholder="Dark mode toggle&#10;CSV export: let users download their board&#10;Keyboard shortcuts"></textarea>' +
+    '<label>Product (optional, applied to all)</label><input id="bsProd" list="bsProdList" placeholder="optional"><datalist id="bsProdList">' +
+      prods.map((p) => '<option value="' + esc(p) + '">').join("") + '</datalist>' +
+    '<div class="actions"><button class="ghost" onclick="closeModal()">Cancel</button><button class="primary" onclick="submitBrainstorm()">Add features</button></div>'
+  );
+}
+function parseTaskLines(text) {
+  return String(text || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean).map((line) => {
+    const m = line.match(/^(.*?):\s+(.*)$/);
+    return m ? { title: m[1].trim(), description: m[2].trim() } : { title: line };
+  });
+}
+async function generateIdeas() {
+  const btn = document.getElementById("bsGenBtn");
+  const goal = ($("#bsGoal").value || "").trim();
+  if (!goal) { toast("Enter a goal first"); return; }
+  if (!(window.cowork && window.cowork.askClaude)) { toast("AI generation unavailable"); return; }
+  if (btn) { btn.disabled = true; btn.textContent = "…"; }
+  try {
+    const prompt = "Brainstorm 6 concise product feature ideas for this goal: \"" + goal + "\". " +
+      "Return ONLY a plain list, one feature per line, formatted as \"Title: one-sentence description\". No numbering, no preamble.";
+    const out = await window.cowork.askClaude(prompt, []);
+    const text = typeof out === "string" ? out : (out && (out.text || out.content || ""));
+    const cleaned = String(text || "").split(/\r?\n/).map((l) => l.replace(/^\s*[-*\d.)]+\s*/, "").trim()).filter(Boolean).join("\n");
+    const ta = $("#bsBody");
+    ta.value = ta.value.trim() ? ta.value.trim() + "\n" + cleaned : cleaned;
+  } catch (e) { toast("Generate failed: " + String(e.message || e).slice(0, 80)); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = "✨ Generate"; } }
+}
+async function submitBrainstorm() {
+  const features = parseTaskLines($("#bsBody").value);
+  if (!features.length) { toast("Add at least one feature line"); return; }
+  const prod = ($("#bsProd").value || "").trim();
+  if (prod) features.forEach((f) => (f.product = prod));
+  try {
+    const res = await call("add_features_bulk", { project: state.board, features });
+    const n = (res && res.created && res.created.length) || features.length;
+    closeModal(); toast("Added " + n + " feature" + (n === 1 ? "" : "s"));
+    await refresh(true);
+  } catch (e) { toast(String(e.message).slice(0, 120)); }
+}
+
+/* ---------- decompose (FBMCPF-30) ---------- */
+function openDecompose(e, ticket) {
+  if (e) e.stopPropagation();
+  const parent = state.tasks.find((t) => t.ticket === ticket);
+  showModal(
+    '<h3>⋔ Decompose ' + esc(ticket) + '</h3>' +
+    '<p>Replace <b>' + esc(parent ? parent.title : ticket) + '</b> with linked subtasks (one per line, min 2). Use “Title: description” for detail.</p>' +
+    '<textarea id="dcBody" rows="6" placeholder="Design the schema&#10;Implement the API&#10;Write tests"></textarea>' +
+    '<label style="display:flex;align-items:center;gap:6px;margin-top:8px"><input type="checkbox" id="dcKeep" style="width:auto"> Keep the parent feature</label>' +
+    '<div class="actions"><button class="ghost" onclick="closeModal()">Cancel</button><button class="primary" onclick="submitDecompose(\'' + ticket + '\')">Decompose</button></div>'
+  );
+}
+async function submitDecompose(ticket) {
+  const subtasks = parseTaskLines($("#dcBody").value);
+  if (subtasks.length < 2) { toast("Enter at least 2 subtasks"); return; }
+  const keepParent = !!$("#dcKeep").checked;
+  try {
+    const res = await call("decompose_feature", { project: state.board, ticket, subtasks, keepParent });
+    const n = (res && res.created && res.created.length) || subtasks.length;
+    closeModal(); toast("Created " + n + " subtasks from " + ticket);
+    await refresh(true);
+  } catch (e) { toast(String(e.message).slice(0, 120)); }
+}
+
+/* ---------- dependency / links view (FBMCPF-33) ---------- */
+function openLinks() {
+  const tasks = state.tasks;
+  const byId = Object.fromEntries(tasks.map((t) => [t.ticket, t]));
+  const childrenOf = {};
+  tasks.forEach((t) => { if (t.linked) (childrenOf[t.linked] = childrenOf[t.linked] || []).push(t); });
+  const parentIds = Object.keys(childrenOf).sort((a, b) => ticketNumOf(a) - ticketNumOf(b));
+  let body;
+  if (!parentIds.length) {
+    body = '<p class="hint">No linked tickets yet. Link a bug to the feature it affects, or decompose a feature into subtasks.</p>';
+  } else {
+    body = parentIds.map((pid) => {
+      const p = byId[pid];
+      const head = p
+        ? '<span class="tk ' + p.type + '">' + esc(p.ticket) + '</span> <b>' + esc(p.title) + '</b> <span class="chip">' + esc(p.status) + '</span>'
+        : '<b>' + esc(pid) + '</b> <span class="hint">(not on this board)</span>';
+      const kids = childrenOf[pid].map((c) =>
+        '<div style="margin-left:18px;padding:3px 0">↳ <span class="tk ' + c.type + '">' + esc(c.ticket) + '</span> ' + esc(c.title) +
+        ' <span class="chip">' + esc(c.status) + '</span></div>').join("");
+      return '<div style="margin-bottom:12px"><div>🔗 ' + head + '</div>' + kids + '</div>';
+    }).join("");
+  }
+  showModal('<h3>🔗 Linked issues &amp; epics</h3><div style="max-height:60vh;overflow:auto">' + body + '</div>' +
+    '<div class="actions"><button class="primary" onclick="closeModal()">Close</button></div>');
+}
+
+/* ---------- auto-prioritize Todo (FBMCPF-31) ---------- */
+async function autoPrioritize() {
+  if (!state.canWrite) { toast("Writes are frozen under the current license"); return; }
+  let todo = state.tasks.filter((t) => t.status === "Todo" && (!state.product || t.product === state.product));
+  if (!todo.length) { toast("No Todo tickets to prioritize"); return; }
+  const dueVal = (t) => (t.due ? (Date.parse(t.due) || Infinity) : Infinity);
+  todo = todo.slice().sort((a, b) => dueVal(a) - dueVal(b) || ticketNumOf(a.ticket) - ticketNumOf(b.ticket));
+  if (!confirm("Auto-prioritize " + todo.length + " Todo tickets by due date (earliest first)? This overwrites their manual priority.")) return;
+  try {
+    await Promise.all(todo.map((t, i) => call("update_task", { project: state.board, ticket: t.ticket, priority: i + 1 })));
+    toast("Prioritized " + todo.length + " tickets by due date");
+    await refresh(true);
+  } catch (e) { toast(String(e.message).slice(0, 100)); }
+}
+
+/* ---------- import tasks (FBMCPF-55) ---------- */
+function openImport() {
+  showModal(
+    '<h3>⬇ Import tasks</h3>'+
+    '<p>Paste a markdown checklist, CSV (with header row), or JSON. Format is auto-detected.</p>'+
+    '<div style="display:flex;gap:8px"><label style="flex:1">Format<select id="imFmt"><option value="auto">Auto-detect</option><option value="markdown">Markdown</option><option value="csv">CSV</option><option value="json">JSON</option></select></label>'+
+    '<label style="flex:1">Default type<select id="imType"><option value="feature">Feature</option><option value="bug">Bug</option></select></label></div>'+
+    '<label>Content</label><textarea id="imBody" rows="9" placeholder="- [ ] First task&#10;- [ ] Second: with a description"></textarea>'+
+    '<div id="imPreview" class="hint"></div>'+
+    '<div class="actions"><button class="ghost" onclick="closeModal()">Cancel</button>'+
+    '<button class="ghost" onclick="previewImport()">Preview</button>'+
+    '<button class="primary" onclick="submitImport()">Import</button></div>'
+  );
+}
+async function previewImport() {
+  const content = $("#imBody").value.trim(); if (!content) { toast("Paste some content first"); return; }
+  try {
+    const res = await call("import_tasks", { project: state.board, content, format: $("#imFmt").value, dryRun: true });
+    const titles = (res.tasks || []).slice(0, 8).map((t) => "• " + esc(t.title)).join("<br>");
+    $("#imPreview").innerHTML = "Parsed <b>" + (res.parsed || 0) + "</b> task(s):<br>" + titles + ((res.parsed > 8) ? "<br>…" : "");
+  } catch (e) { $("#imPreview").textContent = String(e.message).slice(0, 140); }
+}
+async function submitImport() {
+  const content = $("#imBody").value.trim(); if (!content) { toast("Paste some content first"); return; }
+  try {
+    const res = await call("import_tasks", { project: state.board, content, format: $("#imFmt").value, defaultType: $("#imType").value });
+    closeModal(); toast("Imported " + (res.imported || 0) + " tasks"); await refresh(true);
+  } catch (e) { toast(String(e.message).slice(0, 140)); }
+}
+
+/* ---------- testing center + regressions (FBMCPF-34/36) ---------- */
+async function openTests() {
+  showModal('<h3>🧪 Testing</h3><div id="tsBody" class="hint">Loading…</div><div class="actions"><button class="primary" onclick="closeModal()">Close</button></div>');
+  try {
+    const [tr, rg] = await Promise.all([
+      call("get_test_runs", { project: state.board, limit: 10 }),
+      call("get_regressions", { project: state.board }),
+    ]);
+    const s = tr.summary || {};
+    const latest = s.latest;
+    let html = '<div style="margin-bottom:10px">';
+    if (s.runs) {
+      html += 'Latest: ' + (s.passing ? '<b style="color:var(--green,#1a7d47)">passing</b>' : '<b style="color:#b3261e">failing</b>') +
+        ' — ' + (latest.passed || 0) + ' passed, ' + (latest.failed || 0) + ' failed' + (latest.suite ? ' (' + esc(latest.suite) + ')' : '') +
+        ' · ' + s.runs + ' run(s) logged';
+    } else {
+      html += '<span class="hint">No test runs logged yet. Run your tests, then record them with log_test_run.</span>';
+    }
+    html += '</div>';
+    if ((tr.runs || []).length) {
+      html += '<div style="max-height:150px;overflow:auto;margin-bottom:12px">' + tr.runs.map((r) =>
+        '<div style="font-size:12px;padding:3px 0;border-top:1px solid #eef0f5">' + esc(r.date) + ' ' + esc(r.time || '') +
+        ' — <b>' + (r.passed || 0) + '</b>✓ <b>' + (r.failed || 0) + '</b>✕' + (r.ticket ? ' · ' + esc(r.ticket) : '') + '</div>').join("") + '</div>';
+    }
+    const regs = (rg.regressions || []);
+    html += '<h4 style="margin:8px 0 4px">Regressions</h4>';
+    if (regs.length) {
+      html += regs.map((r) => '<div style="margin-bottom:6px"><span class="tk feature">' + esc(r.feature) + '</span> ' + esc(r.title) +
+        ' <span class="chip">' + r.openBugs + ' open / ' + r.bugs.length + ' bug(s)</span></div>').join("");
+    } else {
+      html += '<span class="hint">No bugs linked to features. Link bugs (🔗) to a feature to track regressions.</span>';
+    }
+    document.getElementById("tsBody").innerHTML = html;
+  } catch (e) {
+    document.getElementById("tsBody").innerHTML = '<span class="hint">' + esc(String(e.message).slice(0, 160)) + '</span>';
+  }
+}
+
+/* ---------- board settings (FBMCPF-28) ---------- */
+let _prods = [];
+function prodChips() {
+  return _prods.map((p) => '<span class="chip">' + esc(p) + ' <a href="#" onclick="removeProd(event,\'' + esc(p) + '\')">✕</a></span>').join(" ");
+}
+function renderProds() { const el = document.getElementById("stProds"); if (el) el.innerHTML = prodChips() || '<span class="rangeInfo">none</span>'; }
+function addProd() { const i = $("#stNewProd"); const v = i.value.trim(); if (v && !_prods.includes(v)) _prods.push(v); i.value = ""; renderProds(); }
+function removeProd(e, p) { e.preventDefault(); _prods = _prods.filter((x) => x !== p); renderProds(); }
+async function openSettings() {
+  let cfg;
+  try { cfg = await call("get_project_config", { project: state.board }); }
+  catch (e) {
+    showModal('<h3>Board settings</h3><p>Settings need the updated server. Repack + restart Claude Desktop to enable it.</p><div class="actions"><button class="primary" onclick="closeModal()">OK</button></div>');
+    return;
+  }
+  _prods = (cfg.products || []).slice();
+  showModal(
+    '<h3>Settings — ' + esc(state.board) + '</h3>' +
+    '<label>Description</label><input id="stDesc" value="' + esc(cfg.description || "") + '">' +
+    '<label>Code location</label><input id="stCode" value="' + esc(cfg.codeLocation || "") + '" placeholder="C:\\path\\to\\code">' +
+    '<label>Agent model</label><input id="stModel" value="' + esc(cfg.agentModel || "") + '">' +
+    '<label>Website</label><input id="stSite" value="' + esc(cfg.website || "") + '">' +
+    '<label>Brand title</label><input id="stBrand" value="' + esc(cfg.brandTitle || "") + '" placeholder="FeatureBoard">' +
+    '<label>Brand subtitle</label><input id="stBrandSub" value="' + esc(cfg.brandSubtitle || "") + '" placeholder="by Lewis Valentine">' +
+    '<label>Custom prompt (injected into every work packet)</label><textarea id="stPrompt" rows="2">' + esc(cfg.customPrompt || "") + '</textarea>' +
+    '<label>Products</label><div id="stProds">' + (prodChips() || '<span class="rangeInfo">none</span>') + '</div>' +
+    '<div style="display:flex;gap:6px;margin-top:6px"><input id="stNewProd" placeholder="add product"><button class="ghost" onclick="addProd()">Add</button></div>' +
+    '<div class="actions"><button class="ghost" onclick="closeModal()">Cancel</button><button class="primary" onclick="saveSettings()">Save</button></div>'
+  );
+}
+async function saveSettings() {
+  const patch = {
+    project: state.board,
+    description: $("#stDesc").value.trim(),
+    codeLocation: $("#stCode").value.trim(),
+    agentModel: $("#stModel").value.trim(),
+    website: $("#stSite").value.trim(),
+    brandTitle: $("#stBrand").value.trim(),
+    brandSubtitle: $("#stBrandSub").value.trim(),
+    customPrompt: $("#stPrompt").value.trim(),
+    products: _prods,
+  };
+  try { await call("set_project_config", patch); closeModal(); toast("Settings saved"); await refresh(true); }
+  catch (e) { toast(e.message.slice(0, 120)); }
+}
+
+/* ---------- scratchpad (FBMCPF-25) ---------- */
+async function openNotes() {
+  let sp;
+  try { sp = await call("get_scratchpad", { project: state.board }); }
+  catch (e) {
+    showModal('<h3>Notes</h3><p>The scratchpad needs the updated server. Restart Claude Desktop to enable it.</p><div class="actions"><button class="primary" onclick="closeModal()">OK</button></div>');
+    return;
+  }
+  const ro = state.canWrite ? "" : " disabled";
+  showModal(
+    '<h3>📝 Scratchpad — ' + esc(state.board) + '</h3>' +
+    '<p>Freeform project notes. Mention a ticket id (e.g. ' + esc(state.board.replace(/\\s+/g, "")) + ') to surface a line in that ticket\'s work packet.</p>' +
+    '<textarea id="spBody" rows="12" style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px"' + ro + '>' + esc(sp.content || "") + '</textarea>' +
+    '<div class="actions"><button class="ghost" onclick="closeModal()">Close</button>' +
+    (state.canWrite ? '<button class="primary" onclick="saveNotes()">Save</button>' : "") + '</div>'
+  );
+}
+async function saveNotes() {
+  try {
+    await call("set_scratchpad", { project: state.board, content: $("#spBody").value });
+    closeModal(); toast("Notes saved");
+  } catch (e) { toast(e.message.slice(0, 120)); }
+}
+
+async function move(ticket, status) {
+  try {
+    await call("set_status", { project: state.board, ticket, status });
+    toast(ticket + " → " + status);
+    await refresh();
+  } catch (e) {
+    toast(e.message.slice(0, 120));
+    state.license = await loadLicense(); renderLicense();
+  }
+}
+
+/* ---------- onboarding / licensing modals ---------- */
+function showModal(html) { $("#modal").innerHTML = html; $("#overlay").classList.add("show"); }
+function closeModal() { $("#overlay").classList.remove("show"); }
+$("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") closeModal(); });
+
+function openOnboarding() {
+  showModal(
+    '<h3>Welcome to FeatureBoard</h3><p>How are you using it? This sets your license tier.</p>' +
+    '<button class="tier" onclick="pickTier(\'personal\')"><b>Personal / non-commercial</b><span>Free forever. Private, hobby, or personal projects.</span></button>' +
+    '<button class="tier" onclick="pickTier(\'public\')"><b>Public / open-source / nonprofit</b><span>Free forever for non-commercial public work.</span></button>' +
+    '<button class="tier" onclick="pickTier(\'commercial-trial\')"><b>Commercial — start 24h trial</b><span>Evaluate commercially for 24 hours. Writes freeze after that until licensed.</span></button>' +
+    '<button class="tier" onclick="openActivate()"><b>Commercial — I have a license key</b><span>Enter a key issued after signing a commercial agreement.</span></button>'
+  );
+}
+async function pickTier(type) {
+  try { state.license = await call("set_usage_type", { type }); closeModal(); renderLicense(); toast("Usage set: " + type); }
+  catch (e) { toast(e.message); }
+}
+function openActivate() {
+  showModal(
+    '<h3>Activate license key</h3><p>Paste the commercial license key you received.</p>' +
+    '<label>License key</label><textarea id="keyIn" rows="4" placeholder="paste key…"></textarea>' +
+    '<div class="actions"><button class="ghost" onclick="closeModal()">Cancel</button><button class="primary" onclick="doActivate()">Activate</button></div>'
+  );
+}
+async function doActivate() {
+  const key = $("#keyIn").value.trim(); if (!key) return;
+  try { state.license = await call("activate_license", { key }); closeModal(); renderLicense(); refresh(); toast("License activated"); }
+  catch (e) { toast(e.message.slice(0, 140)); }
+}
+function openRequest() {
+  showModal(
+    '<h3>Request a commercial license</h3><p>Send your details to start a commercial agreement.</p>' +
+    '<label>Name</label><input id="rqName"><label>Email</label><input id="rqEmail">' +
+    '<label>Company</label><input id="rqCo"><label>Seats (approx)</label><input id="rqSeats" type="number">' +
+    '<label>Notes</label><textarea id="rqNotes" rows="2"></textarea>' +
+    '<div class="actions"><button class="ghost" onclick="closeModal()">Cancel</button><button class="primary" onclick="doRequest()">Send request</button></div>'
+  );
+}
+async function doRequest() {
+  const args = {
+    name: $("#rqName").value.trim(), email: $("#rqEmail").value.trim(),
+    company: $("#rqCo").value.trim(), notes: $("#rqNotes").value.trim(),
+  };
+  const seats = parseInt($("#rqSeats").value, 10); if (seats) args.seats = seats;
+  if (!args.name || !args.email || !args.company) { toast("Name, email and company are required"); return; }
+  try {
+    const res = await call("request_commercial_license", args);
+    showModal('<h3>Request recorded ✓</h3><p>Reference: <b>' + (res.recorded && res.recorded.id) + '</b>. Complete a signed agreement to receive your key.</p>' +
+      '<div class="actions"><a href="' + (res.mailto || "#") + '"><button class="ghost">Email licensor</button></a>' +
+      '<button class="primary" onclick="closeModal()">Done</button></div>');
+  } catch (e) { toast(e.message.slice(0, 140)); }
+}
+
+/* ---------- boot ---------- */
+function esc(s) { return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+
+$("#typeSeg").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  state.type = b.dataset.type; store.set("type", state.type);
+  [...$("#typeSeg").children].forEach((x) => x.classList.toggle("on", x === b));
+  refresh();
+});
+$("#board").addEventListener("change", (e) => { state.board = e.target.value; store.set("board", state.board); expanded["Done"] = false; refresh(); });
+
+// date-range controls (Done column)
+$("#rangeSeg").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  state.range = b.dataset.range; store.set("range", state.range);
+  [...$("#rangeSeg").children].forEach((x) => x.classList.toggle("on", x === b));
+  $("#refDate").disabled = state.range === "all";
+  renderBoard(state.tasks);
+});
+$("#refDate").addEventListener("change", (e) => {
+  state.refDate = e.target.value || today(); store.set("refDate", state.refDate);
+  renderBoard(state.tasks);
+});
+$("#rangeToday").addEventListener("click", () => {
+  state.refDate = today(); store.set("refDate", state.refDate);
+  $("#refDate").value = state.refDate; renderBoard(state.tasks);
+});
+$("#productFilter").addEventListener("change", (e) => {
+  state.product = e.target.value; store.set("product", state.product);
+  renderBoard(state.tasks);
+});
+$("#addBtn").addEventListener("click", openAdd);
+$("#settingsBtn").addEventListener("click", openSettings);
+$("#notesBtn").addEventListener("click", openNotes);
+$("#brainstormBtn").addEventListener("click", openBrainstorm);
+$("#importBtn").addEventListener("click", openImport);
+$("#linksBtn").addEventListener("click", openLinks);
+$("#testsBtn").addEventListener("click", openTests);
+$("#prioBtn").addEventListener("click", autoPrioritize);
+
+(async function init() {
+  state.license = await loadLicense();
+  let projects = [];
+  try { projects = (await call("list_projects")).projects || []; }
+  catch (e) { $("#content").innerHTML = '<div class="loading">Could not reach FeatureBoard. Is the extension enabled?<br>' + esc(e.message) + '</div>'; return; }
+
+  if (!projects.length) { $("#content").innerHTML = '<div class="loading">No boards yet. Create one from chat: “create a FeatureBoard project called …”.</div>'; }
+  const sel = $("#board");
+  sel.innerHTML = projects.map((p) => '<option value="' + esc(p.name) + '">' + esc(p.name) + ' (' + esc(p.prefix) + ')</option>').join("");
+  if (!state.board || !projects.some((p) => p.name === state.board)) state.board = projects[0] && projects[0].name;
+  sel.value = state.board;
+  [...$("#typeSeg").children].forEach((x) => x.classList.toggle("on", x.dataset.type === state.type));
+  [...$("#rangeSeg").children].forEach((x) => x.classList.toggle("on", x.dataset.range === state.range));
+  $("#refDate").value = state.refDate;
+  $("#refDate").disabled = state.range === "all";
+
+  renderLicense();
+  if (state.board) refresh();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+# Never ship owner-only tooling or the private signing key
+owner/
+owner/keys/
+owner/keys/private.pem
+
+# Dev-only
+artifact/
+test/
+*.test.js
+DESIGN.md
+.git
+.gitignore
+*.tmp-*
+.featureboard/
+featureboard-mcp.mcpb

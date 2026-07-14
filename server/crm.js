@@ -1,0 +1,247 @@
+/**
+ * FeatureBoard CRM store (FBMCPF-43).
+ *
+ * The original OpenClaw app kept a CRM under the board folder: a companies/ dir of
+ * per-company JSON (each with contacts/employees + notes) plus a crm_inbox with an
+ * approvals workflow. Ported AI-natively, the store lives under each board:
+ *
+ *   <project>/crm/
+ *     companies/<slug>.json   { id, slug, name, domain, notes, contacts:[...], createdAt }
+ *     inbox.json              { seq, items:[ { id, from, subject, body, company,
+ *                               status:"pending|approved|rejected", createdAt } ] }
+ *
+ * Companies are one-file-each (easy hand-editing + git diffs); the inbox is a single
+ * JSON with a monotonic id sequence and a pending→approved/rejected review flow.
+ * Pure helpers (slugify, validateApproval) are exported for tests.
+ */
+
+import fs from "node:fs";
+import path from "node:path";
+
+export const CRM_DIR = "crm";
+export const COMPANIES_SUBDIR = "companies";
+export const INBOX_FILE = "inbox.json";
+
+/** Filesystem-safe slug from a company name. */
+export function slugify(name) {
+  const s = String(name || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  if (!s) throw new Error("company name must contain letters or numbers");
+  return s;
+}
+
+/** Normalize an approval decision to a status, or throw. */
+export function validateApproval(decision) {
+  const d = String(decision || "").trim().toLowerCase();
+  const map = { approve: "approved", approved: "approved", reject: "rejected", rejected: "rejected" };
+  if (!map[d]) throw new Error(`decision must be "approve" or "reject" (got "${decision}")`);
+  return map[d];
+}
+
+function ensureDir(dir) {
+  fs.mkdirSync(dir, { recursive: true });
+}
+function readJsonSafe(p) {
+  try {
+    return JSON.parse(fs.readFileSync(p, "utf8"));
+  } catch {
+    return null;
+  }
+}
+function atomicWrite(filePath, data) {
+  const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+  fs.writeFileSync(tmp, data);
+  fs.renameSync(tmp, filePath);
+}
+function writeJson(filePath, obj) {
+  atomicWrite(filePath, JSON.stringify(obj, null, 2) + "\n");
+}
+
+function companiesDir(board, project) {
+  return path.join(board.projectDir(project), CRM_DIR, COMPANIES_SUBDIR);
+}
+function companyPath(board, project, id) {
+  return path.join(companiesDir(board, project), `${id}.json`);
+}
+function inboxPath(board, project) {
+  return path.join(board.projectDir(project), CRM_DIR, INBOX_FILE);
+}
+
+// --- Companies + contacts ---------------------------------------------------
+
+/** Create a company record. Slug is derived from the name and de-duplicated. */
+export function addCompany(board, project, { name, domain, notes } = {}, { now = new Date() } = {}) {
+  if (!name || !String(name).trim()) throw new Error("company name is required");
+  const dir = companiesDir(board, project);
+  ensureDir(dir);
+  let id = slugify(name);
+  let n = 1;
+  while (fs.existsSync(path.join(dir, `${id}.json`))) {
+    n += 1;
+    id = `${slugify(name)}-${n}`;
+  }
+  const company = {
+    id,
+    slug: id,
+    name: String(name).trim(),
+    domain: domain ? String(domain) : null,
+    notes: notes ? String(notes) : null,
+    contacts: [],
+    contactSeq: 0,
+    createdAt: now.toISOString(),
+  };
+  writeJson(companyPath(board, project, id), company);
+  return company;
+}
+
+/** List companies (summaries), alphabetical by name. */
+export function listCompanies(board, project) {
+  const dir = companiesDir(board, project);
+  let files;
+  try {
+    files = fs.readdirSync(dir).filter((f) => f.endsWith(".json"));
+  } catch {
+    return { project, count: 0, companies: [] };
+  }
+  const companies = [];
+  for (const f of files) {
+    const c = readJsonSafe(path.join(dir, f));
+    if (!c) continue;
+    companies.push({
+      id: c.id,
+      name: c.name,
+      domain: c.domain || null,
+      contactCount: Array.isArray(c.contacts) ? c.contacts.length : 0,
+    });
+  }
+  companies.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  return { project, count: companies.length, companies };
+}
+
+/** Full company record (with contacts). Throws if not found. */
+export function getCompany(board, project, id) {
+  const c = readJsonSafe(companyPath(board, project, id));
+  if (!c) throw new Error(`company "${id}" not found`);
+  return c;
+}
+
+/** Add a contact to a company. Contact ids are monotonic within the company. */
+export function addContact(board, project, companyId, { name, email, role, phone } = {}) {
+  if (!name || !String(name).trim()) throw new Error("contact name is required");
+  const c = getCompany(board, project, companyId);
+  const seq = (c.contactSeq || 0) + 1;
+  const contact = {
+    id: `c${seq}`,
+    name: String(name).trim(),
+    email: email ? String(email) : null,
+    role: role ? String(role) : null,
+    phone: phone ? String(phone) : null,
+  };
+  c.contacts = Array.isArray(c.contacts) ? c.contacts : [];
+  c.contacts.push(contact);
+  c.contactSeq = seq;
+  writeJson(companyPath(board, project, companyId), c);
+  return { company: c.id, contact, contactCount: c.contacts.length };
+}
+
+// --- CRM inbox + approvals --------------------------------------------------
+
+function readInbox(board, project) {
+  const data = readJsonSafe(inboxPath(board, project));
+  if (!data) return { seq: 0, items: [] };
+  return { seq: data.seq || 0, items: Array.isArray(data.items) ? data.items : [] };
+}
+function writeInbox(board, project, store) {
+  ensureDir(path.join(board.projectDir(project), CRM_DIR));
+  writeJson(inboxPath(board, project), store);
+}
+
+/** Add an inbox message (starts pending review). */
+export function addInboxMessage(board, project, { from, subject, body, company } = {}, { now = new Date() } = {}) {
+  if (!subject && !body) throw new Error("inbox message needs a subject or body");
+  const store = readInbox(board, project);
+  const seq = store.seq + 1;
+  const item = {
+    id: `m${seq}`,
+    from: from ? String(from) : null,
+    subject: subject ? String(subject) : null,
+    body: body ? String(body) : null,
+    company: company ? String(company) : null,
+    status: "pending",
+    createdAt: now.toISOString(),
+  };
+  store.items.push(item);
+  store.seq = seq;
+  writeInbox(board, project, store);
+  return { project, item, count: store.items.length };
+}
+
+/** List inbox items (newest-first), optionally filtered by status and/or company. */
+export function listInbox(board, project, { status, company } = {}) {
+  const store = readInbox(board, project);
+  const items = store.items
+    .filter((m) => (status ? m.status === status : true))
+    .filter((m) => (company ? m.company === company : true))
+    .slice()
+    .reverse();
+  return { project, count: items.length, items };
+}
+
+/** Approve or reject an inbox item. Records the decision + timestamp. */
+export function reviewInboxMessage(board, project, id, decision, { now = new Date() } = {}) {
+  const status = validateApproval(decision);
+  const store = readInbox(board, project);
+  const item = store.items.find((m) => m.id === id);
+  if (!item) throw new Error(`inbox message ${id} not found`);
+  item.status = status;
+  item.reviewedAt = now.toISOString();
+  writeInbox(board, project, store);
+  return { project, item };
+}
+
+// --- CRM-linked tickets (FBMCPF-47) -----------------------------------------
+
+/** Link a board ticket to a company (stored on company.tickets, de-duplicated). */
+export function linkTicket(board, project, companyId, ticket) {
+  const t = String(ticket || "").trim();
+  if (!t) throw new Error("ticket id is required");
+  const c = getCompany(board, project, companyId);
+  c.tickets = Array.isArray(c.tickets) ? c.tickets : [];
+  if (!c.tickets.includes(t)) c.tickets.push(t);
+  writeJson(companyPath(board, project, companyId), c);
+  return { project, company: c.id, tickets: c.tickets };
+}
+
+/** Remove a ticket link from a company. Throws if it wasn't linked. */
+export function unlinkTicket(board, project, companyId, ticket) {
+  const t = String(ticket || "").trim();
+  const c = getCompany(board, project, companyId);
+  const current = Array.isArray(c.tickets) ? c.tickets : [];
+  if (!current.includes(t)) throw new Error(`ticket ${t} is not linked to ${companyId}`);
+  c.tickets = current.filter((x) => x !== t);
+  writeJson(companyPath(board, project, companyId), c);
+  return { project, company: c.id, tickets: c.tickets };
+}
+
+/** Reverse lookup: which companies a ticket is linked to (surfaces the relationship). */
+export function companiesForTicket(board, project, ticket) {
+  const t = String(ticket || "").trim();
+  const dir = companiesDir(board, project);
+  let files;
+  try {
+    files = fs.readdirSync(dir).filter((f) => f.endsWith(".json"));
+  } catch {
+    return { project, ticket: t, companies: [] };
+  }
+  const companies = [];
+  for (const f of files) {
+    const c = readJsonSafe(path.join(dir, f));
+    if (c && Array.isArray(c.tickets) && c.tickets.includes(t)) {
+      companies.push({ id: c.id, name: c.name });
+    }
+  }
+  return { project, ticket: t, companies };
+}

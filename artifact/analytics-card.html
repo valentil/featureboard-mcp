@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FeatureBoardMCP — Analytics</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.js" integrity="sha384-iU8HYtnGQ8Cy4zl7gbNMOhsDTTKX02BTXptVP/vqAWIaTfM7isw76iyZCsjL2eVi" crossorigin="anonymous"></script>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f6f7fb; --card: #ffffff; --ink: #1c1f2e; --muted: #6b7280; --line: #e7e9f0;
+    --soft: #f8f9fc; --chip: #f2f4f8; --chipink: #40465a;
+    --accent: #4b5bdc; --accentsoft: #eef0fb;
+    --green: #16a34a; --amber: #d9820a; --red: #dc2626;
+    --shadow: 0 1px 2px rgba(20,20,50,.06), 0 3px 12px rgba(20,20,50,.05);
+  }
+  /* dark theme — Claude warm palette, matching the board (FBMCPF-21/56) */
+  html[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #1f1e1c; --card: #262624; --ink: #f2f0e9; --muted: #a8a49a; --line: #37352f;
+    --soft: #2a2926; --chip: #3a3830; --chipink: #c8c3b5;
+    --accent: #d97757; --accentsoft: #33322c;
+    --green: #5bb37f; --amber: #e0a066; --red: #e8877a;
+    --shadow: none;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 20px 20px 48px; }
+  header.top { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  h1 { font-size: 20px; margin: 0; letter-spacing: -.01em; }
+  .righttop { display: flex; align-items: center; gap: 10px; }
+  .updated { color: var(--muted); font-size: 12px; }
+  #themeBtn { font: inherit; cursor: pointer; border: 1px solid var(--line); background: var(--card); color: var(--ink);
+    border-radius: 8px; padding: 5px 9px; line-height: 1; }
+  .sub { color: var(--muted); font-size: 12.5px; margin: 2px 0 18px; }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 18px; }
+  .tile { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; box-shadow: var(--shadow); }
+  .tile .label { color: var(--muted); font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em; font-weight: 600; }
+  .tile .value { font-size: 25px; font-weight: 700; margin-top: 6px; letter-spacing: -.02em; }
+  .tile .foot { font-size: 12px; color: var(--muted); margin-top: 3px; }
+  .pos { color: var(--green); } .neg { color: var(--red); } .acc { color: var(--accent); }
+
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; margin-bottom: 16px; }
+  @media (max-width: 780px) { .grid2 { grid-template-columns: 1fr; } }
+  .panel { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; box-shadow: var(--shadow); }
+  .panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 12px; display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .panel h2 select { font: inherit; font-size: 12px; text-transform: none; letter-spacing: 0; border: 1px solid var(--line); border-radius: 7px; padding: 3px 7px; background: var(--card); color: var(--ink); }
+
+  .progress { height: 10px; border-radius: 999px; background: var(--line); overflow: hidden; display: flex; }
+  .progress > span { display: block; height: 100%; }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 10px; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 5px; }
+  .chartbox { position: relative; height: 260px; }
+  .chartbox.tall { height: 300px; }
+
+  .bugrow { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+  .bugstat { flex: 1; min-width: 90px; background: var(--soft); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+  .bugstat .v { font-size: 20px; font-weight: 700; }
+  .bugstat .l { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+  .hot { display:flex; align-items:center; gap:8px; font-size:12.5px; padding:5px 0; border-top:1px solid var(--line); }
+  .hot:first-child { border-top:none; }
+  .hot .bar { height:8px; border-radius:4px; background:var(--red); opacity:.8; }
+  .hot .nm { min-width:90px; }
+
+  .feed { display: flex; flex-direction: column; max-height: 360px; overflow: auto; }
+  .ev { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; padding: 11px 2px; border-top: 1px solid var(--line); align-items: start; }
+  .ev:first-child { border-top: none; }
+  .tick { font-weight: 700; font-size: 12px; color: var(--accent); background: var(--accentsoft); border-radius: 6px; padding: 2px 7px; white-space: nowrap; height: fit-content; }
+  .ev .txt { font-size: 12.5px; color: var(--ink); }
+  .ev .txt .ttl { font-weight: 600; color: var(--ink); display: block; margin-bottom: 1px; }
+  .ev .meta { text-align: right; font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+  .datehead { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing:.04em; padding: 10px 2px 4px; border-top: 2px solid var(--line); margin-top: 4px; }
+  .datehead:first-child { border-top: none; margin-top: 0; }
+  .muted { color: var(--muted); }
+  .err { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; padding: 12px 14px; border-radius: 10px; }
+  html[data-theme="dark"] .err { background: #3a2e2a; border-color: #5c4038; color: #e8a596; }
+  .skeleton { color: var(--muted); padding: 40px 0; text-align: center; }
+  .donerow { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+  .chip { font-size: 11.5px; background: var(--chip); border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px; color: var(--chipink); }
+  .chip b { color: var(--accent); font-weight: 700; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div><h1>FeatureBoardMCP — Analytics</h1></div>
+    <div class="righttop">
+      <span class="updated" id="updated"></span>
+      <button id="themeBtn" title="Toggle dark mode">🌙</button>
+    </div>
+  </header>
+  <div class="sub">Live dashboard of what we've built on the FeatureBoardMCP board — velocity, timeline, bug health and work log, straight from the board.</div>
+  <div id="content"><div class="skeleton">Loading analytics…</div></div>
+</div>
+
+<script>
+const PROJECT = "FeatureBoardMCP";
+const charts = {};
+let WL = [];
+let TITLES = {};
+let DATA = null; // cached fetched data so we can re-render charts on theme toggle
+
+const store = {
+  get: (k, d) => { try { return JSON.parse(localStorage.getItem("fb_" + k)) ?? d; } catch { return d; } },
+  set: (k, v) => { try { localStorage.setItem("fb_" + k, JSON.stringify(v)); } catch {} },
+};
+function applyTheme(t) {
+  document.documentElement.dataset.theme = t === "dark" ? "dark" : "";
+  const b = document.getElementById("themeBtn");
+  if (b) b.textContent = t === "dark" ? "☀️" : "🌙";
+}
+let theme = store.get("theme", (window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light");
+applyTheme(theme);
+// palette for canvas charts (Chart.js can't read CSS vars), switches with the theme
+function pal() {
+  const d = document.documentElement.dataset.theme === "dark";
+  return {
+    grid: d ? "#37352f" : "#eef0f6", tick: d ? "#a8a49a" : "#6b7280", label: d ? "#e8e5dd" : "#40465a",
+    accent: d ? "#d97757" : "#4b5bdc", green: d ? "#5bb37f" : "#16a34a", red: d ? "#e8877a" : "#dc2626",
+    muted: d ? "#8f8b81" : "#9aa1b3",
+  };
+}
+
+async function call(name, args) {
+  const r = await window.cowork.callMcpTool(name, args);
+  if (r && r.isError) throw new Error((r.content && r.content[0] && r.content[0].text) || ("tool error: " + name));
+  return r && (r.structuredContent ?? (r.content && r.content[0] && JSON.parse(r.content[0].text)));
+}
+function fmt(n) { n = n || 0; return n >= 1000 ? (n/1000).toFixed(n >= 10000 ? 0 : 1).replace(/\.0$/,"") + "k" : String(n); }
+function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c])); }
+function shorten(s, n) { s = String(s||""); return s.length > n ? s.slice(0, n-1) + "…" : s; }
+function daysBetween(a, b) { const ms = Date.parse(b) - Date.parse(a); return isNaN(ms) ? null : ms / 86400000; }
+function destroyCharts() { Object.keys(charts).forEach(k => { try { charts[k].destroy(); } catch {} delete charts[k]; }); }
+
+async function load() {
+  const content = document.getElementById("content");
+  try {
+    const [metrics, wl, all] = await Promise.all([
+      call("mcp__FeatureBoard__get_metrics", { project: PROJECT }),
+      call("mcp__FeatureBoard__get_work_log", { project: PROJECT, limit: 300 }),
+      call("mcp__FeatureBoard__list_tasks", { project: PROJECT, limit: 500, compact: true }),
+    ]);
+    const f = metrics.features || {}, b = metrics.bugs || {};
+    const vel = (metrics.velocity) || {};
+    const v = vel.totals || {};
+    const byDate = vel.tokensByDate || {};
+    WL = (wl && wl.entries) || [];
+    const tasks = (all && all.tasks) || [];
+    TITLES = {};
+    tasks.forEach(t => { TITLES[t.ticket] = t.title; });
+
+    const fTotal = f.total||0, fDone = f.done||0, fProg = f.inProgress||0, fTodo = f.todo||0;
+    const donePctExact = fTotal ? (fDone/fTotal*100) : 0;
+    const progPct = fTotal ? (fProg/fTotal*100) : 0;
+    document.getElementById("updated").textContent = "Updated " + new Date().toLocaleString();
+
+    const tiles = [
+      { label:"Features shipped", value: fDone, foot:"of "+fTotal+" ("+Math.round(donePctExact)+"%)", cls:"pos" },
+      { label:"In progress", value: fProg, foot: fTodo+" still to do", cls:"acc" },
+      { label:"Bugs closed", value: b.closed||0, foot:(b.open||0)+" open", cls:(b.open?"":"pos") },
+      { label:"Lines changed", raw:true, value:"<span class='pos'>+"+fmt(v.additions)+"</span> <span class='neg'>−"+fmt(v.deletions)+"</span>", foot:(v.events||0)+" work events" },
+      { label:"Tokens spent", value: fmt(v.tokens), foot:(v.activeDays||0)+" active day"+((v.activeDays===1)?"":"s"), cls:"acc" },
+    ];
+    const tilesHTML = '<div class="tiles">' + tiles.map(t =>
+      '<div class="tile"><div class="label">'+esc(t.label)+'</div>'+
+      '<div class="value '+(t.cls||"")+'">'+(t.raw?t.value:esc(t.value))+'</div>'+
+      '<div class="foot">'+esc(t.foot)+'</div></div>').join("") + '</div>';
+
+    const barHTML =
+      '<div class="panel" style="margin-bottom:16px"><h2>Feature progress</h2>'+
+      '<div class="progress"><span style="width:'+donePctExact+'%;background:var(--green)"></span>'+
+      '<span style="width:'+progPct+'%;background:var(--amber)"></span></div>'+
+      '<div class="legend"><span><i class="dot" style="background:var(--green)"></i>Done '+fDone+'</span>'+
+      '<span><i class="dot" style="background:var(--amber)"></i>In progress '+fProg+'</span>'+
+      '<span><i class="dot" style="background:var(--line)"></i>Todo '+fTodo+'</span></div></div>';
+
+    const bugs = tasks.filter(t => t.type === "bug");
+    const resolved = bugs.filter(t => t.completed && t.created).map(t => daysBetween(t.created, t.completed)).filter(n => n != null && n >= 0);
+    const mttr = resolved.length ? (resolved.reduce((a,c)=>a+c,0)/resolved.length) : null;
+    const mttrTxt = mttr == null ? "n/a" : (mttr < 1 ? "<1d" : mttr.toFixed(1)+"d");
+    const hotByProd = {};
+    bugs.forEach(t => { const p = t.product || "Unassigned"; hotByProd[p] = (hotByProd[p]||0)+1; });
+    const hotRows = Object.keys(hotByProd).map(k => ({ name:k, n:hotByProd[k] })).sort((a,b)=>b.n-a.n).slice(0,6);
+    const hotMax = hotRows.reduce((m,r)=>Math.max(m,r.n),0) || 1;
+    const bugHTML =
+      '<div class="panel"><h2>Bug health</h2>'+
+      '<div class="bugrow">'+
+        '<div class="bugstat"><div class="v">'+mttrTxt+'</div><div class="l">Mean time to resolve</div></div>'+
+        '<div class="bugstat"><div class="v neg">'+(b.open||0)+'</div><div class="l">Open</div></div>'+
+        '<div class="bugstat"><div class="v pos">'+(b.closed||0)+'</div><div class="l">Closed</div></div>'+
+      '</div>'+
+      '<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin:4px 0 6px">Hot-spots by product</div>'+
+      (hotRows.length ? hotRows.map(r =>
+        '<div class="hot"><span class="nm">'+esc(shorten(r.name,16))+'</span>'+
+        '<span class="bar" style="width:'+(r.n/hotMax*120)+'px"></span><span class="muted">'+r.n+'</span></div>').join("")
+        : '<div class="muted" style="font-size:12.5px">No bugs recorded.</div>')+
+      '</div>';
+
+    const effByT = {};
+    WL.forEach(e => { if (!e.ticket) return; effByT[e.ticket] = effByT[e.ticket] || {add:0,del:0}; effByT[e.ticket].add += e.additions||0; effByT[e.ticket].del += e.deletions||0; });
+    const effRows = Object.keys(effByT).map(k => ({ ticket:k, add:effByT[k].add, del:effByT[k].del, total:effByT[k].add+effByT[k].del }))
+      .sort((a,b)=>b.total-a.total).slice(0,10);
+
+    const wlTickets = [...new Set(WL.map(e => e.ticket).filter(Boolean))].sort();
+    const filterSel = '<select id="wlFilter"><option value="">All tickets</option>'+
+      wlTickets.map(t => '<option value="'+esc(t)+'">'+esc(t)+'</option>').join("")+'</select>';
+
+    const doneTickets = tasks.filter(t => t.status === "Done");
+    const chipsHTML = doneTickets.length
+      ? '<div class="panel" style="margin-top:16px"><h2>Shipped features &amp; fixed bugs ('+doneTickets.length+')</h2><div class="donerow">'+
+          doneTickets.slice(0,50).map(t => '<span class="chip"><b>'+esc(t.ticket)+'</b> '+esc(shorten(t.title,40))+'</span>').join("")+'</div></div>'
+      : "";
+
+    content.innerHTML =
+      tilesHTML + barHTML +
+      '<div class="grid2">'+
+        '<div class="panel"><h2>Velocity — lines &amp; tokens per day</h2><div class="chartbox"><canvas id="velocity"></canvas></div></div>'+
+        '<div class="panel"><h2>Timeline — created vs completed</h2><div class="chartbox"><canvas id="timeline"></canvas></div></div>'+
+      '</div>'+
+      '<div class="grid2">'+
+        '<div class="panel"><h2>Effort by ticket — lines changed</h2><div class="chartbox tall"><canvas id="effort"></canvas></div></div>'+
+        bugHTML +
+      '</div>'+
+      '<div class="panel"><h2>Work log <span>'+filterSel+'</span></h2><div class="feed" id="wlFeed"></div></div>'+
+      chipsHTML;
+
+    DATA = { byDate, tasks, effRows };
+    renderCharts();
+    renderWorkLog("");
+    const sel = document.getElementById("wlFilter");
+    if (sel) sel.addEventListener("change", e => renderWorkLog(e.target.value));
+  } catch (err) {
+    content.innerHTML = '<div class="err"><b>Couldn\'t load analytics.</b><br>'+esc(err && err.message || String(err))+'</div>';
+  }
+}
+
+function renderCharts() {
+  if (!DATA) return;
+  destroyCharts();
+  buildVelocity(DATA.byDate);
+  buildTimeline(DATA.tasks);
+  buildEffort(DATA.effRows);
+}
+
+function buildVelocity(byDate) {
+  const dates = Object.keys(byDate).sort();
+  const el = document.getElementById("velocity"); if (!el) return;
+  if (!dates.length) { el.parentElement.innerHTML = '<div class="muted" style="padding:40px 0;text-align:center">No velocity data yet.</div>'; return; }
+  const p = pal();
+  charts.velocity = new Chart(el, {
+    data: {
+      labels: dates,
+      datasets: [
+        { type:"bar", label:"Additions", data: dates.map(d => byDate[d].additions||0), backgroundColor: p.green, yAxisID:"y", borderRadius:4 },
+        { type:"bar", label:"Deletions", data: dates.map(d => byDate[d].deletions||0), backgroundColor: p.red, yAxisID:"y", borderRadius:4 },
+        { type:"line", label:"Tokens", data: dates.map(d => byDate[d].tokens||0), borderColor: p.accent, backgroundColor: p.accent, yAxisID:"y1", tension:.3, pointRadius:3 },
+      ],
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      scales: {
+        x: { grid:{ display:false }, ticks:{ color:p.tick, font:{size:11} } },
+        y: { position:"left", beginAtZero:true, grid:{ color:p.grid }, ticks:{ color:p.tick }, title:{ display:true, text:"lines", color:p.muted, font:{size:10} } },
+        y1:{ position:"right", beginAtZero:true, grid:{ display:false }, ticks:{ color:p.accent, callback:v=>v>=1000?(v/1000)+"k":v }, title:{ display:true, text:"tokens", color:p.accent, font:{size:10} } },
+      },
+      plugins: { legend:{ labels:{ color:p.label, boxWidth:12, font:{size:11} } } },
+    },
+  });
+}
+
+function buildTimeline(tasks) {
+  const el = document.getElementById("timeline"); if (!el) return;
+  const created = {}, completed = {};
+  tasks.forEach(t => {
+    if (t.created) created[t.created] = (created[t.created]||0)+1;
+    if (t.completed) completed[t.completed] = (completed[t.completed]||0)+1;
+  });
+  const dates = [...new Set([...Object.keys(created), ...Object.keys(completed)])].sort();
+  if (!dates.length) { el.parentElement.innerHTML = '<div class="muted" style="padding:40px 0;text-align:center">No dated tickets yet.</div>'; return; }
+  const p = pal();
+  charts.timeline = new Chart(el, {
+    type:"bar",
+    data: {
+      labels: dates,
+      datasets: [
+        { label:"Created", data: dates.map(d => created[d]||0), backgroundColor: p.accent, borderRadius:4 },
+        { label:"Completed", data: dates.map(d => completed[d]||0), backgroundColor: p.green, borderRadius:4 },
+      ],
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      scales: { x:{ grid:{display:false}, ticks:{ color:p.tick, font:{size:11} } }, y:{ beginAtZero:true, grid:{ color:p.grid }, ticks:{ color:p.tick, precision:0 } } },
+      plugins: { legend:{ labels:{ color:p.label, boxWidth:12, font:{size:11} } } },
+    },
+  });
+}
+
+function buildEffort(rows) {
+  const el = document.getElementById("effort"); if (!el) return;
+  if (!rows.length) { el.parentElement.innerHTML = '<div class="muted" style="padding:40px 0;text-align:center">No logged effort yet.</div>'; return; }
+  const p = pal();
+  charts.effort = new Chart(el, {
+    type:"bar",
+    data: {
+      labels: rows.map(r => r.ticket),
+      datasets: [
+        { label:"Additions", data: rows.map(r=>r.add), backgroundColor: p.green, borderRadius:4, stack:"s" },
+        { label:"Deletions", data: rows.map(r=>r.del), backgroundColor: p.red, borderRadius:4, stack:"s" },
+      ],
+    },
+    options: {
+      indexAxis:"y", responsive:true, maintainAspectRatio:false,
+      scales: { x:{ stacked:true, grid:{ color:p.grid }, ticks:{ color:p.tick } }, y:{ stacked:true, grid:{ display:false }, ticks:{ color:p.label, font:{ weight:"600" } } } },
+      plugins: { legend:{ labels:{ color:p.label, boxWidth:12, font:{size:11} } },
+        tooltip:{ callbacks:{ afterTitle: items => TITLES[items[0].label] ? shorten(TITLES[items[0].label],50) : "" } } },
+    },
+  });
+}
+
+function renderWorkLog(filter) {
+  const box = document.getElementById("wlFeed"); if (!box) return;
+  const rows = (filter ? WL.filter(e => e.ticket === filter) : WL);
+  if (!rows.length) { box.innerHTML = '<div class="muted" style="padding:20px 2px">No work-log entries.</div>'; return; }
+  let html = "", lastDate = null;
+  rows.forEach(e => {
+    if (e.date !== lastDate) { html += '<div class="datehead">'+esc(e.date)+'</div>'; lastDate = e.date; }
+    const ttl = TITLES[e.ticket] ? '<span class="ttl">'+esc(shorten(TITLES[e.ticket],62))+'</span>' : "";
+    const churn = (e.additions != null || e.deletions != null)
+      ? '<span class="pos">+'+(e.additions||0)+'</span> <span class="neg">−'+(e.deletions||0)+'</span><br>' : "";
+    html += '<div class="ev"><div class="tick">'+esc(e.ticket||"—")+'</div>'+
+      '<div class="txt">'+ttl+esc(shorten(e.text,170))+'</div>'+
+      '<div class="meta">'+churn+esc(e.time||"")+'<br><span class="muted">'+esc(e.model||"")+'</span></div></div>';
+  });
+  box.innerHTML = html;
+}
+
+document.getElementById("themeBtn").addEventListener("click", () => {
+  theme = (store.get("theme", "light") === "dark") ? "light" : "dark";
+  store.set("theme", theme); applyTheme(theme);
+  renderCharts(); // rebuild canvases with theme-aware colors
+});
+
+load();
+</script>
+</body>
+</html>
