@@ -23,7 +23,7 @@ import {
   addComment, listComments, removeComment,
 } from "./media.js";
 import { startDriftRun, recordDriftScore, driftReport, applyDriftRemediation } from "./drift.js";
-import { scanBoardCleanup, pruneBoard } from "./cleanup.js";
+import { scanBoardCleanup, pruneBoard, scanTestFiles } from "./cleanup.js";
 import { listCodeTree, readCodeFile, codeFileMap } from "./explorer.js";
 import { saveTestPage, listTestPages, getTestPage, removeTestPage } from "./testpages.js";
 import { groupBySuite, coverageByProduct } from "./testing.js";
@@ -50,7 +50,7 @@ import { getGitConfig, setGitConfig, commitFeature } from "./git.js";
 import { scaffoldSite } from "./sitegen.js";
 import { setAnalyticsConfig, autoConfigureAnalytics, getSiteTraffic } from "./analytics.js";
 import { suggestPackaging, savePackagingConfig, getPackagingConfig, validatePackaging } from "./packaging.js";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import nodePath from "node:path";
 
@@ -727,6 +727,31 @@ server.registerTool(
     const board = getBoard();
     if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
     return scanBoardCleanup(board, project, { staleDays, similarity });
+  })
+);
+
+server.registerTool(
+  "scan_test_cleanup",
+  {
+    title: "Scan tests for cleanup",
+    description: "Read-only deep-clean of the project's test/ dir: finds byte-identical duplicate test files, stale files whose filename ticket id is no longer on the board, and empty stub files (only TODO placeholder assertions). Returns a suggested removal set. Never deletes — companion to scan_board_cleanup.",
+    inputSchema: { project: z.string() },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    const cfg = meta.getProjectConfig(board, project);
+    if (!cfg.codeLocation) throw new Error("no codeLocation set for this project (set it with set_project_config).");
+    const testDir = nodePath.join(cfg.codeLocation, "test");
+    let files = [];
+    if (existsSync(testDir)) {
+      files = readdirSync(testDir)
+        .filter((f) => /\.test\.(m?js|ts)$/.test(f))
+        .map((f) => ({ name: f, content: (() => { try { return readFileSync(nodePath.join(testDir, f), "utf8"); } catch { return ""; } })() }));
+    }
+    const known = board.listTasks(project, {}).map((t) => t.ticketNumber);
+    return { project, testDir, ...scanTestFiles(files, { knownTickets: known }) };
   })
 );
 

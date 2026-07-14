@@ -180,3 +180,69 @@ export function pruneBoard(board, project, tickets = [], { confirm = false } = {
   }
   return { project, dryRun: false, deleted, missing, count: deleted.length };
 }
+
+
+// --- Test-suite deep-clean (FBMCPF-104) -------------------------------------
+
+function normalizeContent(c) {
+  return String(c || "").replace(/\s+/g, " ").trim();
+}
+
+/** True when every assertion in a test file is the generated TODO placeholder. */
+export function isStubOnly(content) {
+  const c = String(content || "");
+  const tests = (c.match(/\btest\s*\(/g) || []).length;
+  const asserts = (c.match(/assert\./g) || []).length;
+  const todos = (c.match(/assert\.ok\(\s*true\s*,\s*["'`]TODO/gi) || []).length;
+  return tests >= 1 && asserts >= 1 && todos === asserts;
+}
+
+/**
+ * Read-only scan of a set of test files ({ name, content }) for likely cruft:
+ *  - duplicates: byte-identical (whitespace-normalized) content, grouped;
+ *  - stale: filename embeds a ticket id (e.g. FBF-9-*.test.js) not in knownTickets;
+ *  - emptyStubs: only TODO-placeholder assertions (never filled in).
+ * Returns a suggested removal set. Deletes nothing.
+ */
+export function scanTestFiles(files = [], { knownTickets = [], ticketRe = /\b([A-Z]{2,10}-\d+)\b/ } = {}) {
+  const known = new Set((knownTickets || []).map((t) => String(t)));
+  const byContent = new Map();
+  for (const f of files) {
+    const key = normalizeContent(f.content);
+    if (!byContent.has(key)) byContent.set(key, []);
+    byContent.get(key).push(f.name);
+  }
+  const duplicates = [];
+  for (const names of byContent.values()) {
+    if (names.length > 1) {
+      const sorted = names.slice().sort();
+      duplicates.push({ files: sorted, keep: sorted[0], removeCandidates: sorted.slice(1) });
+    }
+  }
+  const stale = [];
+  for (const f of files) {
+    const m = String(f.name).match(ticketRe);
+    if (m && !known.has(m[1])) stale.push({ file: f.name, ticket: m[1], reason: "ticket no longer on the board" });
+  }
+  const emptyStubs = [];
+  for (const f of files) {
+    if (isStubOnly(f.content)) emptyStubs.push({ file: f.name, reason: "only TODO-placeholder assertions" });
+  }
+  const suggestedRemovals = [...new Set([
+    ...duplicates.flatMap((d) => d.removeCandidates),
+    ...stale.map((s) => s.file),
+  ])];
+  return {
+    files: files.length,
+    duplicateGroups: duplicates.length,
+    duplicates,
+    staleCount: stale.length,
+    stale,
+    emptyStubCount: emptyStubs.length,
+    emptyStubs,
+    suggestedRemovals,
+    note: suggestedRemovals.length
+      ? "Review, then delete the suggested files yourself (emptyStubs are flagged separately — fill them in rather than delete)."
+      : "No duplicate or stale test files found.",
+  };
+}
