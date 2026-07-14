@@ -375,3 +375,26 @@ export function companiesForTicket(board, project, ticket) {
   }
   return { project, ticket: t, companies };
 }
+
+/**
+ * A company's linked board tickets, split into features/bugs and ranked by
+ * priority (lowest number = highest priority; unset sorts last). `getTask(id)`
+ * -> ticket|null is injected so this stays pure/testable.
+ */
+export function companyPriorityTickets(board, project, companyId, getTask) {
+  const c = getCompany(board, project, companyId);
+  const ids = Array.isArray(c.tickets) ? c.tickets : [];
+  const found = [];
+  const missing = [];
+  for (const id of ids) {
+    let t = null;
+    try { t = getTask(id); } catch { t = null; }
+    if (t) found.push(t); else missing.push(id);
+  }
+  const rank = (t) => (t.priority == null || t.priority === "" ? Infinity : Number(t.priority));
+  const byRank = (a, b) => rank(a) - rank(b) || String(a.ticketNumber).localeCompare(String(b.ticketNumber));
+  const view = (t) => ({ ticket: t.ticketNumber, title: t.title, status: t.status, priority: t.priority ?? null, product: t.product ?? null });
+  const features = found.filter((t) => t.type === "feature").sort(byRank).map(view);
+  const bugs = found.filter((t) => t.type === "bug").sort(byRank).map(view);
+  return { project, company: c.id, features, bugs, missing };
+}

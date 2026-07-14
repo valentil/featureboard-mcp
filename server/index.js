@@ -31,7 +31,7 @@ import { draftShare, listShares, removeShare, platformLimit } from "./social.js"
 import {
   addCompany, listCompanies, getCompany, setCompanyProducts, addContact, updateContact, removeContact,
   addInboxMessage, listInbox, reviewInboxMessage, submitIntake,
-  linkTicket, unlinkTicket, companiesForTicket,
+  linkTicket, unlinkTicket, companiesForTicket, companyPriorityTickets,
   addAgreement, updateAgreement, removeAgreement,
 } from "./crm.js";
 import { book, cancelBooking, listBookings } from "./bookings.js";
@@ -2261,6 +2261,21 @@ server.registerTool(
     const board = getBoard();
     if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
     return companiesForTicket(board, project, ticket);
+  })
+);
+
+server.registerTool(
+  "company_priority_tickets",
+  {
+    title: "A company's tickets by priority",
+    description: "List a company's linked board tickets, split into features and bugs and ranked by priority (highest first, i.e. lowest number). Uses the ticket\u2194customer links; reports any linked ids no longer on the board as missing.",
+    inputSchema: { project: z.string(), company: z.string().describe("Company id (slug).") },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project, company }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return companyPriorityTickets(board, project, company, (id) => board.getTask(project, id));
   })
 );
 

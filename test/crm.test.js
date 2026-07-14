@@ -7,7 +7,7 @@ import {
   slugify, validateApproval,
   addCompany, listCompanies, getCompany, setCompanyProducts, addContact, updateContact, removeContact,
   addInboxMessage, listInbox, reviewInboxMessage,
-  linkTicket, unlinkTicket, companiesForTicket,
+  linkTicket, unlinkTicket, companiesForTicket, companyPriorityTickets,
   validateAgreementKind, addAgreement, updateAgreement, removeAgreement,
 } from "../server/crm.js";
 
@@ -156,6 +156,25 @@ test("companiesForTicket reverse-lookup across companies", () => {
   assert.equal(companiesForTicket(board, "P", "FBF-1").companies.length, 2);
   assert.deepEqual(companiesForTicket(board, "P", "FBB-2").companies.map((c) => c.id), ["beta"]);
   assert.equal(companiesForTicket(board, "P", "NONE").companies.length, 0);
+});
+
+// FBMCPF-99 — per-company prioritized tickets
+test("companyPriorityTickets ranks by priority, splits type, reports missing", () => {
+  const { board } = tmpBoard();
+  addCompany(board, "P", { name: "Acme" });
+  linkTicket(board, "P", "acme", "FBF-1");
+  linkTicket(board, "P", "acme", "FBF-2");
+  linkTicket(board, "P", "acme", "FBB-3");
+  linkTicket(board, "P", "acme", "GONE-9");
+  const db = {
+    "FBF-1": { ticketNumber: "FBF-1", title: "A", type: "feature", status: "Todo", priority: 5 },
+    "FBF-2": { ticketNumber: "FBF-2", title: "B", type: "feature", status: "Todo", priority: 1 },
+    "FBB-3": { ticketNumber: "FBB-3", title: "C", type: "bug", status: "Todo", priority: 2 },
+  };
+  const r = companyPriorityTickets(board, "P", "acme", (id) => db[id] || null);
+  assert.deepEqual(r.features.map((t) => t.ticket), ["FBF-2", "FBF-1"]);
+  assert.deepEqual(r.bugs.map((t) => t.ticket), ["FBB-3"]);
+  assert.deepEqual(r.missing, ["GONE-9"]);
 });
 
 // --- FBMCPF-77: contracts & licenses ---
