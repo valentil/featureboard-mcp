@@ -108,7 +108,7 @@ Keep the board honest: a ticket should be In Progress only while you are activel
 Showing the board: when the user asks to see, open, or check on the board in natural language — e.g. "show me the board", "show the featureboard", "open the board", "let's see the tasks/queue", "what's on my plate", "how's it going / how are we looking", "give me a status", or "show velocity/analytics" — call the get_board tool and render the HTML it returns as a Cowork artifact (create_artifact with id "featureboard-board", or update_artifact if one is already open — reuse it, don't create duplicates). Do NOT hand-write your own board or reply only in text: get_board returns the shipped UI, which already has the Todo / In Progress / Done columns, the product filter, the dark/light theme toggle, and the 📊 Analytics dashboard (velocity, timeline, bug health, and the work-log feed) — tasks + analytics + everything in one place. List this server's tools in the artifact's mcp_tools so its buttons and charts work. Pair the artifact with a one- or two-line text summary of where things stand.`;
 
 const server = new McpServer(
-  { name: "featureboard", version: "0.3.2" },
+  { name: "featureboard", version: "0.3.3" },
   { instructions: INSTRUCTIONS }
 );
 

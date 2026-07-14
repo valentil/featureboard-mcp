@@ -1,6 +1,6 @@
 {
   "name": "featureboard-mcp",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "FeatureBoard as a local MCP server: a markdown-backed feature/bug board Claude can manage.",
   "author": "Lewis Valentine",
   "license": "SEE LICENSE IN LICENSE.md",
