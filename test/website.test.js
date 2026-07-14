@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
-  esc, defaultSite, renderSiteHtml, seoTags, normalizeSeo, setPageSeo,
+  esc, defaultSite, renderSiteHtml, seoTags, normalizeSeo, setPageSeo, buildNav,
   getSite, setSite, editSection, setLoginGate,
   addPage, listPages, removePage, sanitizeSlug,
   renderSite, siteRoot, saveAsset, listAssets, sanitizeAssetFile,
@@ -64,6 +64,33 @@ test("setPageSeo updates home + sub-page and renders into the file", () => {
   assert.match(aboutHtml, /content="About desc"/);
   assert.match(aboutHtml, /og:type" content="article"/);
   assert.throws(() => setPageSeo(board, "P", { slug: "nope", description: "x" }), /not found/);
+});
+
+// FBMCPF-96 — shared nav across pages
+test("buildNav lists home + pages and marks current", () => {
+  const cfg = { title: "Home", pages: [{ slug: "about", title: "About" }, { slug: "pricing" }] };
+  const nav = buildNav(cfg, "about");
+  assert.deepEqual(nav.map((n) => n.href), ["index.html", "about.html", "pricing.html"]);
+  assert.equal(nav.find((n) => n.slug === "about").current, true);
+  assert.equal(nav.find((n) => n.slug === "index").current, false);
+  assert.equal(nav[2].label, "pricing"); // slug fallback label
+});
+
+test("nav is rendered on home + every sub-page, current-marked", () => {
+  const { board, dir } = tmpBoard();
+  setSite(board, "P", { title: "Home", sections: [] });
+  addPage(board, "P", { slug: "about", title: "About" });
+  const home = fs.readFileSync(path.join(dir, SITE_DIR, SITE_HTML), "utf8");
+  const about = fs.readFileSync(path.join(dir, SITE_DIR, "about.html"), "utf8");
+  assert.match(home, /class="site-nav"/);
+  assert.match(home, /href="about.html"/);
+  assert.match(home, /href="index.html"[^>]*aria-current="page"/); // home marks index current
+  assert.match(about, /href="about.html"[^>]*aria-current="page"/); // about marks itself current
+});
+
+test("single-page site renders no nav", () => {
+  const html = renderSiteHtml({ title: "Solo", nav: buildNav({ title: "Solo" }, "index") });
+  assert.doesNotMatch(html, /<nav/);
 });
 
 test("defaultSite seeds title from project, gate disabled", () => {

@@ -112,6 +112,26 @@ export function seoTags(config = {}) {
   return tags.join("\n");
 }
 
+/** Shared nav model (FBMCPF-96): home + every sub-page, marking the current one. */
+export function buildNav(cfg = {}, currentSlug) {
+  const pages = Array.isArray(cfg.pages) ? cfg.pages : [];
+  const items = [{ href: "index.html", label: cfg.title || "Home", slug: "index" }];
+  for (const p of pages) {
+    if (!p || !p.slug) continue;
+    items.push({ href: `${p.slug}.html`, label: p.title || p.slug, slug: p.slug });
+  }
+  return items.map((it) => ({ ...it, current: it.slug === currentSlug }));
+}
+
+/** Render the shared nav (empty for a single-page site). */
+function navHtml(nav) {
+  if (!Array.isArray(nav) || nav.length <= 1) return "";
+  const links = nav
+    .map((n) => `<a href="${esc(n.href)}"${n.current ? ' aria-current="page" class="current"' : ""}>${esc(n.label)}</a>`)
+    .join("");
+  return `<nav class="site-nav">${links}</nav>`;
+}
+
 /** Render the splash page HTML from a site config (pure, self-contained). */
 export function renderSiteHtml(config = {}) {
   const title = esc(config.title || "Untitled");
@@ -156,8 +176,12 @@ ${analyticsSnippet(config.analytics)}
   h2{color:var(--accent);margin:0 0 .4rem}
   .body{line-height:1.6}
   footer{text-align:center;color:var(--muted);padding:2rem;font-size:.85rem}
+  .site-nav{display:flex;flex-wrap:wrap;gap:1rem;justify-content:center;padding:1rem 1.5rem;border-bottom:1px solid rgba(120,120,120,.18)}
+  .site-nav a{color:var(--muted);text-decoration:none;font-size:.95rem}
+  .site-nav a.current,.site-nav a:hover{color:var(--accent)}
 </style></head>
 <body>
+  ${navHtml(config.nav)}
   <header><h1>${title}</h1>${tagline}</header>
   <main>${sections}</main>
   <footer>Built with FeatureBoard</footer>
@@ -245,14 +269,14 @@ function persist(board, project, cfg, now) {
   const dir = siteDir(board, project);
   fs.mkdirSync(dir, { recursive: true });
   atomicWrite(path.join(dir, SITE_CONFIG), JSON.stringify(cfg, null, 2) + "\n");
-  const html = renderSiteHtml(cfg);
+  const html = renderSiteHtml({ ...cfg, nav: buildNav(cfg, "index") });
   atomicWrite(path.join(dir, SITE_HTML), html);
   // Re-render every sub-page so theme / login-gate changes propagate.
   const pages = Array.isArray(cfg.pages) ? cfg.pages : [];
   for (const pg of pages) {
     if (!pg || !pg.slug) continue;
     if (pg.raw) continue; // raw pages (e.g. published media) keep their own HTML
-    atomicWrite(path.join(dir, `${pg.slug}.html`), renderSiteHtml(pageConfig(cfg, pg)));
+    atomicWrite(path.join(dir, `${pg.slug}.html`), renderSiteHtml({ ...pageConfig(cfg, pg), nav: buildNav(cfg, pg.slug) }));
   }
   return {
     project,
