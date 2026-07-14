@@ -29,7 +29,7 @@ import { saveTestPage, listTestPages, getTestPage, removeTestPage } from "./test
 import { groupBySuite } from "./testing.js";
 import { draftShare, listShares, removeShare, platformLimit } from "./social.js";
 import {
-  addCompany, listCompanies, getCompany, addContact, updateContact, removeContact,
+  addCompany, listCompanies, getCompany, setCompanyProducts, addContact, updateContact, removeContact,
   addInboxMessage, listInbox, reviewInboxMessage, submitIntake,
   linkTicket, unlinkTicket, companiesForTicket,
   addAgreement, updateAgreement, removeAgreement,
@@ -1709,14 +1709,33 @@ server.registerTool(
   "list_companies",
   {
     title: "List CRM companies",
-    description: "List the project's CRM companies (id, name, domain, contact count), alphabetical by name.",
-    inputSchema: { project: z.string() },
+    description: "List the project's CRM companies (id, name, domain, contact count, products), alphabetical by name. Pass product to show only companies associated with that product.",
+    inputSchema: { project: z.string(), product: z.string().optional().describe("Filter to companies associated with this product.") },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
-  tryTool(({ project }) => {
+  tryTool(({ project, product }) => {
     const board = getBoard();
     if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
-    return listCompanies(board, project);
+    return listCompanies(board, project, { product });
+  })
+);
+
+server.registerTool(
+  "set_company_products",
+  {
+    title: "Set a company's products",
+    description: "Record which products a company uses/owns (replaces the list; de-duplicated). Surfaced on the company record and usable via list_companies(product=...).",
+    inputSchema: {
+      project: z.string(),
+      company: z.string().describe("Company id (slug)."),
+      products: z.array(z.string()).describe("Full product list for the company (replaces any existing)."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  writeTool(({ project, company, products }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return setCompanyProducts(board, project, company, products);
   })
 );
 

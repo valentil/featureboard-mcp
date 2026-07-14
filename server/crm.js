@@ -98,7 +98,7 @@ export function addCompany(board, project, { name, domain, notes } = {}, { now =
 }
 
 /** List companies (summaries), alphabetical by name. */
-export function listCompanies(board, project) {
+export function listCompanies(board, project, { product } = {}) {
   const dir = companiesDir(board, project);
   let files;
   try {
@@ -106,19 +106,33 @@ export function listCompanies(board, project) {
   } catch {
     return { project, count: 0, companies: [] };
   }
+  const want = product ? String(product).trim() : null;
   const companies = [];
   for (const f of files) {
     const c = readJsonSafe(path.join(dir, f));
     if (!c) continue;
+    const products = Array.isArray(c.products) ? c.products : [];
+    if (want && !products.includes(want)) continue;
     companies.push({
       id: c.id,
       name: c.name,
       domain: c.domain || null,
       contactCount: Array.isArray(c.contacts) ? c.contacts.length : 0,
+      products,
     });
   }
   companies.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   return { project, count: companies.length, companies };
+}
+
+/** Replace the set of products a company uses/owns (de-duplicated, trimmed). */
+export function setCompanyProducts(board, project, companyId, products = []) {
+  if (!Array.isArray(products)) throw new Error("products must be an array of strings");
+  const c = getCompany(board, project, companyId);
+  const clean = [...new Set(products.map((x) => String(x).trim()).filter(Boolean))];
+  c.products = clean;
+  writeJson(companyPath(board, project, companyId), c);
+  return { company: c.id, products: clean };
 }
 
 /** Full company record (with contacts). Throws if not found. */

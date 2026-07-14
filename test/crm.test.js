@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   slugify, validateApproval,
-  addCompany, listCompanies, getCompany, addContact, updateContact, removeContact,
+  addCompany, listCompanies, getCompany, setCompanyProducts, addContact, updateContact, removeContact,
   addInboxMessage, listInbox, reviewInboxMessage,
   linkTicket, unlinkTicket, companiesForTicket,
   validateAgreementKind, addAgreement, updateAgreement, removeAgreement,
@@ -81,6 +81,21 @@ test("removeContact deletes by id and guards", () => {
   assert.equal(r.contactCount, 1);
   assert.deepEqual(getCompany(board, "P", "acme").contacts.map((c) => c.name), ["Bo"]);
   assert.throws(() => removeContact(board, "P", "acme", "c1"), /not found/);
+});
+
+// FBMCPF-98 — company product associations
+test("setCompanyProducts dedups/trims, surfaces on record, filters listCompanies", () => {
+  const { board } = tmpBoard();
+  addCompany(board, "P", { name: "Acme" });
+  addCompany(board, "P", { name: "Beta" });
+  const r = setCompanyProducts(board, "P", "acme", [" Board ", "Board", "CRM", ""]);
+  assert.deepEqual(r.products, ["Board", "CRM"]);
+  assert.deepEqual(getCompany(board, "P", "acme").products, ["Board", "CRM"]);
+  assert.deepEqual(listCompanies(board, "P").companies.find((c) => c.id === "acme").products, ["Board", "CRM"]);
+  assert.deepEqual(listCompanies(board, "P", { product: "CRM" }).companies.map((c) => c.id), ["acme"]);
+  assert.equal(listCompanies(board, "P", { product: "Nope" }).count, 0);
+  assert.throws(() => setCompanyProducts(board, "P", "acme", "notarray"), /array/);
+  assert.throws(() => setCompanyProducts(board, "P", "nope", ["X"]), /not found/);
 });
 
 test("empty board: no companies, empty inbox", () => {
