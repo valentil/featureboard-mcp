@@ -26,7 +26,7 @@ import { startDriftRun, recordDriftScore, driftReport, applyDriftRemediation } f
 import { scanBoardCleanup, pruneBoard } from "./cleanup.js";
 import { listCodeTree, readCodeFile, codeFileMap } from "./explorer.js";
 import { saveTestPage, listTestPages, getTestPage, removeTestPage } from "./testpages.js";
-import { groupBySuite } from "./testing.js";
+import { groupBySuite, coverageByProduct } from "./testing.js";
 import { draftShare, listShares, removeShare, platformLimit } from "./social.js";
 import {
   addCompany, listCompanies, getCompany, setCompanyProducts, addContact, updateContact, removeContact,
@@ -1306,6 +1306,21 @@ server.registerTool(
     const board = getBoard();
     if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
     return { project, ...groupBySuite(meta.readTestRuns(board, project)) };
+  })
+);
+
+server.registerTool(
+  "coverage_by_product",
+  {
+    title: "Test coverage by product",
+    description: "Roll up, per product, how many of its tickets have at least one recorded test run vs none, so testing gaps are visible on the board. Includes an overall rollup and the untested tickets per product.",
+    inputSchema: { project: z.string() },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return { project, ...coverageByProduct(board.listTasks(project, {}), meta.readTestRuns(board, project)) };
   })
 );
 

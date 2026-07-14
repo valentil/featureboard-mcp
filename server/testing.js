@@ -36,3 +36,41 @@ export function groupBySuite(runs = []) {
   const failing = suites.filter((s) => s.passing === false).map((s) => s.suite);
   return { suites, count: suites.length, failing };
 }
+
+/**
+ * Coverage-by-product rollup (FBMCPF-103): for each product, how many of its
+ * tickets have at least one recorded test run (by ticket id) vs none. Pure over
+ * tasks (features+bugs) + test-run records. Lists untested tickets per product.
+ */
+export function coverageByProduct(tasks = [], runs = []) {
+  const tested = new Set(
+    (Array.isArray(runs) ? runs : [])
+      .map((r) => r && r.ticket)
+      .filter(Boolean)
+      .map((t) => String(t))
+  );
+  const pct = (n, d) => (d ? Math.round((n / d) * 1000) / 10 : 0);
+  const byProduct = {};
+  for (const t of Array.isArray(tasks) ? tasks : []) {
+    const p = (t.product && String(t.product).trim()) || "(unassigned)";
+    (byProduct[p] = byProduct[p] || []).push(t);
+  }
+  const products = Object.keys(byProduct).sort().map((p) => {
+    const list = byProduct[p];
+    const untested = list.filter((t) => !tested.has(String(t.ticketNumber)));
+    return {
+      product: p,
+      total: list.length,
+      tested: list.length - untested.length,
+      untested: untested.length,
+      coveragePct: pct(list.length - untested.length, list.length),
+      untestedTickets: untested.map((t) => t.ticketNumber),
+    };
+  });
+  const total = Array.isArray(tasks) ? tasks.length : 0;
+  const testedTotal = (Array.isArray(tasks) ? tasks : []).filter((t) => tested.has(String(t.ticketNumber))).length;
+  return {
+    products,
+    overall: { total, tested: testedTotal, untested: total - testedTotal, coveragePct: pct(testedTotal, total) },
+  };
+}
