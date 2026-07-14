@@ -255,3 +255,24 @@ test("applySiteTemplate seeds config + pages and renders files", () => {
   // nav (FBMCPF-96) links the seeded pages
   assert.match(fs.readFileSync(path.join(dir, SITE_DIR, "api.html"), "utf8"), /href="getting-started.html"/);
 });
+
+// FBMCPF-117 — brand colors/font in the site
+test("renderSiteHtml applies brand colors/font and rejects unsafe values", () => {
+  const good = renderSiteHtml({ title: "T", colors: { accent: "#123abc", primary: "#ffffff" }, font: "Inter, sans-serif" });
+  assert.match(good, /--accent:#123abc/);
+  assert.match(good, /--brand-primary:#ffffff/);
+  assert.match(good, /--brand-font:Inter, sans-serif/);
+  const bad = renderSiteHtml({ title: "T", colors: { accent: "red;} body{display:none" } });
+  assert.match(bad, /--accent:#d97757/); // unsafe value fell back to default
+});
+
+test("setSite stores colors + font and renders them (incl. sub-pages)", () => {
+  const { board, dir } = tmpBoard();
+  setSite(board, "P", { title: "Brandy", colors: { accent: "#00aaff" }, font: "Georgia, serif" });
+  addPage(board, "P", { slug: "about", title: "About" });
+  const home = fs.readFileSync(path.join(dir, SITE_DIR, SITE_HTML), "utf8");
+  const about = fs.readFileSync(path.join(dir, SITE_DIR, "about.html"), "utf8");
+  assert.match(home, /--accent:#00aaff/);
+  assert.match(home, /--brand-font:Georgia, serif/);
+  assert.match(about, /--accent:#00aaff/); // sub-page inherits brand colors
+});

@@ -36,7 +36,7 @@ function atomicWrite(p, content) {
 // Project config
 // ---------------------------------------------------------------------------
 
-const CONFIG_KEYS = ["products", "codeLocation", "agentModel", "description", "website", "featurePrefix", "bugPrefix", "customPrompt", "brandTitle", "brandSubtitle", "brandWords", "brandVoice", "imageTool"];
+const CONFIG_KEYS = ["products", "codeLocation", "agentModel", "description", "website", "featurePrefix", "bugPrefix", "customPrompt", "brandTitle", "brandSubtitle", "brandWords", "brandVoice", "brandPrimary", "brandAccent", "brandLogo", "brandFont", "imageTool"];
 
 /** Merged view: managed config overlaid on legacy project_config.json. */
 export function getProjectConfig(board, project) {
@@ -114,7 +114,17 @@ export function brandContext(board, project) {
       ? cfg.brandWords.split(/[,\n]/).map((w) => w.trim()).filter(Boolean)
       : [];
   const voice = cfg.brandVoice ? String(cfg.brandVoice).trim() : null;
-  const hasBrand = Boolean(title || subtitle || words.length || voice);
+  const primary = cfg.brandPrimary ? String(cfg.brandPrimary).trim() : null;
+  const accent = cfg.brandAccent ? String(cfg.brandAccent).trim() : null;
+  const logo = cfg.brandLogo ? String(cfg.brandLogo).trim() : null;
+  const font = cfg.brandFont ? String(cfg.brandFont).trim() : null;
+  const hasBrand = Boolean(title || subtitle || words.length || voice || primary || accent || logo || font);
+
+  const cv = [];
+  if (primary) cv.push(`--brand-primary:${primary}`);
+  if (accent) cv.push(`--brand-accent:${accent}`);
+  if (font) cv.push(`--brand-font:${font}`);
+  const cssVars = cv.length ? `:root{${cv.join(";")}}` : "";
 
   let instruction = "";
   if (hasBrand) {
@@ -122,10 +132,13 @@ export function brandContext(board, project) {
     if (title) lines.push(`- Brand name: ${title}${subtitle ? ` — ${subtitle}` : ""}`);
     if (words.length) lines.push(`- Brand/trial words to work in naturally (don't force all of them): ${words.join(", ")}`);
     if (voice) lines.push(`- Brand voice/tone: ${voice}`);
-    lines.push("- Reflect this in copy, headings, and styling; keep it tasteful, not spammy.");
+    if (primary || accent) lines.push(`- Brand colors: ${[primary && `primary ${primary}`, accent && `accent ${accent}`].filter(Boolean).join(", ")}`);
+    if (font) lines.push(`- Brand font: ${font}`);
+    if (logo) lines.push(`- Logo: ${logo}`);
+    lines.push("- Reflect this in copy, headings, colors, and styling; keep it tasteful, not spammy.");
     instruction = lines.join("\n");
   }
-  return { title, subtitle, words, voice, hasBrand, instruction };
+  return { title, subtitle, words, voice, primary, accent, logo, font, hasBrand, cssVars, instruction };
 }
 
 export function addProduct(board, project, name) {

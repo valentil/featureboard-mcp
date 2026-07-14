@@ -908,6 +908,74 @@ server.registerTool(
 );
 
 server.registerTool(
+  "set_branding",
+  {
+    title: "Set project branding",
+    description:
+      "Set the project's brand kit in one place — name, tagline, brand words, voice/tone, primary & accent colors, logo, and font — so every generated asset (media, website, campaigns) stays consistent. Stored on the board config; retrieve it with get_branding. By default also applies colors/font to the project website if one exists.",
+    inputSchema: {
+      project: z.string(),
+      name: z.string().optional().describe("Brand / product name (brandTitle)."),
+      tagline: z.string().optional().describe("Brand tagline / byline (brandSubtitle)."),
+      words: z.array(z.string()).optional().describe("Brand words/phrases to weave into copy."),
+      voice: z.string().optional().describe("Voice/tone, e.g. 'confident, playful, plain-spoken'."),
+      primaryColor: z.string().optional().describe("Primary brand color (hex, rgb(), hsl(), or CSS name)."),
+      accentColor: z.string().optional().describe("Accent brand color."),
+      logo: z.string().optional().describe("Logo URL or assets/<file> reference."),
+      font: z.string().optional().describe("Brand font-family, e.g. \"Inter, system-ui, sans-serif\"."),
+      applyToSite: z.boolean().optional().default(true).describe("Also apply colors/font to the project website if it exists."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  writeTool(({ project, name, tagline, words, voice, primaryColor, accentColor, logo, font, applyToSite }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    const patch = {};
+    if (name != null) patch.brandTitle = name;
+    if (tagline != null) patch.brandSubtitle = tagline;
+    if (words != null) patch.brandWords = words;
+    if (voice != null) patch.brandVoice = voice;
+    if (primaryColor != null) patch.brandPrimary = primaryColor;
+    if (accentColor != null) patch.brandAccent = accentColor;
+    if (logo != null) patch.brandLogo = logo;
+    if (font != null) patch.brandFont = font;
+    meta.setProjectConfig(board, project, patch);
+    const brand = meta.brandContext(board, project);
+    let siteApplied = false;
+    if (applyToSite !== false && (primaryColor != null || accentColor != null || font != null)) {
+      const sitePath = nodePath.join(board.projectDir(project), "site", "site.json");
+      if (existsSync(sitePath)) {
+        setSite(board, project, {
+          colors: { primary: brand.primary || undefined, accent: brand.accent || undefined },
+          font: brand.font || undefined,
+        });
+        siteApplied = true;
+      }
+    }
+    return { project, brand, siteApplied };
+  })
+);
+
+server.registerTool(
+  "get_branding",
+  {
+    title: "Get project branding",
+    description:
+      "Return the project's brand kit — name, tagline, words, voice, colors, logo, font — plus a ready-to-inject generation instruction, a CSS :root cssVars snippet for web, and which fields are still missing. Call this before generating any branded asset to stay consistent.",
+    inputSchema: { project: z.string() },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    const brand = meta.brandContext(board, project);
+    const fields = ["title", "subtitle", "words", "voice", "primary", "accent", "logo", "font"];
+    const missing = fields.filter((f) => (Array.isArray(brand[f]) ? brand[f].length === 0 : !brand[f]));
+    return { project, ...brand, missing };
+  })
+);
+
+server.registerTool(
   "add_product",
   {
     title: "Add product",
@@ -3631,6 +3699,31 @@ server.registerPrompt(
             (suite ? " for that suite." : ", per suite if the runner separates them.") +
             "\n- Record each with log_test_run (project, passed, failed, skipped, suite, and the related ticket if any).\n" +
             "- Then call test_runs_by_suite and summarize the latest status per suite, calling out any failing suites.",
+        },
+      },
+    ],
+  })
+);
+
+server.registerPrompt(
+  "brand",
+  {
+    title: "Set up and apply consistent branding",
+    description: "Establish the project's brand kit once, then apply it consistently across media, website, and campaigns.",
+    argsSchema: { project: z.string().optional() },
+  },
+  ({ project } = {}) => ({
+    messages: [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text:
+            `Make branding consistent${project ? ` for project "${project}"` : ""}.\n\n` +
+            "1. Call get_branding to see the current kit and which fields are missing.\n" +
+            "2. Fill the gaps with set_branding — name, tagline, 3–6 brand words, a voice/tone line, primary + accent colors (hex), a font, and a logo ref if there is one. Ask me only for what you can't infer.\n" +
+            "3. Apply it everywhere going forward: pass get_branding's `instruction` into every media generation; the website already picks up the brand colors/font (set_branding applyToSite, or set_site colors/font); keep campaigns, emails, and contracts on-voice.\n" +
+            "4. Confirm the kit back to me in one short summary (name, colors, voice).",
         },
       },
     ],

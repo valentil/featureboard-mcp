@@ -33,6 +33,17 @@ export function esc(s) {
     .replace(/"/g, "&quot;");
 }
 
+/** Allow only hex / rgb() / hsl() / simple-name colors; else fall back. */
+export function safeColor(c, fallback) {
+  const v = String(c == null ? "" : c).trim();
+  return /^#[0-9a-fA-F]{3,8}$|^(rgb|hsl)a?\([0-9.,%\s/]+\)$|^[a-zA-Z]{3,20}$/.test(v) ? v : fallback;
+}
+/** Allow a CSS font-family list (letters, spaces, commas, quotes, hyphens); else fall back. */
+export function safeFont(f, fallback) {
+  const v = String(f == null ? "" : f).trim();
+  return v && /^[-\w\s,'"]+$/.test(v) ? v : fallback;
+}
+
 /** Default site config. */
 export function defaultSite(project) {
   return {
@@ -56,6 +67,8 @@ function pageConfig(cfg, page) {
     loginGate: cfg.loginGate,
     analytics: cfg.analytics,
     seo: { ...(cfg.seo || {}), ...(page.seo || {}) },
+    colors: cfg.colors,
+    font: cfg.font,
   };
 }
 
@@ -137,6 +150,9 @@ export function renderSiteHtml(config = {}) {
   const title = esc(config.title || "Untitled");
   const tagline = config.tagline ? `<p class="tagline">${esc(config.tagline)}</p>` : "";
   const dark = config.theme === "dark";
+  const accentColor = safeColor(config.colors && config.colors.accent, "#d97757");
+  const primaryColor = safeColor(config.colors && config.colors.primary, accentColor);
+  const bodyFont = safeFont(config.font, "system-ui,-apple-system,Segoe UI,Roboto,sans-serif");
   const sections = (Array.isArray(config.sections) ? config.sections : [])
     .map((s) => `<section><h2>${esc(s.heading)}</h2><div class="body">${esc(s.body).replace(/\n/g, "<br>")}</div></section>`)
     .join("\n");
@@ -164,10 +180,10 @@ export function renderSiteHtml(config = {}) {
 ${seoTags(config)}
 ${analyticsSnippet(config.analytics)}
 <style>
-  :root{--bg:#faf9f5;--fg:#262624;--muted:#6b6862;--accent:#d97757}
+  :root{--bg:#faf9f5;--fg:#262624;--muted:#6b6862;--accent:${accentColor};--brand-primary:${primaryColor};--brand-font:${bodyFont}}
   html[data-theme="dark"]{--bg:#1f1e1c;--fg:#f2f0e9;--muted:#a8a49a}
   *{box-sizing:border-box}
-  body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--fg)}
+  body{margin:0;font-family:var(--brand-font);background:var(--bg);color:var(--fg)}
   header{padding:5rem 1.5rem 3rem;text-align:center}
   h1{font-size:2.6rem;margin:0}
   .tagline{color:var(--muted);font-size:1.2rem;margin-top:.6rem}
@@ -303,6 +319,15 @@ export function setSite(board, project, patch = {}, { now = new Date() } = {}) {
     cfg.sections = patch.sections.map((s) => ({ heading: String(s.heading || ""), body: String(s.body || "") }));
   }
   if (patch.seo != null) cfg.seo = { ...(cfg.seo || {}), ...normalizeSeo(patch.seo) };
+  if (patch.colors != null) {
+    const c = patch.colors && typeof patch.colors === "object" ? patch.colors : {};
+    cfg.colors = {
+      ...(cfg.colors || {}),
+      ...(c.primary != null ? { primary: String(c.primary) } : {}),
+      ...(c.accent != null ? { accent: String(c.accent) } : {}),
+    };
+  }
+  if (patch.font != null) cfg.font = String(patch.font);
   return persist(board, project, cfg, now);
 }
 
