@@ -62,6 +62,8 @@ async function main() {
     "add_lead", "leads_map",                                  // leads
     "draft_email", "list_mail", "create_campaign",            // mail & marketing
     "get_site", "set_site", "enable_login_gate",              // website
+    "add_page", "list_pages", "deploy_site", "upload_site_asset", "set_site_analytics", // website+
+    "publish_media_to_site", "save_test_page", "list_test_pages", // media→site + test pages
     "get_git_config", "set_git_config", "commit_feature",     // git
     "list_contract_templates", "generate_contract",           // contracts
   ];
@@ -117,6 +119,17 @@ async function main() {
   await ok("generate_contract", { template: "nda", company: "acme-smoke", vars: { provider: "FB LLC", effective_date: "2026-07-14" } });
   await ok("set_site", { title: "Smoke Site", sections: [{ heading: "About", body: "hi" }] });
   await ok("get_site", {});
+  await ok("add_page", { slug: "about", title: "About", sections: [{ heading: "A", body: "b" }] });
+  await ok("list_pages", {});
+  await ok("upload_site_asset", { name: "logo.png", content: Buffer.from("PNG").toString("base64") });
+  await ok("set_site_analytics", { provider: "plausible", id: "example.com" });
+  await ok("publish_media_to_site", { name: "smoke.html", slug: "smoke-post" }); // reuses the saved media asset
+  await ok("save_test_page", { name: "qa", html: "<h1>QA</h1>" });
+  await ok("list_test_pages", {});
+  await step("deploy_site no-ops safely (git disabled at this point)", async () => {
+    const r = await call("deploy_site", {});
+    if (r.isError && !/disabled|code repo|not a git repo/i.test(txt(r))) throw new Error(txt(r));
+  });
   await ok("enable_login_gate", { passcode: "1234" });
   await ok("get_git_config", {});
   await ok("set_git_config", { enabled: true, branch: "main" });

@@ -174,7 +174,9 @@ export function serializeTask(t) {
 
   const created = t.createdDate || new Date().toISOString().split("T")[0];
   const due = t.dueDate ? ` | Due: ${t.dueDate}` : "";
-  const meta = ` [Created: ${created}${due}]`;
+  const completed =
+    t.status === "Done" && t.completionDate ? ` | Completed: ${t.completionDate}` : "";
+  const meta = ` [Created: ${created}${due}${completed}]`;
 
   const descPart = t.description ? `: ${t.description}` : ":";
   return `- [${statusChar}]${idPart} **${t.title}**${descPart}${link}${product}${labels}${newFile}${website}${ref}${priority}${attachments}${summary}${meta}`;

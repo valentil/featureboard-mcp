@@ -20,11 +20,14 @@ import {
   listMedia, saveMedia, getMedia, revertMedia,
   tagMedia, annotateMedia, removeAnnotation, searchMedia,
 } from "./media.js";
+import { saveTestPage, listTestPages, getTestPage, removeTestPage } from "./testpages.js";
+import { groupBySuite } from "./testing.js";
 import { draftShare, listShares, removeShare, platformLimit } from "./social.js";
 import {
   addCompany, listCompanies, getCompany, addContact,
   addInboxMessage, listInbox, reviewInboxMessage,
   linkTicket, unlinkTicket, companiesForTicket,
+  addAgreement, updateAgreement, removeAgreement,
 } from "./crm.js";
 import { addLead, listLeads, setLeadStatus, leadsMap } from "./leads.js";
 import { buildCustomerPortal } from "./portal.js";
@@ -33,7 +36,7 @@ import { draftEmail, listMail, getEmail, markSent } from "./mail.js";
 import { createCampaign, listCampaigns, getCampaign, recordOpen } from "./campaigns.js";
 import {
   getSite, setSite, editSection, setLoginGate, addPage, listPages, removePage,
-  renderSite, siteRoot, saveAsset, listAssets, setSiteAnalytics,
+  renderSite, siteRoot, saveAsset, listAssets, setSiteAnalytics, addRawPage,
 } from "./website.js";
 import { getGitConfig, setGitConfig, commitFeature } from "./git.js";
 
@@ -57,7 +60,9 @@ When the user gives you a substantive, multi-step request (build X, fix these bu
 4. Log new issues as you find them with log_bug, and split anything too big with decompose_feature.
 5. When the user asks how things are going, use get_metrics and list_tasks rather than guessing.
 
-Keep the board honest: a ticket should be In Progress only while you are actively working it, and Done only when it is genuinely finished. The board is scaffolding around the real work — it does not replace writing the code, running the tests, etc. Do not create boards or tickets for trivial one-shot chores that don't benefit from tracking.`;
+Keep the board honest: a ticket should be In Progress only while you are actively working it, and Done only when it is genuinely finished. The board is scaffolding around the real work — it does not replace writing the code, running the tests, etc. Do not create boards or tickets for trivial one-shot chores that don't benefit from tracking.
+
+Showing the board: when the user asks to see, open, or check on the board in natural language — e.g. "show me the board", "show the featureboard", "open the board", "let's see the tasks/queue", "what's on my plate", "how's it going / how are we looking", "give me a status", or "show velocity/analytics" — surface the live board as a Cowork artifact from artifact/board.html (create_artifact, or update_artifact if one is already open — reuse it, don't create duplicates) instead of only replying in text. That single artifact shows the Todo / In Progress / Done columns, the product filter, and the 📊 Analytics dashboard (velocity, timeline, bug health, and the work-log feed) — i.e. tasks + analytics + everything in one place. Pair the artifact with a one- or two-line text summary of where things stand.`;
 
 const server = new McpServer(
   { name: "featureboard", version: "0.1.0" },
@@ -909,6 +914,86 @@ server.registerTool(
 );
 
 server.registerTool(
+  "save_test_page",
+  {
+    title: "Save a test page",
+    description: "Create/overwrite a standalone HTML test/QA page under the project's test-pages/ folder.",
+    inputSchema: {
+      project: z.string(),
+      name: z.string().describe("Page filename; .html is added if missing."),
+      html: z.string(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  writeTool(({ project, name, html }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return saveTestPage(board, project, { name, html });
+  })
+);
+
+server.registerTool(
+  "list_test_pages",
+  {
+    title: "List test pages",
+    description: "List the standalone HTML test pages under test-pages/.",
+    inputSchema: { project: z.string() },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return listTestPages(board, project);
+  })
+);
+
+server.registerTool(
+  "get_test_page",
+  {
+    title: "Get a test page",
+    description: "Read one test page's HTML by name.",
+    inputSchema: { project: z.string(), name: z.string() },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project, name }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return getTestPage(board, project, name);
+  })
+);
+
+server.registerTool(
+  "remove_test_page",
+  {
+    title: "Remove a test page",
+    description: "Delete a test page by name.",
+    inputSchema: { project: z.string(), name: z.string() },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  },
+  writeTool(({ project, name }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return removeTestPage(board, project, name);
+  })
+);
+
+server.registerTool(
+  "test_runs_by_suite",
+  {
+    title: "Test runs grouped by suite",
+    description:
+      "Organize recorded test runs (from log_test_run) by suite: each suite's latest result, run count, cumulative pass/fail, and pass-rate, plus the list of currently-failing suites. Surfaces coverage/health per suite instead of a flat list.",
+    inputSchema: { project: z.string() },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return { project, ...groupBySuite(meta.readTestRuns(board, project)) };
+  })
+);
+
+server.registerTool(
   "get_regressions",
   {
     title: "Get regressions",
@@ -1475,6 +1560,73 @@ server.registerTool(
   })
 );
 
+server.registerTool(
+  "add_company_agreement",
+  {
+    title: "Add a company contract/license",
+    description:
+      "Record a contract or license on a CRM company (stored on the company, alongside contacts). kind 'contract' or 'license'; optional template (from generate_contract), title, value, seats, term, expiresAt, status, notes. Returns the new agreement.",
+    inputSchema: {
+      project: z.string(),
+      company: z.string().describe("Company id (slug)."),
+      kind: z.enum(["contract", "license"]),
+      template: z.string().optional(),
+      title: z.string().optional(),
+      value: z.number().optional(),
+      seats: z.number().optional(),
+      term: z.string().optional(),
+      expiresAt: z.string().optional().describe("YYYY-MM-DD"),
+      status: z.string().optional(),
+      notes: z.string().optional(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  writeTool(({ project, company, kind, template, title, value, seats, term, expiresAt, status, notes }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return addAgreement(board, project, company, { kind, template, title, value, seats, term, expiresAt, status, notes });
+  })
+);
+
+server.registerTool(
+  "update_company_agreement",
+  {
+    title: "Update/extend a company agreement",
+    description: "Update a company contract/license by id — e.g. extend a license (new expiresAt), change status ('signed'/'renewed'/'expired'), seats, term, or value.",
+    inputSchema: {
+      project: z.string(),
+      company: z.string(),
+      id: z.string().describe("Agreement id (from get_company)."),
+      status: z.string().optional(),
+      expiresAt: z.string().optional(),
+      seats: z.number().optional(),
+      term: z.string().optional(),
+      value: z.number().optional(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  writeTool(({ project, company, id, status, expiresAt, seats, term, value }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return updateAgreement(board, project, company, id, { status, expiresAt, seats, term, value });
+  })
+);
+
+server.registerTool(
+  "remove_company_agreement",
+  {
+    title: "Remove a company agreement",
+    description: "Delete a contract/license from a company by id.",
+    inputSchema: { project: z.string(), company: z.string(), id: z.string() },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  },
+  writeTool(({ project, company, id }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return removeAgreement(board, project, company, id);
+  })
+);
+
 // Mail ---------------------------------------------------------------------
 
 server.registerTool(
@@ -1818,6 +1970,46 @@ server.registerTool(
 );
 
 server.registerTool(
+  "publish_media_to_site",
+  {
+    title: "Publish a media asset to the site",
+    description:
+      "Publish a gallery asset as a page on the project site (media/push-to-blog). A report/HTML/text asset becomes the page's content; an image is copied to site/assets and shown on the page. Returns the new page. Links media → website.",
+    inputSchema: {
+      project: z.string(),
+      name: z.string().describe("Gallery asset filename (from list_media)."),
+      slug: z.string().optional().describe("Page slug; defaults to the asset name."),
+      title: z.string().optional(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  writeTool(({ project, name, slug, title }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    const et = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    const asset = getMedia(board, project, name, { withContent: true });
+    const pageSlug = slug || name.replace(/\.[^.]+$/, "");
+    const pageTitle = title || asset.title || name;
+    let html;
+    if (asset.kind === "image") {
+      const saved = saveAsset(board, project, { name, content: asset.content, encoding: "base64" });
+      html =
+        `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
+        `<meta name="viewport" content="width=device-width, initial-scale=1"><title>${et(pageTitle)}</title></head>` +
+        `<body style="margin:0;text-align:center;background:#faf9f5"><img src="${saved.ref}" alt="${et(pageTitle)}" style="max-width:100%;height:auto"></body></html>`;
+    } else {
+      const c = String(asset.content || "");
+      html = /<!doctype|<html/i.test(c)
+        ? c
+        : `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
+          `<meta name="viewport" content="width=device-width, initial-scale=1"><title>${et(pageTitle)}</title></head><body>${c}</body></html>`;
+    }
+    const page = addRawPage(board, project, { slug: pageSlug, title: pageTitle, html });
+    return { published: page.slug, path: page.path, from: name, kind: asset.kind };
+  })
+);
+
+server.registerTool(
   "enable_login_gate",
   {
     title: "Enable the site login gate",
@@ -2154,6 +2346,37 @@ server.registerPrompt(
             "- Call get_site (and list_pages if the change targets a sub-page) to see the current site.\n" +
             "- Apply the change with the smallest fitting tool: set_site (title/tagline/theme/sections), edit_site_section (one section), or add_page/remove_page (a page). Preserve everything you're not changing.\n" +
             "- Confirm what changed and note that the page(s) were re-rendered.",
+        },
+      },
+    ],
+  })
+);
+
+server.registerPrompt(
+  "run_tests",
+  {
+    title: "Run the project's tests and record results",
+    description:
+      "Run the project's test suite(s), record each result with log_test_run, then show the consolidated per-suite view.",
+    argsSchema: {
+      project: z.string().optional(),
+      suite: z.string().optional().describe("Limit to one suite/command, or omit to run them all."),
+    },
+  },
+  ({ project, suite } = {}) => ({
+    messages: [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text:
+            `Run the tests${project ? ` for project "${project}"` : ""}${suite ? ` (suite: ${suite})` : ""} and record the results.\n\n` +
+            "Steps:\n" +
+            "- Find the test command from the project's codeLocation (get_project_config) — e.g. `npm test` / `node --test` — and run it in a shell.\n" +
+            "- Parse the output for passed / failed / skipped counts" +
+            (suite ? " for that suite." : ", per suite if the runner separates them.") +
+            "\n- Record each with log_test_run (project, passed, failed, skipped, suite, and the related ticket if any).\n" +
+            "- Then call test_runs_by_suite and summarize the latest status per suite, calling out any failing suites.",
         },
       },
     ],

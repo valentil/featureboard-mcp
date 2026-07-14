@@ -218,6 +218,7 @@ function persist(board, project, cfg, now) {
   const pages = Array.isArray(cfg.pages) ? cfg.pages : [];
   for (const pg of pages) {
     if (!pg || !pg.slug) continue;
+    if (pg.raw) continue; // raw pages (e.g. published media) keep their own HTML
     atomicWrite(path.join(dir, `${pg.slug}.html`), renderSiteHtml(pageConfig(cfg, pg)));
   }
   return {
@@ -290,6 +291,29 @@ export function addPage(board, project, { slug, title, sections } = {}, { now = 
   }
   persist(board, project, cfg, now);
   return { project, slug: safe, path: `${SITE_DIR}/${safe}.html`, pages: cfg.pages.length };
+}
+
+/**
+ * Add a raw-HTML page (its file is written verbatim and preserved on re-render),
+ * used to publish media reports/images as site pages (FBMCPF-73).
+ */
+export function addRawPage(board, project, { slug, title, html } = {}, { now = new Date() } = {}) {
+  const safe = sanitizeSlug(slug);
+  if (typeof html !== "string" || !html) throw new Error("html content is required");
+  const cfg = getSite(board, project);
+  cfg.pages = Array.isArray(cfg.pages) ? cfg.pages : [];
+  const dir = siteDir(board, project);
+  fs.mkdirSync(dir, { recursive: true });
+  atomicWrite(path.join(dir, `${safe}.html`), html);
+  const existing = cfg.pages.find((p) => p.slug === safe);
+  if (existing) {
+    if (title != null) existing.title = String(title);
+    existing.raw = true;
+  } else {
+    cfg.pages.push({ slug: safe, title: title ? String(title) : safe, raw: true });
+  }
+  persist(board, project, cfg, now); // records the page; skips re-rendering this raw file
+  return { project, slug: safe, path: `${SITE_DIR}/${safe}.html`, raw: true };
 }
 
 /** List the site's pages (home + sub-pages) with their files. */

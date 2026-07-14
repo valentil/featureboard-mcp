@@ -226,6 +226,67 @@ export function unlinkTicket(board, project, companyId, ticket) {
   return { project, company: c.id, tickets: c.tickets };
 }
 
+// --- Per-company contracts & licenses (FBMCPF-77) ---------------------------
+
+const AGREEMENT_KINDS = ["contract", "license"];
+
+/** Normalize an agreement kind, or throw. */
+export function validateAgreementKind(kind) {
+  const s = String(kind || "").trim().toLowerCase();
+  if (!AGREEMENT_KINDS.includes(s)) throw new Error(`kind must be "contract" or "license" (got "${kind}")`);
+  return s;
+}
+
+/** Add a contract or license to a company (stored on company.agreements). */
+export function addAgreement(board, project, companyId, fields = {}, { now = new Date() } = {}) {
+  const kind = validateAgreementKind(fields.kind);
+  const c = getCompany(board, project, companyId);
+  c.agreements = Array.isArray(c.agreements) ? c.agreements : [];
+  const seq = (c.agreementSeq || 0) + 1;
+  const a = {
+    id: `A${seq}`,
+    kind,
+    status: fields.status ? String(fields.status) : kind === "license" ? "active" : "draft",
+    createdAt: now.toISOString(),
+  };
+  if (fields.template) a.template = String(fields.template);
+  if (fields.title) a.title = String(fields.title);
+  if (fields.value != null && fields.value !== "") a.value = Number(fields.value);
+  if (fields.seats != null && fields.seats !== "") a.seats = Number(fields.seats);
+  if (fields.term) a.term = String(fields.term);
+  if (fields.expiresAt) a.expiresAt = String(fields.expiresAt);
+  if (fields.notes) a.notes = String(fields.notes);
+  c.agreements.push(a);
+  c.agreementSeq = seq;
+  writeJson(companyPath(board, project, companyId), c);
+  return { project, company: c.id, agreement: a, count: c.agreements.length };
+}
+
+/** Update/extend an agreement (status, expiry, seats). Throws if not found. */
+export function updateAgreement(board, project, companyId, id, patch = {}) {
+  const c = getCompany(board, project, companyId);
+  const a = (Array.isArray(c.agreements) ? c.agreements : []).find((x) => x.id === id);
+  if (!a) throw new Error(`agreement ${id} not found on ${companyId}`);
+  if (patch.status != null) a.status = String(patch.status);
+  if (patch.expiresAt != null) a.expiresAt = String(patch.expiresAt);
+  if (patch.seats != null && patch.seats !== "") a.seats = Number(patch.seats);
+  if (patch.term != null) a.term = String(patch.term);
+  if (patch.value != null && patch.value !== "") a.value = Number(patch.value);
+  writeJson(companyPath(board, project, companyId), c);
+  return { project, company: c.id, agreement: a };
+}
+
+/** Remove an agreement from a company. Throws if not found. */
+export function removeAgreement(board, project, companyId, id) {
+  const c = getCompany(board, project, companyId);
+  const list = Array.isArray(c.agreements) ? c.agreements : [];
+  const next = list.filter((x) => x.id !== id);
+  if (next.length === list.length) throw new Error(`agreement ${id} not found on ${companyId}`);
+  c.agreements = next;
+  writeJson(companyPath(board, project, companyId), c);
+  return { project, company: c.id, removed: id, count: next.length };
+}
+
 /** Reverse lookup: which companies a ticket is linked to (surfaces the relationship). */
 export function companiesForTicket(board, project, ticket) {
   const t = String(ticket || "").trim();

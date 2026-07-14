@@ -8,6 +8,7 @@ import {
   addCompany, listCompanies, getCompany, addContact,
   addInboxMessage, listInbox, reviewInboxMessage,
   linkTicket, unlinkTicket, companiesForTicket,
+  validateAgreementKind, addAgreement, updateAgreement, removeAgreement,
 } from "../server/crm.js";
 
 // FBMCPF-43 — CRM companies/contacts + inbox
@@ -114,4 +115,33 @@ test("companiesForTicket reverse-lookup across companies", () => {
   assert.equal(companiesForTicket(board, "P", "FBF-1").companies.length, 2);
   assert.deepEqual(companiesForTicket(board, "P", "FBB-2").companies.map((c) => c.id), ["beta"]);
   assert.equal(companiesForTicket(board, "P", "NONE").companies.length, 0);
+});
+
+// --- FBMCPF-77: contracts & licenses ---
+
+test("addAgreement stores contract/license with monotonic ids + defaults", () => {
+  const { board } = tmpBoard();
+  addCompany(board, "P", { name: "Acme" });
+  const c1 = addAgreement(board, "P", "acme", { kind: "contract", template: "msa", value: 5000 });
+  assert.equal(c1.agreement.id, "A1");
+  assert.equal(c1.agreement.status, "draft");
+  const c2 = addAgreement(board, "P", "acme", { kind: "license", seats: 10, expiresAt: "2027-01-01" });
+  assert.equal(c2.agreement.id, "A2");
+  assert.equal(c2.agreement.status, "active");
+  assert.equal(getCompany(board, "P", "acme").agreements.length, 2);
+  assert.throws(() => addAgreement(board, "P", "acme", { kind: "nda" }), /contract.*license/);
+  assert.throws(() => validateAgreementKind("x"), /contract.*license/);
+});
+
+test("updateAgreement extends/changes; removeAgreement deletes; guards", () => {
+  const { board } = tmpBoard();
+  addCompany(board, "P", { name: "Acme" });
+  addAgreement(board, "P", "acme", { kind: "license", seats: 5, expiresAt: "2026-12-31" });
+  const u = updateAgreement(board, "P", "acme", "A1", { expiresAt: "2027-12-31", status: "renewed", seats: 20 });
+  assert.equal(u.agreement.expiresAt, "2027-12-31");
+  assert.equal(u.agreement.status, "renewed");
+  assert.equal(u.agreement.seats, 20);
+  assert.throws(() => updateAgreement(board, "P", "acme", "A9", { status: "x" }), /not found/);
+  assert.equal(removeAgreement(board, "P", "acme", "A1").count, 0);
+  assert.throws(() => removeAgreement(board, "P", "acme", "A1"), /not found/);
 });
