@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { Board, parseMarkdown, serializeTask, parseImport, suggestTestStub, bugImpactScan, computeRegressions } from "../server/storage.js";
+import { Board, parseMarkdown, serializeTask, parseImport, suggestTestStub, bugImpactScan, computeRegressions, generateTestFromPrompt, splitBehaviors } from "../server/storage.js";
 
 function tmpBoard() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fb-"));
@@ -187,4 +187,22 @@ test("existing FB-prefixed board keeps its prefix", () => {
   const b = new Board(dir);
   const next = b.addTask("Anything", "feature", { title: "new" });
   assert.equal(next.ticketNumber, "FBF-41");
+});
+
+// FBMCPF-102 — AI-generate a test from a prompt
+test("splitBehaviors splits lines / and / sentences and strips 'should'", () => {
+  assert.deepEqual(splitBehaviors("should log a bug\nand link it"), ["log a bug", "link it"]);
+  assert.deepEqual(splitBehaviors("adds a row and returns the id"), ["adds a row", "returns the id"]);
+  assert.deepEqual(splitBehaviors(""), ["behaves as described"]);
+});
+
+test("generateTestFromPrompt emits one test() per behaviour + valid header", () => {
+  const r = generateTestFromPrompt({ prompt: "creates a contact\nremoves a contact", ticket: "FBF-9", title: "contacts", module: "../server/crm.js", codeLocation: "/repo" });
+  assert.equal(r.fileName, "FBF-9-contacts.test.js");
+  assert.match(r.path, /test[\\/]FBF-9-contacts\.test\.js$/);
+  assert.equal(r.behaviors.length, 2);
+  assert.match(r.content, /import \{ test \} from "node:test";/);
+  assert.match(r.content, /import \* as mod from "\.\.\/server\/crm\.js";/);
+  assert.equal((r.content.match(/^test\(/gm) || []).length, 2);
+  assert.throws(() => generateTestFromPrompt({}), /required/);
 });

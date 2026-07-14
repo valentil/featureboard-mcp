@@ -347,6 +347,45 @@ test("${safeTitle}", () => {
   return { path, fileName, framework: "node:test", content };
 }
 
+/**
+ * Split a free-text prompt into discrete testable behaviours: newlines/bullets
+ * first, else sentence / "and" / ";" clauses. Strips a leading "should".
+ */
+export function splitBehaviors(text) {
+  let parts = String(text || "").split(/\r?\n|(?:^|\s)[-*•]\s+/).map((x) => x.trim()).filter(Boolean);
+  if (parts.length <= 1) {
+    parts = String(text || "").split(/[;.]\s+|,?\s+and\s+/i).map((x) => x.trim()).filter(Boolean);
+  }
+  parts = parts.map((x) => x.replace(/^(should|and)\s+/i, "").replace(/[.;]+$/, "").trim()).filter(Boolean);
+  return parts.length ? parts : ["behaves as described"];
+}
+
+/**
+ * Generate a FULL node:test file (path + content) from a prompt (or ticket) —
+ * one test() block per described behaviour, not just the single boilerplate stub
+ * of suggestTestStub. Optionally imports a target module. Pure; the tool writes it.
+ */
+export function generateTestFromPrompt({ prompt, ticket, title, module, codeLocation } = {}) {
+  const desc = String(prompt || title || "").trim();
+  if (!desc) throw new Error("a prompt (or title) is required to generate a test");
+  const behaviors = splitBehaviors(desc);
+  const nameBase = title || ticket || behaviors[0] || "feature";
+  const slug = String(nameBase).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "feature";
+  const base = codeLocation ? String(codeLocation).replace(/[\\/]+$/, "") : ".";
+  const sep = base.includes("\\") ? "\\" : "/";
+  const fileName = (ticket ? ticket + "-" : "") + slug + ".test.js";
+  const filePath = base + sep + "test" + sep + fileName;
+  const esc = (x) => String(x).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  const importLine = module ? `import * as mod from "${esc(module)}";\n` : "";
+  const header = `import { test } from "node:test";\nimport assert from "node:assert/strict";\n${importLine}`;
+  const suiteComment = `\n// ${ticket ? ticket + " — " : ""}${title || "generated test"}\n// From prompt: ${desc.replace(/\s+/g, " ").slice(0, 200)}\n`;
+  const blocks = behaviors
+    .map((b) => `test(${JSON.stringify(b)}, () => {\n  // Arrange\n\n  // Act\n\n  // Assert — TODO: verify that ${esc(b)}\n  assert.ok(true, ${JSON.stringify("TODO: implement — " + b)});\n});`)
+    .join("\n\n");
+  const content = header + suiteComment + blocks + "\n";
+  return { path: filePath, fileName, framework: "node:test", behaviors, content };
+}
+
 /** Rank existing features by keyword overlap with a bug — the "bug impact scan". */
 export function bugImpactScan(bug, features) {
   const bugKw = new Set(keywords((bug.title || "") + " " + (bug.description || "")));

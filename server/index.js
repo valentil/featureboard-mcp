@@ -12,7 +12,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { Board, parseImport, suggestTestStub, bugImpactScan, computeRegressions } from "./storage.js";
+import { Board, parseImport, suggestTestStub, generateTestFromPrompt, bugImpactScan, computeRegressions } from "./storage.js";
 import * as license from "./license.js";
 import * as meta from "./metadata.js";
 import { predictDueDates } from "./predictive.js";
@@ -1160,6 +1160,35 @@ server.registerTool(
     if (!task) throw new Error(`Ticket ${ticket} not found in "${project}".`);
     const cfg = meta.getProjectConfig(board, project);
     return suggestTestStub(task, cfg.codeLocation);
+  })
+);
+
+server.registerTool(
+  "generate_test",
+  {
+    title: "Generate a test from a prompt",
+    description: "Generate a FULL node:test file (path + content) from a prompt and/or a ticket — one test() block per described behaviour, not just the single boilerplate stub. Optionally imports a target module. Read-only: returns the file for you to write under test/.",
+    inputSchema: {
+      project: z.string(),
+      prompt: z.string().optional().describe("Plain-English behaviours to test (one per line or 'and'-separated). Optional if ticket is given."),
+      ticket: z.string().optional().describe("Seed title/description/filename from this ticket."),
+      module: z.string().optional().describe("Import specifier for the module under test, e.g. ../server/crm.js."),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project, prompt, ticket, module }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    const cfg = meta.getProjectConfig(board, project);
+    let title, ticketNo, promptText = prompt;
+    if (ticket) {
+      const t = board.getTask(project, ticket);
+      if (!t) throw new Error(`Ticket ${ticket} not found in "${project}".`);
+      title = t.title; ticketNo = t.ticketNumber;
+      if (!promptText) promptText = [t.title, t.description].filter(Boolean).join(". ");
+    }
+    if (!promptText) throw new Error("provide a prompt or a ticket to generate a test");
+    return generateTestFromPrompt({ prompt: promptText, ticket: ticketNo, title, module, codeLocation: cfg.codeLocation });
   })
 );
 
