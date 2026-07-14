@@ -2900,7 +2900,17 @@ server.registerTool(
   writeTool(({ project, template, title }) => {
     const board = getBoard();
     if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
-    return applySiteTemplate(board, project, template, { title });
+    const res = applySiteTemplate(board, project, template, { title });
+    const brand = meta.brandContext(board, project);
+    let brandApplied = false;
+    if (brand.hasBrand && (brand.primary || brand.accent || brand.font)) {
+      setSite(board, project, {
+        colors: { primary: brand.primary || undefined, accent: brand.accent || undefined },
+        font: brand.font || undefined,
+      });
+      brandApplied = true;
+    }
+    return { ...res, brandApplied };
   })
 );
 

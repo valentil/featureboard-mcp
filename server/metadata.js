@@ -92,6 +92,16 @@ export function setProjectConfig(board, project, patch) {
   return getProjectConfig(board, project);
 }
 
+/** Normalize a color: bare/short hex -> #rrggbb lowercased; rgb()/hsl()/names pass through. */
+export function normalizeColor(c) {
+  if (c == null) return null;
+  let v = String(c).trim();
+  if (!v) return null;
+  if (/^[0-9a-fA-F]{3}$|^[0-9a-fA-F]{6}$/.test(v)) v = "#" + v;
+  if (/^#[0-9a-fA-F]{3}$|^#[0-9a-fA-F]{6}$/.test(v)) return v.toLowerCase();
+  return v;
+}
+
 /**
  * Resolve a project's branding into a compact context for generation prompts.
  * Returns { title, subtitle, words: string[], voice, hasBrand, instruction } where
@@ -114,8 +124,8 @@ export function brandContext(board, project) {
       ? cfg.brandWords.split(/[,\n]/).map((w) => w.trim()).filter(Boolean)
       : [];
   const voice = cfg.brandVoice ? String(cfg.brandVoice).trim() : null;
-  const primary = cfg.brandPrimary ? String(cfg.brandPrimary).trim() : null;
-  const accent = cfg.brandAccent ? String(cfg.brandAccent).trim() : null;
+  const primary = normalizeColor(cfg.brandPrimary);
+  const accent = normalizeColor(cfg.brandAccent);
   const logo = cfg.brandLogo ? String(cfg.brandLogo).trim() : null;
   const font = cfg.brandFont ? String(cfg.brandFont).trim() : null;
   const hasBrand = Boolean(title || subtitle || words.length || voice || primary || accent || logo || font);
@@ -138,7 +148,13 @@ export function brandContext(board, project) {
     lines.push("- Reflect this in copy, headings, colors, and styling; keep it tasteful, not spammy.");
     instruction = lines.join("\n");
   }
-  return { title, subtitle, words, voice, primary, accent, logo, font, hasBrand, cssVars, instruction };
+  const swatch = (primary || accent)
+    ? `<div style="display:flex;gap:10px;align-items:center;font:12px system-ui">` +
+      [["primary", primary], ["accent", accent]].filter(([, c]) => c).map(([n, c]) =>
+        `<span style="display:inline-flex;align-items:center;gap:5px"><span style="width:14px;height:14px;border-radius:3px;border:1px solid #0002;background:${c}"></span>${n} ${c}</span>`
+      ).join("") + `</div>`
+    : "";
+  return { title, subtitle, words, voice, primary, accent, logo, font, hasBrand, cssVars, swatch, instruction };
 }
 
 export function addProduct(board, project, name) {
