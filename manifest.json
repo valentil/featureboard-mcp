@@ -8,6 +8,15 @@
   "author": {
     "name": "Lewis Valentine"
   },
+  "keywords": [
+    "task-board",
+    "feature-tracking",
+    "bug-tracking",
+    "project-management",
+    "markdown",
+    "kanban",
+    "productivity"
+  ],
   "license": "SEE LICENSE IN LICENSE.md",
   "icon": "icon.png",
   "server": {

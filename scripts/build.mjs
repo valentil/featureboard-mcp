@@ -8,6 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { validatePackaging } from "../server/packaging.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const rel = (p) => path.join(root, p);
@@ -42,6 +43,20 @@ for (const f of ["server/index.js", "server/storage.js", "server/metadata.js", "
 console.log("Docs:");
 try { execSync(`node "${rel("scripts/gen-docs.mjs")}"`, { stdio: "pipe" }); okmsg("docs/TOOLS.md + manifest tools regenerated"); }
 catch (e) { fail("doc generation: " + String(e.message).split("\n")[0]); }
+
+// 5. packaging metadata (FBMCPF-85): validate the manifest's packaging fields
+console.log("Packaging metadata:");
+const pkgMeta = {
+  name: manifest.name,
+  displayName: manifest.display_name,
+  description: manifest.description,
+  longDescription: manifest.long_description,
+  keywords: Array.isArray(manifest.keywords) ? manifest.keywords : [],
+};
+const pkgRes = validatePackaging(pkgMeta);
+for (const e of pkgRes.errors) fail("packaging: " + e);
+for (const w of pkgRes.warnings) console.log("  ! " + w);
+if (pkgRes.ok) okmsg("manifest packaging fields valid");
 
 console.log("");
 if (failed) { console.error(`Preflight FAILED (${failed} issue${failed === 1 ? "" : "s"}).`); process.exit(1); }

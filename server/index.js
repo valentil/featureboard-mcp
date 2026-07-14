@@ -45,7 +45,9 @@ import {
   renderSite, siteRoot, saveAsset, listAssets, setSiteAnalytics, addRawPage,
 } from "./website.js";
 import { getGitConfig, setGitConfig, commitFeature } from "./git.js";
+import { scaffoldSite } from "./sitegen.js";
 import { setAnalyticsConfig, autoConfigureAnalytics, getSiteTraffic } from "./analytics.js";
+import { suggestPackaging, savePackagingConfig, getPackagingConfig, validatePackaging } from "./packaging.js";
 
 const DATA_DIR = process.env.FEATUREBOARD_DATA_DIR;
 
@@ -2453,6 +2455,38 @@ server.registerTool(
 );
 
 server.registerTool(
+  "scaffold_site",
+  {
+    title: "Scaffold a whole website from one spec",
+    description:
+      "Generate a whole site in one shot from a single spec instead of set_site field-by-field: sets the home page (title, tagline, theme, sections) and creates each initial sub-page. Persisted through the website store and rendered to site/. Pair with the generate_site prompt, which has Claude produce the spec.",
+    inputSchema: {
+      project: z.string(),
+      title: z.string().describe("Site / home page title."),
+      tagline: z.string().optional(),
+      theme: z.enum(["light", "dark"]).optional(),
+      sections: z.array(z.object({ heading: z.string(), body: z.string() })).optional().describe("Home page sections."),
+      pages: z
+        .array(
+          z.object({
+            slug: z.string(),
+            title: z.string().optional(),
+            sections: z.array(z.object({ heading: z.string(), body: z.string() })).optional(),
+          })
+        )
+        .optional()
+        .describe("Initial sub-pages to create."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  writeTool(({ project, title, tagline, theme, sections, pages }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return scaffoldSite(board, project, { title, tagline, theme, sections, pages });
+  })
+);
+
+server.registerTool(
   "edit_site_section",
   {
     title: "Edit a website section",
@@ -2669,6 +2703,65 @@ server.registerTool(
     const board = getBoard();
     if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
     return getSiteTraffic(board, project, { period, metrics });
+  })
+);
+
+// AI-assisted packaging config (FBMCPF-85) ---------------------------------
+
+server.registerTool(
+  "suggest_packaging",
+  {
+    title: "Suggest packaging metadata",
+    description:
+      "AI-gen seed: derive a draft of the .mcpb packaging metadata (name, displayName, description, keywords) from the project's config, brand, and products. Returns a draft to refine — it does NOT save. Refine it, then persist with save_packaging_config.",
+    inputSchema: { project: z.string() },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  tryTool(({ project }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return suggestPackaging(board, project);
+  })
+);
+
+server.registerTool(
+  "save_packaging_config",
+  {
+    title: "Save packaging config",
+    description:
+      "Persist the .mcpb packaging metadata for a project (packaging.json): name (slugified), displayName, description, longDescription, keywords, version. Validated by the same rules the build preflight uses; rejects hard errors (missing name/description). Only provided fields change.",
+    inputSchema: {
+      project: z.string(),
+      name: z.string().optional(),
+      displayName: z.string().optional(),
+      description: z.string().optional(),
+      longDescription: z.string().optional(),
+      keywords: z.array(z.string()).optional(),
+      version: z.string().optional(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  writeTool(({ project, name, displayName, description, longDescription, keywords, version }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return savePackagingConfig(board, project, { name, displayName, description, longDescription, keywords, version });
+  })
+);
+
+server.registerTool(
+  "validate_packaging",
+  {
+    title: "Validate packaging metadata",
+    description:
+      "Run the build-preflight packaging checks against the project's saved packaging.json: reports hard errors (missing/invalid name or description) and advisory warnings (no keywords, missing displayName/longDescription).",
+    inputSchema: { project: z.string() },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  tryTool(({ project }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    const config = getPackagingConfig(board, project);
+    return { project, config, validation: validatePackaging(config) };
   })
 );
 
@@ -3138,6 +3231,37 @@ server.registerPrompt(
             `- Write a short, punchy X post (≤${platformLimit("x")} chars) and a longer, more detailed LinkedIn post.\n` +
             "- Save each with draft_share (platform 'x' and 'linkedin', with the asset).\n" +
             "- Show me both drafts for review. Do NOT post anything — there is no publishing connector; I'll post them myself or wire a connector later.",
+        },
+      },
+    ],
+  })
+);
+
+server.registerPrompt(
+  "generate_site",
+  {
+    title: "Generate a whole website from one prompt",
+    description:
+      "From a single description, generate a complete site (title, tagline, theme, home sections, and initial sub-pages) and scaffold it in one shot with scaffold_site, instead of building it field-by-field.",
+    argsSchema: {
+      project: z.string().optional(),
+      brief: z.string().optional().describe("What the site is for (audience, tone, what to include)."),
+    },
+  },
+  ({ project, brief } = {}) => ({
+    messages: [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text:
+            `Generate a complete website${project ? ` for project "${project}"` : ""}.\n\n` +
+            (brief ? `Brief: ${brief}\n\n` : "1. If the brief isn't clear, ask me a couple of quick questions first (audience, tone, pages).\n\n") +
+            "Steps:\n" +
+            "- Optionally call get_project_config to reuse the project's brand (title/voice) and products.\n" +
+            "- Draft the full spec: a title and tagline, a theme (light/dark), 2–4 home-page sections (heading + a short paragraph each), and 1–3 initial sub-pages (e.g. pricing, about, contact) each with their own sections. Write real copy, not placeholders.\n" +
+            "- Persist it in ONE call with scaffold_site (project, title, tagline, theme, sections, pages). Do not build it field-by-field.\n" +
+            "- Then report the created home page + pages and note they were rendered to site/. Offer to tweak_site or add_page for follow-ups.",
         },
       },
     ],

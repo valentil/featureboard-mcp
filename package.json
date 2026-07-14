@@ -9,7 +9,7 @@
   "scripts": {
     "start": "node server/index.js",
     "test": "node --test",
-    "check": "node --check server/index.js && node --check server/storage.js && node --check server/metadata.js && node --check server/license.js && node --check server/predictive.js && node --check server/media.js && node --check server/social.js && node --check server/crm.js && node --check server/leads.js && node --check server/portal.js && node --check server/contracts.js && node --check server/mail.js && node --check server/campaigns.js && node --check server/website.js && node --check server/git.js && node --check server/analytics.js && node --check server/bookings.js && node --check server/testpages.js && node --check server/testing.js",
+    "check": "node --check server/index.js && node --check server/storage.js && node --check server/metadata.js && node --check server/license.js && node --check server/predictive.js && node --check server/media.js && node --check server/social.js && node --check server/crm.js && node --check server/leads.js && node --check server/portal.js && node --check server/contracts.js && node --check server/mail.js && node --check server/campaigns.js && node --check server/website.js && node --check server/git.js && node --check server/analytics.js && node --check server/bookings.js && node --check server/packaging.js && node --check server/sitegen.js && node --check server/testpages.js && node --check server/testing.js",
     "docs": "node scripts/gen-docs.mjs",
     "nightly": "node scripts/run-nightly-tests.mjs",
     "smoke": "node scripts/mcp-smoke.mjs",
