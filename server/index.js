@@ -19,7 +19,8 @@ import { predictDueDates } from "./predictive.js";
 import {
   listMedia, saveMedia, getMedia, revertMedia,
   tagMedia, annotateMedia, removeAnnotation, searchMedia,
-  saveUpload, listUploads, editMediaText,
+  saveUpload, listUploads, editMediaText, listVariations,
+  addComment, listComments, removeComment,
 } from "./media.js";
 import { saveTestPage, listTestPages, getTestPage, removeTestPage } from "./testpages.js";
 import { groupBySuite } from "./testing.js";
@@ -50,6 +51,29 @@ function getBoard() {
     );
   }
   return new Board(DATA_DIR);
+}
+
+/** Safe brand-context lookup for generation prompts; null if unavailable. */
+function tryBrand(project) {
+  try {
+    const board = getBoard();
+    if (!board.projectExists(project)) return null;
+    return meta.brandContext(board, project);
+  } catch {
+    return null;
+  }
+}
+
+/** The project's configured preferred image tool/connector, or null. */
+function tryImageTool(project) {
+  try {
+    const board = getBoard();
+    if (!board.projectExists(project)) return null;
+    const cfg = meta.getProjectConfig(board, project);
+    return cfg && cfg.imageTool ? String(cfg.imageTool) : null;
+  } catch {
+    return null;
+  }
 }
 
 const INSTRUCTIONS = `FeatureBoard is your task board for the user's projects. Treat it as the place you plan and track work, not just a store you touch when asked.
@@ -676,6 +700,9 @@ server.registerTool(
       customPrompt: z.string().optional().describe("Project-specific guidance injected into every work packet."),
       brandTitle: z.string().optional().describe("Board display title (branding)."),
       brandSubtitle: z.string().optional().describe("Board subtitle / byline (branding)."),
+      brandWords: z.array(z.string()).optional().describe("Brand / trial words woven into generated media (e.g. product name, taglines, campaign phrases)."),
+      brandVoice: z.string().optional().describe("Brand voice/tone for generated media, e.g. 'confident, playful, plain-spoken'."),
+      imageTool: z.string().optional().describe("Preferred image-generation tool/connector/skill name for generate_image (e.g. an image MCP or an 'imagegen' skill). If unset, generate_image uses any available image generator, else falls back to SVG."),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
@@ -1016,7 +1043,7 @@ server.registerTool(
   {
     title: "List media assets",
     description:
-      "List a project's media gallery: images and shareable HTML reports in its media/ folder, with creation date, size, kind (image/report/other), and any sidecar metadata (title, tags, linked ticket) from <asset>.meta.json. Read-only; returns an empty gallery if the project has no media/ folder yet. Optionally filter by kind.",
+      "List a project's media gallery: images and shareable HTML reports in its media/ folder. Each asset carries enough to render a visual grid — kind, mimeType, sizeBytes + sizeLabel + sizeBucket, image dimensions (width/height, parsed from file headers), a preview reference (inline text snippet for reports, a get_media src for images), plus sidecar metadata (title, tags, brandWords, linked ticket). Read-only; returns an empty gallery if the project has no media/ folder yet. Optionally filter by kind.",
     inputSchema: {
       project: z.string(),
       kind: z.enum(["image", "report", "other"]).optional().describe("Filter to one media kind."),
@@ -1045,13 +1072,32 @@ server.registerTool(
       prompt: z.string().optional().describe("The prompt/goal this asset was generated from."),
       tags: z.array(z.string()).optional(),
       ticket: z.string().optional().describe("Board ticket this asset relates to, e.g. FBMCPF-39."),
+      group: z.string().optional().describe("Variation group id — save siblings under one group for side-by-side review (list_variations)."),
+      brandWords: z.array(z.string()).optional().describe("Brand/trial words woven into this asset. If omitted, the project's configured brandWords are recorded automatically."),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
-  writeTool(({ project, name, content, encoding, title, prompt, tags, ticket }) => {
+  writeTool(({ project, name, content, encoding, title, prompt, tags, ticket, group, brandWords }) => {
     const board = getBoard();
     if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
-    return saveMedia(board, project, { name, content, encoding, title, prompt, tags, ticket });
+    // Default the recorded brand words to the project's configured set so generated assets carry their branding.
+    const bw = brandWords && brandWords.length ? brandWords : meta.brandContext(board, project).words;
+    return saveMedia(board, project, { name, content, encoding, title, prompt, tags, ticket, group, brandWords: bw });
+  })
+);
+
+server.registerTool(
+  "list_variations",
+  {
+    title: "List a variation group",
+    description: "List the gallery assets that share a variation group id (alternatives generated from one prompt), for side-by-side review.",
+    inputSchema: { project: z.string(), group: z.string() },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project, group }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return listVariations(board, project, group);
   })
 );
 
@@ -1152,6 +1198,64 @@ server.registerTool(
     const board = getBoard();
     if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
     return removeAnnotation(board, project, name, id);
+  })
+);
+
+server.registerTool(
+  "add_media_comment",
+  {
+    title: "Comment on a media asset",
+    description:
+      "Add a threaded comment to a gallery asset (a discussion thread, distinct from pin annotations). Pass parentId (a comment id from get_media / list_media_comments) to reply to an existing comment. Returns the new comment and total count.",
+    inputSchema: {
+      project: z.string(),
+      name: z.string().describe("Asset filename, e.g. launch-report.html."),
+      body: z.string().describe("Comment text."),
+      author: z.string().optional().describe("Who is commenting."),
+      parentId: z.string().optional().describe("Comment id to reply to (omit for a top-level comment)."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  writeTool(({ project, name, body, author, parentId }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return addComment(board, project, name, { body, author, parentId });
+  })
+);
+
+server.registerTool(
+  "list_media_comments",
+  {
+    title: "List media comments",
+    description: "List an asset's comments, both as a flat array and as a threaded tree (root comments with nested replies).",
+    inputSchema: { project: z.string(), name: z.string() },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project, name }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return listComments(board, project, name);
+  })
+);
+
+server.registerTool(
+  "remove_media_comment",
+  {
+    title: "Remove a media comment",
+    description:
+      "Remove a comment by id (from get_media / list_media_comments). By default its reply subtree is removed too; set cascade:false to refuse when it still has replies. Returns the ids removed.",
+    inputSchema: {
+      project: z.string(),
+      name: z.string(),
+      id: z.string(),
+      cascade: z.boolean().optional().default(true).describe("Remove the comment's replies too (default true)."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  },
+  writeTool(({ project, name, id, cascade }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return removeComment(board, project, name, id, { cascade });
   })
 );
 
@@ -2334,7 +2438,9 @@ server.registerPrompt(
       goal: z.string().optional().describe("What the report/image should show."),
     },
   },
-  ({ project, goal } = {}) => ({
+  ({ project, goal } = {}) => {
+    const brand = project ? tryBrand(project) : null;
+    return {
     messages: [
       {
         role: "user",
@@ -2343,15 +2449,95 @@ server.registerPrompt(
           text:
             `Generate a shareable asset${project ? ` for project "${project}"` : ""} and save it to the media gallery.\n\n` +
             (goal ? `Goal: ${goal}\n\n` : "1. Ask me what the asset should show if it isn't clear.\n") +
+            (brand && brand.hasBrand ? brand.instruction + "\n\n" : "") +
             "Steps:\n" +
             "- Check list_references for any uploaded reference images (media/uploads/) and work from them if present.\n" +
             "- Produce a self-contained, shareable HTML report (inline CSS, no external assets) — or an image if that fits better.\n" +
+            "- For a real photographic/raster image, prefer the generate_image prompt (it routes through an image tool/connector and falls back to SVG).\n" +
             "- Call save_media with a descriptive filename (e.g. q3-summary.html), the content, a title, the prompt/goal, any tags, and the related ticket if there is one. Use encoding:'base64' for image bytes.\n" +
             "- Confirm what was saved and its media/ path, and mention it will now appear in list_media.",
         },
       },
     ],
-  })
+    };
+  }
+);
+
+server.registerPrompt(
+  "generate_image",
+  {
+    title: "Generate a real image into the gallery",
+    description:
+      "Produce an actual raster image (via an image-generation tool/connector, if one is available) and save it to the project's media/ gallery as base64 — falling back to a self-contained SVG when no image generator is connected.",
+    argsSchema: {
+      project: z.string().optional().describe("Board whose media/ folder to save into."),
+      goal: z.string().optional().describe("What the image should depict."),
+      name: z.string().optional().describe("Filename to save as (e.g. hero.png). Defaults from the goal."),
+      aspect: z.string().optional().describe("Optional aspect/size hint, e.g. '16:9', '1024x1024'."),
+    },
+  },
+  ({ project, goal, name, aspect } = {}) => {
+    const brand = project ? tryBrand(project) : null;
+    const imageTool = project ? tryImageTool(project) : null;
+    return {
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text:
+              `Generate a real image${goal ? ` of: ${goal}` : ""}${project ? ` for project "${project}"` : ""} and save it to the media gallery.\n\n` +
+              (goal ? "" : "1. Ask me what the image should depict if it isn't clear.\n") +
+              (aspect ? `Aspect/size: ${aspect}\n` : "") +
+              (brand && brand.hasBrand ? brand.instruction + "\n\n" : "") +
+              "Steps:\n" +
+              (imageTool
+                ? `- Use the project's configured image tool "${imageTool}" to generate the image. If it isn't available, fall back to any other connected image-generation tool/connector/skill.\n`
+                : "- Look for an available image-generation capability — a connected image MCP/connector or an image-gen skill (e.g. 'imagegen'). Use it to generate the image.\n") +
+              "- Check list_references first for any uploaded reference images to guide style/subject.\n" +
+              "- When you have the image bytes, call save_media with a .png/.jpg name" + (name ? ` (use "${name}")` : "") + ", encoding:'base64', a title, prompt set to the goal, and the related ticket if any. The project's brand words are recorded automatically.\n" +
+              "- If NO image generator is available, do NOT fake a raster: instead produce a crisp, self-contained SVG that depicts the goal, save it as a .svg (encoding:'utf8'), and tell me it's a vector fallback — and that real raster generation needs an image tool (set one via set_project_config imageTool, or connect an image generator).\n" +
+              "- Confirm what was saved, its media/ path, and that it now appears in list_media.",
+          },
+        },
+      ],
+    };
+  }
+);
+
+server.registerPrompt(
+  "generate_variations",
+  {
+    title: "Generate media variations",
+    description:
+      "Produce several alternative versions of an asset from one prompt/goal, saved as a group for side-by-side review.",
+    argsSchema: {
+      project: z.string().optional(),
+      goal: z.string().optional().describe("What the asset should show."),
+      count: z.string().optional().describe("How many variations (default 3)."),
+    },
+  },
+  ({ project, goal, count } = {}) => {
+    const brand = project ? tryBrand(project) : null;
+    return {
+    messages: [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text:
+            `Generate ${count || "3"} variations${goal ? ` for: ${goal}` : ""}${project ? ` in project "${project}"` : ""}.\n\n` +
+            (brand && brand.hasBrand ? brand.instruction + "\n\n" : "") +
+            "Steps:\n" +
+            "- Pick a short group id (e.g. a slug of the goal).\n" +
+            `- Produce ${count || "3"} distinct takes on the goal (vary layout/tone/style).\n` +
+            "- Save each with save_media using distinct names (e.g. <group>-1.html, <group>-2.html) and the SAME group id so they're siblings.\n" +
+            "- Then call list_variations with that group id and show them side-by-side for the user to pick.",
+        },
+      },
+    ],
+    };
+  }
 );
 
 server.registerPrompt(
@@ -2366,7 +2552,9 @@ server.registerPrompt(
       instruction: z.string().optional().describe("How to change/improve it."),
     },
   },
-  ({ project, name, instruction } = {}) => ({
+  ({ project, name, instruction } = {}) => {
+    const brand = project ? tryBrand(project) : null;
+    return {
     messages: [
       {
         role: "user",
@@ -2375,6 +2563,7 @@ server.registerPrompt(
           text:
             `Refine a media asset${name ? ` ("${name}")` : ""}${project ? ` in project "${project}"` : ""}.\n\n` +
             (instruction ? `Refinement: ${instruction}\n\n` : "1. Ask what to change if it isn't clear.\n") +
+            (brand && brand.hasBrand ? brand.instruction + "\n\n" : "") +
             "Steps:\n" +
             "- get_media the asset (and note its existing versions) to see the current content + the prompt it came from.\n" +
             "- Produce the improved version applying the refinement, keeping the original intent.\n" +
@@ -2383,7 +2572,8 @@ server.registerPrompt(
         },
       },
     ],
-  })
+    };
+  }
 );
 
 server.registerPrompt(

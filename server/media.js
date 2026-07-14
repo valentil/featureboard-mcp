@@ -48,6 +48,140 @@ export function isTextAsset(filename) {
   return TEXT_EXTS.has(path.extname(filename).toLowerCase());
 }
 
+const MIME_BY_EXT = {
+  ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif",
+  ".webp": "image/webp", ".svg": "image/svg+xml", ".bmp": "image/bmp", ".avif": "image/avif",
+  ".html": "text/html", ".htm": "text/html", ".txt": "text/plain", ".md": "text/markdown",
+  ".json": "application/json", ".csv": "text/csv", ".xml": "application/xml",
+};
+
+/** MIME type for an asset extension (application/octet-stream if unknown). */
+export function mimeForExt(ext) {
+  return MIME_BY_EXT[String(ext || "").toLowerCase()] || "application/octet-stream";
+}
+
+/** Human-readable byte size, e.g. 12345 -> "12.1 KB". */
+export function humanSize(bytes) {
+  const n = Number(bytes) || 0;
+  if (n < 1024) return `${n} B`;
+  const units = ["KB", "MB", "GB"];
+  let v = n / 1024, i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i += 1; }
+  return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${units[i]}`;
+}
+
+/** Coarse size bucket for grid badges/filters. */
+export function sizeBucket(bytes) {
+  const n = Number(bytes) || 0;
+  if (n < 50 * 1024) return "tiny";
+  if (n < 500 * 1024) return "small";
+  if (n < 3 * 1024 * 1024) return "medium";
+  return "large";
+}
+
+/** Read up to n bytes from the head of a file (empty Buffer on failure). */
+function readHead(filePath, n) {
+  let fd;
+  try {
+    fd = fs.openSync(filePath, "r");
+    const buf = Buffer.alloc(n);
+    const read = fs.readSync(fd, buf, 0, n, 0);
+    return buf.subarray(0, read);
+  } catch {
+    return Buffer.alloc(0);
+  } finally {
+    if (fd !== undefined) try { fs.closeSync(fd); } catch { /* ignore */ }
+  }
+}
+
+/**
+ * Pixel dimensions of a raster/vector image by parsing file headers only (no
+ * decoding, no dependencies). Supports PNG, GIF, BMP, JPEG, WEBP and SVG.
+ * Returns { width, height } or null when unknown (e.g. AVIF).
+ */
+export function imageDimensions(filePath, ext) {
+  const e = String(ext || "").toLowerCase();
+  try {
+    if (e === ".svg") {
+      const head = readHead(filePath, 4096).toString("utf8");
+      const tag = head.match(/<svg\b[^>]*>/i);
+      if (!tag) return null;
+      const w = tag[0].match(/\bwidth\s*=\s*["']?\s*([\d.]+)/i);
+      const h = tag[0].match(/\bheight\s*=\s*["']?\s*([\d.]+)/i);
+      if (w && h) return { width: Math.round(+w[1]), height: Math.round(+h[1]) };
+      const vb = tag[0].match(/\bviewBox\s*=\s*["']\s*[\d.]+\s+[\d.]+\s+([\d.]+)\s+([\d.]+)/i);
+      if (vb) return { width: Math.round(+vb[1]), height: Math.round(+vb[2]) };
+      return null;
+    }
+    const b = readHead(filePath, 65536);
+    if (b.length < 10) return null; // enough for GIF (offset 8-9); parsers read fixed offsets and any over-read is caught below
+    // PNG
+    if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) {
+      return { width: b.readUInt32BE(16), height: b.readUInt32BE(20) };
+    }
+    // GIF
+    if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46) {
+      return { width: b.readUInt16LE(6), height: b.readUInt16LE(8) };
+    }
+    // BMP
+    if (b[0] === 0x42 && b[1] === 0x4d) {
+      return { width: b.readInt32LE(18), height: Math.abs(b.readInt32LE(22)) };
+    }
+    // WEBP (RIFF....WEBP)
+    if (b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 && b.toString("ascii", 8, 12) === "WEBP") {
+      const fourcc = b.toString("ascii", 12, 16);
+      if (fourcc === "VP8 ") {
+        return { width: b.readUInt16LE(26) & 0x3fff, height: b.readUInt16LE(28) & 0x3fff };
+      }
+      if (fourcc === "VP8L") {
+        const bits = b.readUInt32LE(21);
+        return { width: (bits & 0x3fff) + 1, height: ((bits >> 14) & 0x3fff) + 1 };
+      }
+      if (fourcc === "VP8X") {
+        const w = 1 + (b[24] | (b[25] << 8) | (b[26] << 16));
+        const h = 1 + (b[27] | (b[28] << 8) | (b[29] << 16));
+        return { width: w, height: h };
+      }
+      return null;
+    }
+    // JPEG — scan SOF markers
+    if (b[0] === 0xff && b[1] === 0xd8) {
+      let i = 2;
+      while (i + 9 < b.length) {
+        if (b[i] !== 0xff) { i += 1; continue; }
+        const marker = b[i + 1];
+        // SOF0..SOF15 carry dimensions (skip DHT/JPG/DAC/RST markers)
+        if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+          return { height: b.readUInt16BE(i + 5), width: b.readUInt16BE(i + 7) };
+        }
+        const segLen = b.readUInt16BE(i + 2);
+        i += 2 + segLen;
+      }
+      return null;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** Short text preview for report/text assets: tags & whitespace collapsed, clipped. */
+export function textPreview(filePath, max = 240) {
+  try {
+    const raw = readHead(filePath, 8192).toString("utf8");
+    const stripped = raw
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&[a-z]+;/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    return stripped.length > max ? stripped.slice(0, max - 1) + "…" : stripped;
+  } catch {
+    return "";
+  }
+}
+
 /** True for files that are sidecars/hidden rather than gallery assets. */
 export function isSidecar(filename) {
   return filename.startsWith(".") || filename.endsWith(META_SUFFIX);
@@ -114,6 +248,10 @@ export function buildMetaSidecar(fields = {}, now = new Date()) {
   if (fields.prompt) meta.prompt = String(fields.prompt);
   if (Array.isArray(fields.tags) && fields.tags.length) meta.tags = fields.tags.map(String);
   if (fields.ticket) meta.ticket = String(fields.ticket);
+  if (fields.group) meta.group = String(fields.group);
+  if (Array.isArray(fields.brandWords) && fields.brandWords.length) {
+    meta.brandWords = fields.brandWords.map(String).map((s) => s.trim()).filter(Boolean);
+  }
   meta.generatedAt = now.toISOString();
   return meta;
 }
@@ -150,7 +288,7 @@ function archiveExisting(mediaDir, name, now = new Date()) {
  * encoding:"base64" (for images). Returns the new entry.
  */
 export function saveMedia(board, project, args = {}, { now = new Date() } = {}) {
-  const { name, content, encoding = "utf8", title, prompt, tags, ticket } = args;
+  const { name, content, encoding = "utf8", title, prompt, tags, ticket, group, brandWords } = args;
   const safe = sanitizeAssetName(name);
   if (typeof content !== "string") throw new Error("content must be a string (text, or base64 for images)");
   if (encoding !== "utf8" && encoding !== "base64") throw new Error("encoding must be 'utf8' or 'base64'");
@@ -163,7 +301,7 @@ export function saveMedia(board, project, args = {}, { now = new Date() } = {}) 
   const buf = encoding === "base64" ? Buffer.from(content, "base64") : Buffer.from(content, "utf8");
   atomicWrite(assetPath, buf);
 
-  const meta = buildMetaSidecar({ title, prompt, tags, ticket }, now);
+  const meta = buildMetaSidecar({ title, prompt, tags, ticket, group, brandWords }, now);
   atomicWrite(assetPath + META_SUFFIX, JSON.stringify(meta, null, 2) + "\n");
 
   const cls = classifyAsset(safe);
@@ -247,11 +385,16 @@ export function getMedia(board, project, name, { version, withContent = true } =
     version: version || null,
     kind: cls.kind,
     ext: cls.ext,
+    mimeType: mimeForExt(cls.ext),
     sizeBytes: stat.size,
+    sizeLabel: humanSize(stat.size),
+    dimensions: cls.kind === "image" ? imageDimensions(assetPath, cls.ext) : null,
     modified: isoDate(stat.mtimeMs),
     title: (meta && meta.title) || safe,
     tags: (meta && Array.isArray(meta.tags) && meta.tags) || [],
     annotations: (meta && Array.isArray(meta.annotations) && meta.annotations) || [],
+    comments: buildCommentTree((meta && Array.isArray(meta.comments) && meta.comments) || []),
+    commentCount: (meta && Array.isArray(meta.comments) && meta.comments.length) || 0,
     meta: meta || null,
     versions: listVersions(board, project, safe),
   };
@@ -358,6 +501,96 @@ export function removeAnnotation(board, project, name, id) {
 }
 
 /**
+ * Assemble a flat list of comments (each { id, parentId, ... }) into a threaded
+ * tree: root comments (no/unknown parent) with nested `replies`, preserving
+ * insertion order at each level. Pure — exported for testing.
+ */
+export function buildCommentTree(comments = []) {
+  const byId = new Map();
+  const nodes = comments.map((c) => {
+    const n = { ...c, replies: [] };
+    byId.set(c.id, n);
+    return n;
+  });
+  const roots = [];
+  for (const n of nodes) {
+    const parent = n.parentId ? byId.get(n.parentId) : null;
+    if (parent && parent !== n) parent.replies.push(n);
+    else roots.push(n);
+  }
+  return roots;
+}
+
+/**
+ * Add a threaded comment to an asset (distinct from pin annotations). `parentId`
+ * makes it a reply — it must reference an existing comment. Ids are monotonic per
+ * asset (c1, c2, …). Stored in the sidecar under `comments`.
+ */
+export function addComment(board, project, name, { body, author, parentId } = {}, { now = new Date() } = {}) {
+  if (!body || !String(body).trim()) throw new Error("comment body is required");
+  const { safe, metaPath } = metaPathFor(board, project, name);
+  const meta = readMetaSafe(metaPath) || {};
+  const comments = Array.isArray(meta.comments) ? meta.comments : [];
+  if (parentId != null && String(parentId).trim()) {
+    if (!comments.some((c) => c.id === String(parentId))) {
+      throw new Error(`parent comment ${parentId} not found on ${safe}`);
+    }
+  }
+  const seq = (meta.commentSeq || 0) + 1;
+  const comment = { id: `c${seq}`, body: String(body).trim(), createdAt: now.toISOString() };
+  if (author) comment.author = String(author);
+  if (parentId != null && String(parentId).trim()) comment.parentId = String(parentId);
+  comments.push(comment);
+  meta.comments = comments;
+  meta.commentSeq = seq;
+  atomicWrite(metaPath, JSON.stringify(meta, null, 2) + "\n");
+  return { name: safe, comment, count: comments.length };
+}
+
+/** List an asset's comments as both the flat array and a threaded tree. */
+export function listComments(board, project, name) {
+  const { safe, metaPath } = metaPathFor(board, project, name);
+  const meta = readMetaSafe(metaPath) || {};
+  const comments = Array.isArray(meta.comments) ? meta.comments : [];
+  return { name: safe, count: comments.length, comments, thread: buildCommentTree(comments) };
+}
+
+/**
+ * Remove a comment. By default its whole reply subtree is removed too (so no
+ * orphans); pass cascade:false to reject removal while it still has replies.
+ * Returns the ids removed.
+ */
+export function removeComment(board, project, name, id, { cascade = true } = {}) {
+  const { safe, metaPath } = metaPathFor(board, project, name);
+  const meta = readMetaSafe(metaPath) || {};
+  const comments = Array.isArray(meta.comments) ? meta.comments : [];
+  if (!comments.some((c) => c.id === id)) throw new Error(`comment ${id} not found on ${safe}`);
+
+  // collect descendants
+  const childrenOf = new Map();
+  for (const c of comments) {
+    if (c.parentId) {
+      if (!childrenOf.has(c.parentId)) childrenOf.set(c.parentId, []);
+      childrenOf.get(c.parentId).push(c.id);
+    }
+  }
+  const toRemove = new Set();
+  const stack = [id];
+  while (stack.length) {
+    const cur = stack.pop();
+    if (toRemove.has(cur)) continue;
+    toRemove.add(cur);
+    for (const child of childrenOf.get(cur) || []) stack.push(child);
+  }
+  if (!cascade && toRemove.size > 1) {
+    throw new Error(`comment ${id} has ${toRemove.size - 1} repl${toRemove.size - 1 === 1 ? "y" : "ies"}; pass cascade:true to remove the thread`);
+  }
+  meta.comments = comments.filter((c) => !toRemove.has(c.id));
+  atomicWrite(metaPath, JSON.stringify(meta, null, 2) + "\n");
+  return { name: safe, removed: [...toRemove], count: meta.comments.length };
+}
+
+/**
  * Search/filter a project's gallery: by kind, by exact tag, and/or a free-text
  * query matched across name, title, tags, and the generation prompt.
  */
@@ -410,6 +643,18 @@ export function listUploads(board, project) {
       return { name: f, relPath: `${MEDIA_DIR}/${UPLOADS_DIR}/${f}`, sizeBytes: size };
     });
   return { project, count: uploads.length, uploads };
+}
+
+/**
+ * List a variation group — gallery assets that share a group id (FBMCPF-89),
+ * for side-by-side review of alternatives generated from one prompt.
+ */
+export function listVariations(board, project, group) {
+  const g = String(group || "").trim();
+  if (!g) throw new Error("group is required");
+  const { assets } = listMedia(board, project);
+  const members = assets.filter((a) => a.meta && a.meta.group === g);
+  return { project, group: g, count: members.length, assets: members };
 }
 
 /**
@@ -469,19 +714,36 @@ export function listMedia(board, project, { kind } = {}) {
     }
     const meta = readMetaSafe(full + META_SUFFIX);
     const createdMs = stat.birthtimeMs && stat.birthtimeMs > 0 ? stat.birthtimeMs : stat.mtimeMs;
+    const isImage = cls.kind === "image";
+    const relPath = `${MEDIA_DIR}/${ent.name}`;
+    const dimensions = isImage ? imageDimensions(full, cls.ext) : null;
+    // Thumbnail/preview reference the gallery grid can render without a second fetch
+    // for text; images point back to get_media (name) for lazy byte loading.
+    const preview = isImage
+      ? { type: "image", src: relPath, name: ent.name }
+      : isTextAsset(ent.name)
+        ? { type: "text", text: textPreview(full) }
+        : { type: "none" };
     assets.push({
       name: ent.name,
       kind: cls.kind,
       ext: cls.ext,
+      mimeType: mimeForExt(cls.ext),
+      isImage,
       sizeBytes: stat.size,
+      sizeLabel: humanSize(stat.size),
+      sizeBucket: sizeBucket(stat.size),
+      dimensions,
+      preview,
       created: isoDate(createdMs),
       modified: isoDate(stat.mtimeMs),
       title: (meta && meta.title) || ent.name,
       tags: (meta && Array.isArray(meta.tags) && meta.tags) || [],
       ticket: (meta && meta.ticket) || null,
+      brandWords: (meta && Array.isArray(meta.brandWords) && meta.brandWords) || [],
       hasMeta: !!meta,
       meta: meta || null,
-      relPath: `${MEDIA_DIR}/${ent.name}`,
+      relPath,
     });
   }
 

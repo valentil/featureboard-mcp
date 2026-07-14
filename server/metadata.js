@@ -36,7 +36,7 @@ function atomicWrite(p, content) {
 // Project config
 // ---------------------------------------------------------------------------
 
-const CONFIG_KEYS = ["products", "codeLocation", "agentModel", "description", "website", "featurePrefix", "bugPrefix", "customPrompt", "brandTitle", "brandSubtitle"];
+const CONFIG_KEYS = ["products", "codeLocation", "agentModel", "description", "website", "featurePrefix", "bugPrefix", "customPrompt", "brandTitle", "brandSubtitle", "brandWords", "brandVoice", "imageTool"];
 
 /** Merged view: managed config overlaid on legacy project_config.json. */
 export function getProjectConfig(board, project) {
@@ -90,6 +90,42 @@ export function setProjectConfig(board, project, patch) {
   managed.updatedAt = new Date().toISOString();
   atomicWrite(p, JSON.stringify(managed, null, 2));
   return getProjectConfig(board, project);
+}
+
+/**
+ * Resolve a project's branding into a compact context for generation prompts.
+ * Returns { title, subtitle, words: string[], voice, hasBrand, instruction } where
+ * `instruction` is a ready-to-inject block telling the generator to weave the
+ * configured brand words + voice into the asset. `hasBrand` is false when nothing
+ * brand-related is configured, so callers can skip injection entirely.
+ */
+export function brandContext(board, project) {
+  let cfg = {};
+  try {
+    cfg = getProjectConfig(board, project) || {};
+  } catch {
+    cfg = {};
+  }
+  const title = cfg.brandTitle || null;
+  const subtitle = cfg.brandSubtitle || null;
+  const words = Array.isArray(cfg.brandWords)
+    ? cfg.brandWords.map((w) => String(w).trim()).filter(Boolean)
+    : typeof cfg.brandWords === "string"
+      ? cfg.brandWords.split(/[,\n]/).map((w) => w.trim()).filter(Boolean)
+      : [];
+  const voice = cfg.brandVoice ? String(cfg.brandVoice).trim() : null;
+  const hasBrand = Boolean(title || subtitle || words.length || voice);
+
+  let instruction = "";
+  if (hasBrand) {
+    const lines = ["Branding — weave the project's brand into this asset:"];
+    if (title) lines.push(`- Brand name: ${title}${subtitle ? ` — ${subtitle}` : ""}`);
+    if (words.length) lines.push(`- Brand/trial words to work in naturally (don't force all of them): ${words.join(", ")}`);
+    if (voice) lines.push(`- Brand voice/tone: ${voice}`);
+    lines.push("- Reflect this in copy, headings, and styling; keep it tasteful, not spammy.");
+    instruction = lines.join("\n");
+  }
+  return { title, subtitle, words, voice, hasBrand, instruction };
 }
 
 export function addProduct(board, project, name) {
