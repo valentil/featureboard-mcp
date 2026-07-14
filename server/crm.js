@@ -159,14 +159,27 @@ function writeInbox(board, project, store) {
   writeJson(inboxPath(board, project), store);
 }
 
-/** Add an inbox message (starts pending review). */
-export function addInboxMessage(board, project, { from, subject, body, company } = {}, { now = new Date() } = {}) {
+/** Inbound submission categories for the CRM inbox. */
+export const INTAKE_TYPES = ["support", "sales", "contact", "feedback", "other"];
+
+/** Normalize an intake type, defaulting to "contact". */
+export function validateIntakeType(type) {
+  const s = String(type || "contact").trim().toLowerCase();
+  if (!INTAKE_TYPES.includes(s)) throw new Error(`type must be one of ${INTAKE_TYPES.join(", ")} (got "${type}")`);
+  return s;
+}
+
+/** Add an inbox message (starts pending review). Optional type/email/name capture inbound-submission details. */
+export function addInboxMessage(board, project, { from, subject, body, company, type, email, name } = {}, { now = new Date() } = {}) {
   if (!subject && !body) throw new Error("inbox message needs a subject or body");
   const store = readInbox(board, project);
   const seq = store.seq + 1;
   const item = {
     id: `m${seq}`,
+    type: type ? validateIntakeType(type) : null,
     from: from ? String(from) : null,
+    name: name ? String(name) : null,
+    email: email ? String(email) : null,
     subject: subject ? String(subject) : null,
     body: body ? String(body) : null,
     company: company ? String(company) : null,
@@ -179,12 +192,27 @@ export function addInboxMessage(board, project, { from, subject, body, company }
   return { project, item, count: store.items.length };
 }
 
-/** List inbox items (newest-first), optionally filtered by status and/or company. */
-export function listInbox(board, project, { status, company } = {}) {
+/**
+ * Capture an inbound support/contact submission (support-info / crm-submit) into
+ * the CRM inbox, pending review. Requires a message; synthesizes a subject when
+ * none is given, and records the requester (name/email) + category.
+ */
+export function submitIntake(board, project, { type, name, email, company, subject, message } = {}, { now = new Date() } = {}) {
+  const t = validateIntakeType(type);
+  if (!message || !String(message).trim()) throw new Error("submission message is required");
+  const who = name || email || "someone";
+  const subj = subject && String(subject).trim() ? subject : `[${t}] submission from ${who}`;
+  return addInboxMessage(board, project, { type: t, from: email || name || null, name, email, subject: subj, body: message, company }, { now });
+}
+
+/** List inbox items (newest-first), optionally filtered by status, company, and/or type. */
+export function listInbox(board, project, { status, company, type } = {}) {
   const store = readInbox(board, project);
+  const t = type ? validateIntakeType(type) : null;
   const items = store.items
     .filter((m) => (status ? m.status === status : true))
     .filter((m) => (company ? m.company === company : true))
+    .filter((m) => (t ? m.type === t : true))
     .slice()
     .reverse();
   return { project, count: items.length, items };

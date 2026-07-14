@@ -28,11 +28,11 @@ import { groupBySuite } from "./testing.js";
 import { draftShare, listShares, removeShare, platformLimit } from "./social.js";
 import {
   addCompany, listCompanies, getCompany, addContact,
-  addInboxMessage, listInbox, reviewInboxMessage,
+  addInboxMessage, listInbox, reviewInboxMessage, submitIntake,
   linkTicket, unlinkTicket, companiesForTicket,
   addAgreement, updateAgreement, removeAgreement,
 } from "./crm.js";
-import { addLead, listLeads, setLeadStatus, leadsMap } from "./leads.js";
+import { addLead, listLeads, setLeadStatus, leadsMap, enrichLead, convertLead, addLeadArea, listLeadAreas, addInteraction, updateLeadLocation } from "./leads.js";
 import { buildCustomerPortal } from "./portal.js";
 import { listTemplates, generateContract } from "./contracts.js";
 import { draftEmail, listMail, getEmail, markSent } from "./mail.js";
@@ -1599,13 +1599,40 @@ server.registerTool(
       body: z.string().optional(),
       from: z.string().optional(),
       company: z.string().optional().describe("Related company id, if known."),
+      type: z.enum(["support", "sales", "contact", "feedback", "other"]).optional().describe("Submission category."),
+      email: z.string().optional().describe("Requester email."),
+      name: z.string().optional().describe("Requester name."),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
-  writeTool(({ project, subject, body, from, company }) => {
+  writeTool(({ project, subject, body, from, company, type, email, name }) => {
     const board = getBoard();
     if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
-    return addInboxMessage(board, project, { subject, body, from, company });
+    return addInboxMessage(board, project, { subject, body, from, company, type, email, name });
+  })
+);
+
+server.registerTool(
+  "submit_crm_intake",
+  {
+    title: "Submit a support/contact request",
+    description:
+      "Capture an inbound support or contact submission (support-info / crm-submit) into the CRM inbox, pending review. Records the requester (name/email), a category (support/sales/contact/feedback/other), an optional related company, and the message; synthesizes a subject if none is given.",
+    inputSchema: {
+      project: z.string(),
+      type: z.enum(["support", "sales", "contact", "feedback", "other"]).optional().default("contact"),
+      name: z.string().optional().describe("Requester name."),
+      email: z.string().optional().describe("Requester email."),
+      company: z.string().optional().describe("Related company id, if known."),
+      subject: z.string().optional(),
+      message: z.string().describe("The submission body."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  writeTool(({ project, type, name, email, company, subject, message }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return submitIntake(board, project, { type, name, email, company, subject, message });
   })
 );
 
@@ -1613,18 +1640,19 @@ server.registerTool(
   "list_crm_inbox",
   {
     title: "List CRM inbox",
-    description: "List CRM inbox messages (newest-first), optionally filtered by status (pending/approved/rejected) and/or company.",
+    description: "List CRM inbox messages (newest-first), optionally filtered by status (pending/approved/rejected), company, and/or type (support/sales/contact/feedback/other).",
     inputSchema: {
       project: z.string(),
       status: z.enum(["pending", "approved", "rejected"]).optional(),
       company: z.string().optional(),
+      type: z.enum(["support", "sales", "contact", "feedback", "other"]).optional(),
     },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
-  tryTool(({ project, status, company }) => {
+  tryTool(({ project, status, company, type }) => {
     const board = getBoard();
     if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
-    return listInbox(board, project, { status, company });
+    return listInbox(board, project, { status, company, type });
   })
 );
 
@@ -1713,6 +1741,89 @@ server.registerTool(
 );
 
 server.registerTool(
+  "enrich_lead",
+  {
+    title: "Enrich a lead",
+    description:
+      "Record website-sourced details on a lead (only provided fields are set): website, domain, phone, industry, description, contactName, employees, email, city, source, value. Use the pull_lead_website prompt to fetch + extract these from the lead's site first, then persist them here.",
+    inputSchema: {
+      project: z.string(),
+      id: z.string().describe("Lead id, e.g. L3."),
+      website: z.string().optional(),
+      domain: z.string().optional(),
+      phone: z.string().optional(),
+      industry: z.string().optional(),
+      description: z.string().optional(),
+      contactName: z.string().optional(),
+      employees: z.string().optional(),
+      email: z.string().optional(),
+      city: z.string().optional(),
+      source: z.string().optional(),
+      value: z.coerce.number().optional(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  writeTool(({ project, id, ...fields }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return enrichLead(board, project, id, fields);
+  })
+);
+
+server.registerTool(
+  "convert_lead",
+  {
+    title: "Convert a lead to a company",
+    description:
+      "Convert a qualified lead into a CRM company, carrying over its fields (name, website→domain, a notes summary) and optionally seeding a contact from the lead's person/email/phone. Marks the lead won and records the company it became. Errors if already converted.",
+    inputSchema: {
+      project: z.string(),
+      id: z.string().describe("Lead id, e.g. L3."),
+      companyName: z.string().optional().describe("Override the company name (defaults to the lead's company or name)."),
+      createContact: z.boolean().optional().default(true).describe("Seed a company contact from the lead."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  writeTool(({ project, id, companyName, createContact }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return convertLead(board, project, id, { companyName, createContact }, { crm: { addCompany, addContact } });
+  })
+);
+
+server.registerPrompt(
+  "pull_lead_website",
+  {
+    title: "Enrich a lead from its website",
+    description: "Fetch a lead's website, extract company details, and save them onto the lead via enrich_lead.",
+    argsSchema: {
+      project: z.string().optional(),
+      id: z.string().optional().describe("Lead id to enrich."),
+      url: z.string().optional().describe("Website URL (defaults to the lead's website field)."),
+    },
+  },
+  ({ project, id, url } = {}) => ({
+    messages: [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text:
+            `Enrich lead${id ? ` ${id}` : ""}${project ? ` in project "${project}"` : ""} from its website.\n\n` +
+            "Steps:\n" +
+            (id ? "" : "- Ask which lead (or list_leads to find it).\n") +
+            `- Determine the URL${url ? ` (${url})` : " (use the provided url, or the lead's existing website field — list_leads shows it)"}. If there's no URL, ask for one.\n` +
+            "- Fetch the site (web_fetch) and read the home/about/contact pages.\n" +
+            "- Extract what you can: a one-line description, industry, headquarters city, a phone, a general contact name/email, rough employee count, and the canonical domain.\n" +
+            "- Call enrich_lead with the fields you found (leave unknowns out — don't guess).\n" +
+            "- Confirm what was added, and offer to convert_lead it into a company if it looks qualified.",
+        },
+      },
+    ],
+  })
+);
+
+server.registerTool(
   "leads_map",
   {
     title: "Leads map",
@@ -1725,6 +1836,86 @@ server.registerTool(
     const board = getBoard();
     if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
     return leadsMap(board, project);
+  })
+);
+
+server.registerTool(
+  "add_lead_area",
+  {
+    title: "Add a lead area",
+    description:
+      "Define a circular geographic area (name + centre lat/lng + radius km) for the leads map. leads_map then tags each mapped lead with the areas it falls in and rolls up lead counts + pipeline value per area.",
+    inputSchema: {
+      project: z.string(),
+      name: z.string(),
+      lat: z.coerce.number(),
+      lng: z.coerce.number(),
+      radiusKm: z.coerce.number().describe("Area radius in kilometres (positive)."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  writeTool(({ project, name, lat, lng, radiusKm }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return addLeadArea(board, project, { name, lat, lng, radiusKm });
+  })
+);
+
+server.registerTool(
+  "list_lead_areas",
+  {
+    title: "List lead areas",
+    description: "List the defined geographic lead areas (id, name, centre, radius).",
+    inputSchema: { project: z.string() },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return listLeadAreas(board, project);
+  })
+);
+
+server.registerTool(
+  "add_lead_interaction",
+  {
+    title: "Log a lead interaction",
+    description:
+      "Append a touchpoint to a lead's interaction log: kind (call/email/meeting/note/visit/other) + a note, timestamped. Builds the per-lead history.",
+    inputSchema: {
+      project: z.string(),
+      id: z.string().describe("Lead id, e.g. L3."),
+      kind: z.enum(["call", "email", "meeting", "note", "visit", "other"]).optional().default("note"),
+      note: z.string(),
+      at: z.string().optional().describe("ISO timestamp (defaults to now)."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  writeTool(({ project, id, kind, note, at }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return addInteraction(board, project, id, { kind, note, at });
+  })
+);
+
+server.registerTool(
+  "update_lead_location",
+  {
+    title: "Update a lead's location",
+    description: "Set a lead's coordinates (lat/lng) and/or city, so it maps correctly and falls into the right areas.",
+    inputSchema: {
+      project: z.string(),
+      id: z.string().describe("Lead id, e.g. L3."),
+      lat: z.coerce.number().optional(),
+      lng: z.coerce.number().optional(),
+      city: z.string().optional(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  writeTool(({ project, id, lat, lng, city }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return updateLeadLocation(board, project, id, { lat, lng, city });
   })
 );
 
