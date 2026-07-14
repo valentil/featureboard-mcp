@@ -31,7 +31,10 @@ import { buildCustomerPortal } from "./portal.js";
 import { listTemplates, generateContract } from "./contracts.js";
 import { draftEmail, listMail, getEmail, markSent } from "./mail.js";
 import { createCampaign, listCampaigns, getCampaign, recordOpen } from "./campaigns.js";
-import { getSite, setSite, editSection, setLoginGate } from "./website.js";
+import {
+  getSite, setSite, editSection, setLoginGate, addPage, listPages, removePage,
+  renderSite, siteRoot, saveAsset, listAssets, setSiteAnalytics,
+} from "./website.js";
 import { getGitConfig, setGitConfig, commitFeature } from "./git.js";
 
 const DATA_DIR = process.env.FEATUREBOARD_DATA_DIR;
@@ -1679,6 +1682,142 @@ server.registerTool(
 );
 
 server.registerTool(
+  "add_page",
+  {
+    title: "Add/update a website page",
+    description:
+      "Add or update a sub-page of the project site (rendered to site/<slug>.html), with its own title and sections. The home page stays managed by set_site. Re-renders all pages so theme/gate stay consistent.",
+    inputSchema: {
+      project: z.string(),
+      slug: z.string().describe("URL slug for the page, e.g. 'about' → site/about.html."),
+      title: z.string().optional(),
+      sections: z.array(z.object({ heading: z.string(), body: z.string() })).optional(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  writeTool(({ project, slug, title, sections }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return addPage(board, project, { slug, title, sections });
+  })
+);
+
+server.registerTool(
+  "list_pages",
+  {
+    title: "List website pages",
+    description: "List the site's pages: the home page (site/index.html) plus each sub-page with its slug, title, and file.",
+    inputSchema: { project: z.string() },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return listPages(board, project);
+  })
+);
+
+server.registerTool(
+  "remove_page",
+  {
+    title: "Remove a website page",
+    description: "Delete a sub-page (by slug) and its rendered file. The home page can't be removed this way.",
+    inputSchema: { project: z.string(), slug: z.string() },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  },
+  writeTool(({ project, slug }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return removePage(board, project, slug);
+  })
+);
+
+server.registerTool(
+  "deploy_site",
+  {
+    title: "Deploy the website",
+    description:
+      "Re-render the project's site and publish it by committing (and optionally pushing) its site/ folder through the git integration — the MCP equivalent of the old website deploy. Requires git integration enabled (set_git_config) with the site folder as a git repo; no-ops with a reason otherwise. Runs on this machine using its git credentials.",
+    inputSchema: {
+      project: z.string(),
+      message: z.string().optional().describe("Custom deploy commit message."),
+      push: z.boolean().optional().describe("Override the git config's push setting."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  },
+  writeTool(({ project, message, push }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    const rendered = renderSite(board, project);
+    const deploy = commitFeature(
+      board,
+      project,
+      { title: `Deploy ${project} site`, message, push },
+      { cwd: siteRoot(board, project) }
+    );
+    return { rendered, deploy };
+  })
+);
+
+server.registerTool(
+  "upload_site_asset",
+  {
+    title: "Upload a website asset",
+    description:
+      "Store an image/asset under the site's assets/ folder (base64 by default, or utf8 text). Returns a ref like 'assets/logo.png' to use in page sections. Name must be a plain filename with an extension.",
+    inputSchema: {
+      project: z.string(),
+      name: z.string().describe("Filename with extension, e.g. logo.png."),
+      content: z.string().describe("Asset bytes: base64 (default) or utf8 text."),
+      encoding: z.enum(["base64", "utf8"]).optional().default("base64"),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  writeTool(({ project, name, content, encoding }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return saveAsset(board, project, { name, content, encoding });
+  })
+);
+
+server.registerTool(
+  "list_site_assets",
+  {
+    title: "List website assets",
+    description: "List the assets stored under the site's assets/ folder (name, ref, size).",
+    inputSchema: { project: z.string() },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return listAssets(board, project);
+  })
+);
+
+server.registerTool(
+  "set_site_analytics",
+  {
+    title: "Configure site analytics",
+    description:
+      "Add an analytics snippet to every page of the site's <head>: Plausible or Google Analytics by id, or a raw custom <script>. Re-renders the site. Set enabled:false to remove it.",
+    inputSchema: {
+      project: z.string(),
+      provider: z.enum(["plausible", "ga", "ga4", "custom"]).optional(),
+      id: z.string().optional().describe("Plausible domain or GA measurement id (e.g. G-XXXX)."),
+      snippet: z.string().optional().describe("Raw <script> for provider 'custom'."),
+      enabled: z.boolean().optional(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  writeTool(({ project, provider, id, snippet, enabled }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return setSiteAnalytics(board, project, { provider, id, snippet, enabled });
+  })
+);
+
+server.registerTool(
   "enable_login_gate",
   {
     title: "Enable the site login gate",
@@ -1985,6 +2124,36 @@ server.registerPrompt(
             `- Write a short, punchy X post (≤${platformLimit("x")} chars) and a longer, more detailed LinkedIn post.\n` +
             "- Save each with draft_share (platform 'x' and 'linkedin', with the asset).\n" +
             "- Show me both drafts for review. Do NOT post anything — there is no publishing connector; I'll post them myself or wire a connector later.",
+        },
+      },
+    ],
+  })
+);
+
+server.registerPrompt(
+  "tweak_site",
+  {
+    title: "Tweak the website in natural language",
+    description:
+      "Apply a plain-English change to the project's website (e.g. 'make the tagline punchier', 'add a pricing section', 'switch to dark mode') and re-render.",
+    argsSchema: {
+      project: z.string().optional(),
+      instruction: z.string().optional().describe("What to change on the site."),
+    },
+  },
+  ({ project, instruction } = {}) => ({
+    messages: [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text:
+            `Tweak the website${project ? ` for project "${project}"` : ""}.\n\n` +
+            (instruction ? `Change: ${instruction}\n\n` : "1. Ask me what to change if it isn't clear.\n") +
+            "Steps:\n" +
+            "- Call get_site (and list_pages if the change targets a sub-page) to see the current site.\n" +
+            "- Apply the change with the smallest fitting tool: set_site (title/tagline/theme/sections), edit_site_section (one section), or add_page/remove_page (a page). Preserve everything you're not changing.\n" +
+            "- Confirm what changed and note that the page(s) were re-rendered.",
         },
       },
     ],

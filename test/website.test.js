@@ -6,7 +6,10 @@ import path from "node:path";
 import {
   esc, defaultSite, renderSiteHtml,
   getSite, setSite, editSection, setLoginGate,
-  SITE_DIR, SITE_HTML, SITE_CONFIG,
+  addPage, listPages, removePage, sanitizeSlug,
+  renderSite, siteRoot, saveAsset, listAssets, sanitizeAssetFile,
+  analyticsSnippet, setSiteAnalytics,
+  SITE_DIR, SITE_HTML, SITE_CONFIG, ASSETS_DIR,
 } from "../server/website.js";
 
 // FBMCPF-50 (builder/editor) + FBMCPF-51 (login gate)
@@ -76,4 +79,95 @@ test("disabling the gate removes the script", () => {
   setLoginGate(board, "P", { enabled: false });
   const html = fs.readFileSync(path.join(dir, SITE_DIR, SITE_HTML), "utf8");
   assert.doesNotMatch(html, /prompt\(/);
+});
+
+// FBMCPF-68 — multi-page
+test("sanitizeSlug normalizes and rejects empty/index", () => {
+  assert.equal(sanitizeSlug("About Us!"), "about-us");
+  assert.throws(() => sanitizeSlug("  "), /letters or numbers/);
+  assert.throws(() => sanitizeSlug("index"), /home page/);
+});
+
+test("addPage renders site/<slug>.html and records it; updates in place", () => {
+  const { dir, board } = tmpBoard();
+  setSite(board, "P", { title: "Home" });
+  const r = addPage(board, "P", { slug: "about", title: "About", sections: [{ heading: "Hi", body: "yo" }] });
+  assert.equal(r.slug, "about");
+  assert.equal(r.path, "site/about.html");
+  assert.ok(fs.existsSync(path.join(dir, SITE_DIR, "about.html")));
+  assert.match(fs.readFileSync(path.join(dir, SITE_DIR, "about.html"), "utf8"), /About/);
+  addPage(board, "P", { slug: "about", title: "About Us" });
+  assert.equal(getSite(board, "P").pages.length, 1);
+  assert.equal(getSite(board, "P").pages[0].title, "About Us");
+});
+
+test("listPages returns home + subpages; removePage deletes", () => {
+  const { dir, board } = tmpBoard();
+  setSite(board, "P", { title: "Home" });
+  addPage(board, "P", { slug: "about" });
+  addPage(board, "P", { slug: "pricing" });
+  const l = listPages(board, "P");
+  assert.equal(l.index.slug, "index");
+  assert.equal(l.count, 3);
+  assert.deepEqual(l.pages.map((p) => p.slug), ["about", "pricing"]);
+  assert.equal(removePage(board, "P", "about").pages, 1);
+  assert.ok(!fs.existsSync(path.join(dir, SITE_DIR, "about.html")));
+  assert.throws(() => removePage(board, "P", "nope"), /not found/);
+});
+
+test("theme change re-renders sub-pages too", () => {
+  const { dir, board } = tmpBoard();
+  setSite(board, "P", { title: "Home", theme: "light" });
+  addPage(board, "P", { slug: "about", sections: [{ heading: "A", body: "b" }] });
+  setSite(board, "P", { theme: "dark" });
+  assert.match(fs.readFileSync(path.join(dir, SITE_DIR, "about.html"), "utf8"), /data-theme="dark"/);
+});
+
+// FBMCPF-70 — deploy prerequisites
+test("renderSite writes index.html; siteRoot points at site/", () => {
+  const { dir, board } = tmpBoard();
+  const r = renderSite(board, "P");
+  assert.equal(r.htmlPath, "site/index.html");
+  assert.ok(fs.existsSync(path.join(dir, SITE_DIR, SITE_HTML)));
+  assert.equal(siteRoot(board, "P"), path.join(dir, SITE_DIR));
+});
+
+// FBMCPF-71 — assets
+test("sanitizeAssetFile rejects traversal/dotfile/extensionless", () => {
+  assert.equal(sanitizeAssetFile("logo.png"), "logo.png");
+  assert.throws(() => sanitizeAssetFile("../x.png"), /invalid asset name/);
+  assert.throws(() => sanitizeAssetFile(".hidden"), /invalid asset name/);
+  assert.throws(() => sanitizeAssetFile("noext"), /extension/);
+});
+
+test("saveAsset writes base64 to site/assets and returns a ref; listAssets lists", () => {
+  const { dir, board } = tmpBoard();
+  const r = saveAsset(board, "P", { name: "logo.png", content: Buffer.from("PNGDATA").toString("base64") });
+  assert.equal(r.ref, "assets/logo.png");
+  assert.equal(r.relPath, "site/assets/logo.png");
+  assert.equal(fs.readFileSync(path.join(dir, SITE_DIR, ASSETS_DIR, "logo.png"), "utf8"), "PNGDATA");
+  saveAsset(board, "P", { name: "style.css", content: "body{}", encoding: "utf8" });
+  const l = listAssets(board, "P");
+  assert.equal(l.count, 2);
+  assert.deepEqual(l.assets.map((a) => a.name).sort(), ["logo.png", "style.css"]);
+});
+
+// FBMCPF-72 — analytics
+test("analyticsSnippet handles plausible/ga/custom/off + sanitizes id", () => {
+  assert.match(analyticsSnippet({ provider: "plausible", id: "ex.com", enabled: true }), /data-domain="ex.com"/);
+  assert.match(analyticsSnippet({ provider: "ga", id: "G-ABC", enabled: true }), /gtag\/js\?id=G-ABC/);
+  assert.equal(analyticsSnippet({ snippet: "<script>x</script>", enabled: true }), "<script>x</script>");
+  assert.equal(analyticsSnippet({ provider: "plausible", id: "x", enabled: false }), "");
+  assert.match(analyticsSnippet({ provider: "ga", id: "G-<b>", enabled: true }), /id=G-b/);
+});
+
+test("set_site_analytics injects into rendered pages and toggles off", () => {
+  const { dir, board } = tmpBoard();
+  setSite(board, "P", { title: "Home" });
+  addPage(board, "P", { slug: "about" });
+  setSiteAnalytics(board, "P", { provider: "plausible", id: "ex.com" });
+  assert.match(fs.readFileSync(path.join(dir, SITE_DIR, SITE_HTML), "utf8"), /plausible/);
+  assert.match(fs.readFileSync(path.join(dir, SITE_DIR, "about.html"), "utf8"), /plausible/); // on sub-pages too
+  setSiteAnalytics(board, "P", { enabled: false });
+  assert.doesNotMatch(fs.readFileSync(path.join(dir, SITE_DIR, SITE_HTML), "utf8"), /plausible/);
 });
