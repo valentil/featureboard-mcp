@@ -48,8 +48,17 @@ import { getGitConfig, setGitConfig, commitFeature } from "./git.js";
 import { scaffoldSite } from "./sitegen.js";
 import { setAnalyticsConfig, autoConfigureAnalytics, getSiteTraffic } from "./analytics.js";
 import { suggestPackaging, savePackagingConfig, getPackagingConfig, validatePackaging } from "./packaging.js";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import nodePath from "node:path";
 
 const DATA_DIR = process.env.FEATUREBOARD_DATA_DIR;
+
+// Absolute path to the shipped board UI. index.js lives in server/, the UI in
+// artifact/board.html — so the packaged install always resolves it, regardless
+// of cwd. Exposed to agents via the get_board tool (see below).
+const SERVER_DIR = nodePath.dirname(fileURLToPath(import.meta.url));
+const BOARD_HTML_PATH = nodePath.join(SERVER_DIR, "..", "artifact", "board.html");
 
 function getBoard() {
   if (!DATA_DIR) {
@@ -94,12 +103,41 @@ When the user gives you a substantive, multi-step request (build X, fix these bu
 
 Keep the board honest: a ticket should be In Progress only while you are actively working it, and Done only when it is genuinely finished. The board is scaffolding around the real work — it does not replace writing the code, running the tests, etc. Do not create boards or tickets for trivial one-shot chores that don't benefit from tracking.
 
-Showing the board: when the user asks to see, open, or check on the board in natural language — e.g. "show me the board", "show the featureboard", "open the board", "let's see the tasks/queue", "what's on my plate", "how's it going / how are we looking", "give me a status", or "show velocity/analytics" — surface the live board as a Cowork artifact from artifact/board.html (create_artifact, or update_artifact if one is already open — reuse it, don't create duplicates) instead of only replying in text. That single artifact shows the Todo / In Progress / Done columns, the product filter, and the 📊 Analytics dashboard (velocity, timeline, bug health, and the work-log feed) — i.e. tasks + analytics + everything in one place. Pair the artifact with a one- or two-line text summary of where things stand.`;
+Showing the board: when the user asks to see, open, or check on the board in natural language — e.g. "show me the board", "show the featureboard", "open the board", "let's see the tasks/queue", "what's on my plate", "how's it going / how are we looking", "give me a status", or "show velocity/analytics" — call the get_board tool and render the HTML it returns as a Cowork artifact (create_artifact with id "featureboard-board", or update_artifact if one is already open — reuse it, don't create duplicates). Do NOT hand-write your own board or reply only in text: get_board returns the shipped UI, which already has the Todo / In Progress / Done columns, the product filter, the dark/light theme toggle, and the 📊 Analytics dashboard (velocity, timeline, bug health, and the work-log feed) — tasks + analytics + everything in one place. List this server's tools in the artifact's mcp_tools so its buttons and charts work. Pair the artifact with a one- or two-line text summary of where things stand.`;
 
 const server = new McpServer(
-  { name: "featureboard", version: "0.1.0" },
+  { name: "featureboard", version: "0.3.2" },
   { instructions: INSTRUCTIONS }
 );
+
+// tool gating --------------------------------------------------------------
+// The server can expose its full surface (130+ tools across CRM, media,
+// website, campaigns, etc.) or just the essential board experience. Packaged
+// installs default to "core" (see manifest user_config) for a clean first-run;
+// the raw server default is "all" so tests and existing configs are unchanged.
+// Set FEATUREBOARD_TOOLS=core to expose only the board/task tools below.
+const CORE_TOOLS = new Set([
+  "get_board",
+  "list_projects", "create_project", "get_project_config", "set_project_config",
+  "add_product", "remove_product", "plan_work", "add_feature", "add_features_bulk",
+  "decompose_feature", "log_bug", "list_tasks", "get_task", "get_metrics",
+  "get_health", "get_work_log", "get_scratchpad", "set_scratchpad", "next_task",
+  "set_status", "get_work_packet", "log_work", "update_task", "delete_task",
+  "link_tasks", "license_status", "activate_license", "request_commercial_license",
+  "set_usage_type",
+  // used by the board UI artifact (keep the panels working in core mode)
+  "import_tasks", "get_regressions", "get_test_runs", "append_scratchpad",
+]);
+const TOOLSET = (process.env.FEATUREBOARD_TOOLS || "all").toLowerCase();
+const CORE_ONLY = TOOLSET === "core"
+  || /^(1|true|yes|on)$/.test((process.env.FEATUREBOARD_CORE_ONLY || "").toLowerCase());
+if (CORE_ONLY) {
+  const _registerTool = server.registerTool.bind(server);
+  server.registerTool = (name, ...rest) => {
+    if (!CORE_TOOLS.has(name)) return undefined;
+    return _registerTool(name, ...rest);
+  };
+}
 
 // helpers ------------------------------------------------------------------
 
@@ -196,6 +234,35 @@ server.registerTool(
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
   tryTool(() => ({ projects: getBoard().listProjects() }))
+);
+
+server.registerTool(
+  "get_board",
+  {
+    title: "Open the board (UI)",
+    description:
+      "Return the FeatureBoard board UI as a self-contained HTML document, ready to render as a Cowork artifact. " +
+      "This is THE way to satisfy any natural-language request to see the board — \"open/show the board\", \"show the featureboard\", " +
+      "\"what's on my plate\", \"how are we looking\", \"give me a status\", \"show velocity/analytics\". " +
+      "Do NOT hand-write your own board: take the returned `html`, write it to a file, and pass it to create_artifact " +
+      "(use artifact id \"featureboard-board\"; if a board artifact is already open, reuse it via update_artifact instead of creating a duplicate). " +
+      "List this server's tools in the artifact's mcp_tools so the columns, product filter, and analytics dashboard work.",
+    inputSchema: {},
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(() => {
+    const html = readFileSync(BOARD_HTML_PATH, "utf8");
+    return {
+      artifactId: "featureboard-board",
+      filename: "board.html",
+      bytes: Buffer.byteLength(html, "utf8"),
+      render:
+        "Write `html` to a file, then call create_artifact with id \"featureboard-board\" " +
+        "(or update_artifact if a board artifact is already open). Include the FeatureBoard tools in mcp_tools " +
+        "so the board's buttons and analytics can call back into this server.",
+      html,
+    };
+  })
 );
 
 server.registerTool(

@@ -56,6 +56,7 @@ async function main() {
   const names = new Set(toolList.tools.map((t) => t.name));
   const expect = [
     "list_projects", "create_project", "add_feature", "set_status", "get_metrics",
+    "get_board",                                              // one-call board UI for artifacts
     "get_scratchpad", "set_scratchpad",                       // the panel that was "missing"
     "list_media", "save_media", "get_media",                 // media
     "add_company", "add_contact", "link_customer_ticket", "customer_portal", // CRM
@@ -91,6 +92,17 @@ async function main() {
     if (r.isError) throw new Error(txt(r));
     return data(r);
   });
+  // get_board returns the shipped board UI as HTML, ready for create_artifact
+  await step("get_board returns board.html", async () => {
+    const r = await client.callTool({ name: "get_board", arguments: {} });
+    if (r.isError) throw new Error(txt(r));
+    const d = data(r);
+    if (!d.html || !/<!doctype html>/i.test(d.html) || !d.html.includes("callMcpTool"))
+      throw new Error("get_board did not return the board UI HTML");
+    if (d.artifactId !== "featureboard-board")
+      throw new Error("get_board missing stable artifactId");
+  });
+
   const feat = await ok("add_feature", { title: "Smoke feature", product: "Core" });
   const ticket = feat && (feat.ticketNumber || feat.ticket);
   await ok("set_status", { ticket, status: "In Progress" }, "set_status In Progress");

@@ -4,7 +4,8 @@ owner/keys/
 owner/keys/private.pem
 
 # Dev-only
-artifact/
+# NOTE: ship artifact/board.html — it's the get_board UI, loaded at runtime.
+artifact/analytics-card.html
 test/
 *.test.js
 DESIGN.md
@@ -12,4 +13,4 @@ DESIGN.md
 .gitignore
 *.tmp-*
 .featureboard/
-featureboard-mcp.mcpb
+*.mcpb
