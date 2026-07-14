@@ -55,6 +55,7 @@ function pageConfig(cfg, page) {
     sections: Array.isArray(page.sections) ? page.sections : [],
     loginGate: cfg.loginGate,
     analytics: cfg.analytics,
+    seo: { ...(cfg.seo || {}), ...(page.seo || {}) },
   };
 }
 
@@ -78,6 +79,37 @@ export function analyticsSnippet(a) {
   }
   if (a.snippet) return String(a.snippet);
   return "";
+}
+
+/** Known SEO fields; everything else on a seo object is ignored. */
+export function normalizeSeo(o = {}) {
+  const out = {};
+  for (const k of ["description", "image", "ogTitle", "ogDescription", "ogType"]) {
+    if (o[k] != null) out[k] = String(o[k]);
+  }
+  return out;
+}
+
+/** Per-page SEO <head> tags: description + Open Graph + Twitter card (pure). */
+export function seoTags(config = {}) {
+  const seo = config.seo && typeof config.seo === "object" ? config.seo : {};
+  const title = config.title || "Untitled";
+  const desc = seo.description || config.tagline || "";
+  const ogTitle = seo.ogTitle || title;
+  const ogDesc = seo.ogDescription || desc;
+  const ogType = seo.ogType || "website";
+  const img = seo.image || null;
+  const tags = [];
+  if (desc) tags.push(`<meta name="description" content="${esc(desc)}">`);
+  tags.push(`<meta property="og:title" content="${esc(ogTitle)}">`);
+  if (ogDesc) tags.push(`<meta property="og:description" content="${esc(ogDesc)}">`);
+  tags.push(`<meta property="og:type" content="${esc(ogType)}">`);
+  tags.push(`<meta name="twitter:card" content="${img ? "summary_large_image" : "summary"}">`);
+  if (img) {
+    tags.push(`<meta property="og:image" content="${esc(img)}">`);
+    tags.push(`<meta name="twitter:image" content="${esc(img)}">`);
+  }
+  return tags.join("\n");
 }
 
 /** Render the splash page HTML from a site config (pure, self-contained). */
@@ -109,6 +141,7 @@ export function renderSiteHtml(config = {}) {
 <html lang="en" data-theme="${dark ? "dark" : "light"}"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${title}</title>
+${seoTags(config)}
 ${analyticsSnippet(config.analytics)}
 <style>
   :root{--bg:#faf9f5;--fg:#262624;--muted:#6b6862;--accent:#d97757}
@@ -245,6 +278,7 @@ export function setSite(board, project, patch = {}, { now = new Date() } = {}) {
     if (!Array.isArray(patch.sections)) throw new Error("sections must be an array of { heading, body }");
     cfg.sections = patch.sections.map((s) => ({ heading: String(s.heading || ""), body: String(s.body || "") }));
   }
+  if (patch.seo != null) cfg.seo = { ...(cfg.seo || {}), ...normalizeSeo(patch.seo) };
   return persist(board, project, cfg, now);
 }
 
@@ -277,7 +311,7 @@ export function sanitizeSlug(slug) {
  * Add or update a sub-page (rendered to site/<slug>.html). Multi-page support
  * (FBMCPF-68). The home page stays managed by set_site.
  */
-export function addPage(board, project, { slug, title, sections } = {}, { now = new Date() } = {}) {
+export function addPage(board, project, { slug, title, sections, seo } = {}, { now = new Date() } = {}) {
   const safe = sanitizeSlug(slug);
   const cfg = getSite(board, project);
   cfg.pages = Array.isArray(cfg.pages) ? cfg.pages : [];
@@ -286,8 +320,9 @@ export function addPage(board, project, { slug, title, sections } = {}, { now = 
   if (existing) {
     if (title != null) existing.title = String(title);
     if (sections != null) existing.sections = secs;
+    if (seo != null) existing.seo = { ...(existing.seo || {}), ...normalizeSeo(seo) };
   } else {
-    cfg.pages.push({ slug: safe, title: title ? String(title) : safe, sections: secs });
+    cfg.pages.push({ slug: safe, title: title ? String(title) : safe, sections: secs, seo: normalizeSeo(seo || {}) });
   }
   persist(board, project, cfg, now);
   return { project, slug: safe, path: `${SITE_DIR}/${safe}.html`, pages: cfg.pages.length };
@@ -339,6 +374,27 @@ export function removePage(board, project, slug, { now = new Date() } = {}) {
   persist(board, project, cfg, now);
   try { fs.unlinkSync(path.join(siteDir(board, project), `${safe}.html`)); } catch { /* ignore */ }
   return { project, removed: safe, pages: next.length };
+}
+
+/**
+ * Set SEO metadata (description, image, ogTitle, ogDescription, ogType) for the
+ * home page (slug omitted or "index") or a sub-page, and re-render. Merges over
+ * any existing SEO for that page.
+ */
+export function setPageSeo(board, project, { slug, ...fields } = {}, { now = new Date() } = {}) {
+  const cfg = getSite(board, project);
+  const seo = normalizeSeo(fields);
+  if (slug == null || slug === "" || slug === "index") {
+    cfg.seo = { ...(cfg.seo || {}), ...seo };
+    persist(board, project, cfg, now);
+    return { project, page: "index", seo: cfg.seo };
+  }
+  const safe = sanitizeSlug(slug);
+  const page = (Array.isArray(cfg.pages) ? cfg.pages : []).find((x) => x.slug === safe);
+  if (!page) throw new Error(`page '${safe}' not found`);
+  page.seo = { ...(page.seo || {}), ...seo };
+  persist(board, project, cfg, now);
+  return { project, page: safe, seo: page.seo };
 }
 
 /** Toggle/configure the soft login gate (FBMCPF-51) and re-render. */

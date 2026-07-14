@@ -41,7 +41,7 @@ import { listTemplates, generateContract } from "./contracts.js";
 import { draftEmail, listMail, getEmail, markSent } from "./mail.js";
 import { createCampaign, listCampaigns, getCampaign, recordOpen } from "./campaigns.js";
 import {
-  getSite, setSite, editSection, setLoginGate, addPage, listPages, removePage,
+  getSite, setSite, editSection, setLoginGate, setPageSeo, addPage, listPages, removePage,
   renderSite, siteRoot, saveAsset, listAssets, setSiteAnalytics, addRawPage,
 } from "./website.js";
 import { getGitConfig, setGitConfig, commitFeature } from "./git.js";
@@ -2587,13 +2587,14 @@ server.registerTool(
       tagline: z.string().optional(),
       theme: z.enum(["light", "dark"]).optional(),
       sections: z.array(z.object({ heading: z.string(), body: z.string() })).optional(),
+      seo: z.object({ description: z.string().optional(), image: z.string().optional(), ogTitle: z.string().optional(), ogDescription: z.string().optional(), ogType: z.string().optional() }).optional().describe("Home-page SEO: meta description + Open Graph tags."),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
-  writeTool(({ project, title, tagline, theme, sections }) => {
+  writeTool(({ project, title, tagline, theme, sections, seo }) => {
     const board = getBoard();
     if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
-    return setSite(board, project, { title, tagline, theme, sections });
+    return setSite(board, project, { title, tagline, theme, sections, seo });
   })
 );
 
@@ -2661,13 +2662,37 @@ server.registerTool(
       slug: z.string().describe("URL slug for the page, e.g. 'about' → site/about.html."),
       title: z.string().optional(),
       sections: z.array(z.object({ heading: z.string(), body: z.string() })).optional(),
+      seo: z.object({ description: z.string().optional(), image: z.string().optional(), ogTitle: z.string().optional(), ogDescription: z.string().optional(), ogType: z.string().optional() }).optional().describe("Per-page SEO: meta description + Open Graph tags."),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
-  writeTool(({ project, slug, title, sections }) => {
+  writeTool(({ project, slug, title, sections, seo }) => {
     const board = getBoard();
     if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
-    return addPage(board, project, { slug, title, sections });
+    return addPage(board, project, { slug, title, sections, seo });
+  })
+);
+
+server.registerTool(
+  "set_page_seo",
+  {
+    title: "Set a page's SEO metadata",
+    description: "Set SEO for the home page (omit slug, or slug='index') or a sub-page: meta description, Open Graph title/description/type, and image. Re-renders the page. Merges over existing SEO.",
+    inputSchema: {
+      project: z.string(),
+      slug: z.string().optional().describe("Sub-page slug, or omit / 'index' for the home page."),
+      description: z.string().optional(),
+      image: z.string().optional().describe("Absolute URL or assets/<file> path for og:image."),
+      ogTitle: z.string().optional(),
+      ogDescription: z.string().optional(),
+      ogType: z.string().optional().describe("Open Graph type, e.g. website, article."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  writeTool(({ project, slug, description, image, ogTitle, ogDescription, ogType }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return setPageSeo(board, project, { slug, description, image, ogTitle, ogDescription, ogType });
   })
 );
 

@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
-  esc, defaultSite, renderSiteHtml,
+  esc, defaultSite, renderSiteHtml, seoTags, normalizeSeo, setPageSeo,
   getSite, setSite, editSection, setLoginGate,
   addPage, listPages, removePage, sanitizeSlug,
   renderSite, siteRoot, saveAsset, listAssets, sanitizeAssetFile,
@@ -29,6 +29,41 @@ test("esc + renderSiteHtml render title/tagline/sections and escape", () => {
   assert.match(html, /data-theme="dark"/);
   assert.match(html, /line1<br>line2/);
   assert.doesNotMatch(html, /prompt\(/); // no gate when disabled
+});
+
+// FBMCPF-95 — per-page SEO metadata
+test("renderSiteHtml emits description + OG/Twitter tags; falls back to tagline", () => {
+  const html = renderSiteHtml({
+    title: "Acme", tagline: "We build", theme: "light",
+    seo: { description: "Custom desc", image: "assets/og.png", ogType: "article" },
+  });
+  assert.match(html, /<meta name="description" content="Custom desc">/);
+  assert.match(html, /<meta property="og:title" content="Acme">/);
+  assert.match(html, /<meta property="og:type" content="article">/);
+  assert.match(html, /<meta property="og:image" content="assets\/og.png">/);
+  assert.match(html, /twitter:card" content="summary_large_image"/);
+  // no image -> summary card, description falls back to tagline
+  const h2 = renderSiteHtml({ title: "T", tagline: "Tag" });
+  assert.match(h2, /<meta name="description" content="Tag">/);
+  assert.match(h2, /twitter:card" content="summary"/);
+});
+
+test("normalizeSeo keeps only known string fields", () => {
+  assert.deepEqual(normalizeSeo({ description: "d", junk: 1, image: "i" }), { description: "d", image: "i" });
+});
+
+test("setPageSeo updates home + sub-page and renders into the file", () => {
+  const { board, dir } = tmpBoard();
+  setSite(board, "P", { title: "Home", sections: [] });
+  addPage(board, "P", { slug: "about", title: "About" });
+  const home = setPageSeo(board, "P", { description: "Home desc" });
+  assert.equal(home.page, "index");
+  assert.match(fs.readFileSync(path.join(dir, SITE_DIR, SITE_HTML), "utf8"), /content="Home desc"/);
+  setPageSeo(board, "P", { slug: "about", description: "About desc", ogType: "article" });
+  const aboutHtml = fs.readFileSync(path.join(dir, SITE_DIR, "about.html"), "utf8");
+  assert.match(aboutHtml, /content="About desc"/);
+  assert.match(aboutHtml, /og:type" content="article"/);
+  assert.throws(() => setPageSeo(board, "P", { slug: "nope", description: "x" }), /not found/);
 });
 
 test("defaultSite seeds title from project, gate disabled", () => {
