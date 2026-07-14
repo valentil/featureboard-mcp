@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   esc, defaultSite, renderSiteHtml, seoTags, normalizeSeo, setPageSeo, buildNav,
+  listSiteTemplates, templateConfig, applySiteTemplate, listPages as _lp,
   getSite, setSite, editSection, setLoginGate,
   addPage, listPages, removePage, sanitizeSlug,
   renderSite, siteRoot, saveAsset, listAssets, sanitizeAssetFile,
@@ -232,4 +233,25 @@ test("set_site_analytics injects into rendered pages and toggles off", () => {
   assert.match(fs.readFileSync(path.join(dir, SITE_DIR, "about.html"), "utf8"), /plausible/); // on sub-pages too
   setSiteAnalytics(board, "P", { enabled: false });
   assert.doesNotMatch(fs.readFileSync(path.join(dir, SITE_DIR, SITE_HTML), "utf8"), /plausible/);
+});
+
+// FBMCPF-97 — starter templates
+test("listSiteTemplates + templateConfig build known templates and reject junk", () => {
+  const ids = listSiteTemplates().templates.map((t) => t.id);
+  assert.deepEqual(ids, ["landing", "docs", "blog"]);
+  const docs = templateConfig("docs", { title: "My Docs" });
+  assert.equal(docs.title, "My Docs");
+  assert.equal(docs.pages.length, 3);
+  assert.throws(() => templateConfig("nope"), /unknown template/);
+});
+
+test("applySiteTemplate seeds config + pages and renders files", () => {
+  const { board, dir } = tmpBoard();
+  const r = applySiteTemplate(board, "P", "docs", { title: "Docs" });
+  assert.equal(r.template, "docs");
+  assert.equal(r.pages, 3);
+  assert.match(fs.readFileSync(path.join(dir, SITE_DIR, SITE_HTML), "utf8"), /Docs/);
+  assert.ok(fs.existsSync(path.join(dir, SITE_DIR, "getting-started.html")));
+  // nav (FBMCPF-96) links the seeded pages
+  assert.match(fs.readFileSync(path.join(dir, SITE_DIR, "api.html"), "utf8"), /href="getting-started.html"/);
 });

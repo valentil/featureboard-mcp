@@ -43,6 +43,7 @@ import { draftEmail, listMail, getEmail, markSent } from "./mail.js";
 import { createCampaign, listCampaigns, getCampaign, recordOpen } from "./campaigns.js";
 import {
   getSite, setSite, editSection, setLoginGate, setPageSeo, addPage, listPages, removePage,
+  listSiteTemplates, applySiteTemplate,
   renderSite, siteRoot, saveAsset, listAssets, setSiteAnalytics, addRawPage,
 } from "./website.js";
 import { getGitConfig, setGitConfig, commitFeature } from "./git.js";
@@ -2777,6 +2778,36 @@ server.registerTool(
     const board = getBoard();
     if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
     return setPageSeo(board, project, { slug, description, image, ogTitle, ogDescription, ogType });
+  })
+);
+
+server.registerTool(
+  "list_site_templates",
+  {
+    title: "List starter site templates",
+    description: "List the available starter website templates (landing, docs, blog) the builder can start from.",
+    inputSchema: {},
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(() => listSiteTemplates())
+);
+
+server.registerTool(
+  "apply_site_template",
+  {
+    title: "Start the site from a template",
+    description: "Seed the project website from a starter template (landing, docs, blog): sets title/tagline/theme/sections and any starter pages, then renders. Replaces the current site config — use set_site/add_page to refine after.",
+    inputSchema: {
+      project: z.string(),
+      template: z.enum(["landing", "docs", "blog"]),
+      title: z.string().optional().describe("Override the site title (defaults to the template's placeholder)."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  },
+  writeTool(({ project, template, title }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return applySiteTemplate(board, project, template, { title });
   })
 );
 

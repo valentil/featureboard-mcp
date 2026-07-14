@@ -421,6 +421,83 @@ export function setPageSeo(board, project, { slug, ...fields } = {}, { now = new
   return { project, page: safe, seo: page.seo };
 }
 
+// --- Starter templates (FBMCPF-97) ------------------------------------------
+
+export const SITE_TEMPLATES = [
+  { id: "landing", name: "Landing page", description: "Marketing splash: hero, features, pricing, and a contact section." },
+  { id: "docs", name: "Documentation", description: "Docs site: an overview home plus Getting Started, Guides, and API pages." },
+  { id: "blog", name: "Blog", description: "Blog home plus a couple of starter posts as pages." },
+];
+
+/** List the available starter templates. */
+export function listSiteTemplates() {
+  return { count: SITE_TEMPLATES.length, templates: SITE_TEMPLATES };
+}
+
+/** Build a starter site config (title/tagline/theme/sections/pages) for a template id. */
+export function templateConfig(id, { title } = {}) {
+  const t = String(id || "").trim().toLowerCase();
+  const name = title ? String(title) : null;
+  if (t === "landing") {
+    return {
+      title: name || "Your Product",
+      tagline: "The one-liner that sells it.",
+      theme: "light",
+      sections: [
+        { heading: "What it does", body: "A short paragraph on the core value you deliver." },
+        { heading: "Features", body: "- Fast\n- Simple\n- Yours to own" },
+        { heading: "Pricing", body: "Free to start. Paid plans when you need them." },
+        { heading: "Get in touch", body: "Tell people how to reach you." },
+      ],
+      pages: [],
+    };
+  }
+  if (t === "docs") {
+    return {
+      title: name || "Docs",
+      tagline: "Everything you need to get started.",
+      theme: "light",
+      sections: [{ heading: "Overview", body: "What this project is and where to begin." }],
+      pages: [
+        { slug: "getting-started", title: "Getting Started", sections: [{ heading: "Install", body: "How to install." }, { heading: "Quickstart", body: "Your first steps." }] },
+        { slug: "guides", title: "Guides", sections: [{ heading: "Guides", body: "Task-based how-tos." }] },
+        { slug: "api", title: "API", sections: [{ heading: "Reference", body: "API reference." }] },
+      ],
+    };
+  }
+  if (t === "blog") {
+    return {
+      title: name || "Blog",
+      tagline: "Notes, updates, and ideas.",
+      theme: "light",
+      sections: [{ heading: "Latest", body: "Recent posts below." }],
+      pages: [
+        { slug: "hello-world", title: "Hello, world", sections: [{ heading: "Hello, world", body: "The first post." }] },
+        { slug: "second-post", title: "Second post", sections: [{ heading: "Second post", body: "Another post." }] },
+      ],
+    };
+  }
+  throw new Error(`unknown template "${id}" (use one of: ${SITE_TEMPLATES.map((x) => x.id).join(", ")})`);
+}
+
+/** Seed the project site from a starter template (replaces title/tagline/theme/sections/pages) and render. */
+export function applySiteTemplate(board, project, id, { title } = {}, { now = new Date() } = {}) {
+  const tpl = templateConfig(id, { title });
+  const cfg = getSite(board, project);
+  cfg.title = tpl.title;
+  cfg.tagline = tpl.tagline;
+  cfg.theme = tpl.theme;
+  cfg.sections = tpl.sections;
+  cfg.pages = (Array.isArray(tpl.pages) ? tpl.pages : []).map((p) => ({
+    slug: sanitizeSlug(p.slug),
+    title: p.title || p.slug,
+    sections: Array.isArray(p.sections) ? p.sections : [],
+  }));
+  const summary = persist(board, project, cfg, now);
+  return { ...summary, template: t_id(id) };
+}
+function t_id(id) { return String(id || "").trim().toLowerCase(); }
+
 /** Toggle/configure the soft login gate (FBMCPF-51) and re-render. */
 export function setLoginGate(board, project, { enabled, passcode, message } = {}, { now = new Date() } = {}) {
   const cfg = getSite(board, project);
