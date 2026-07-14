@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   slugify, validateApproval,
-  addCompany, listCompanies, getCompany, addContact,
+  addCompany, listCompanies, getCompany, addContact, updateContact, removeContact,
   addInboxMessage, listInbox, reviewInboxMessage,
   linkTicket, unlinkTicket, companiesForTicket,
   validateAgreementKind, addAgreement, updateAgreement, removeAgreement,
@@ -55,6 +55,32 @@ test("addContact appends monotonic contact ids and persists", () => {
   assert.equal(full.contacts[0].email, "ada@acme.com");
   assert.throws(() => addContact(board, "P", "nope", { name: "X" }), /not found/);
   assert.throws(() => getCompany(board, "P", "nope"), /not found/);
+});
+
+// FBMCPF-100 — contact update & removal
+test("updateContact edits provided fields, clears with empty string, guards", () => {
+  const { board } = tmpBoard();
+  addCompany(board, "P", { name: "Acme" });
+  addContact(board, "P", "acme", { name: "Ada", email: "ada@acme.com", role: "CTO", phone: "555" });
+  const u = updateContact(board, "P", "acme", "c1", { role: "CEO", email: "" });
+  assert.equal(u.contact.role, "CEO");
+  assert.equal(u.contact.email, null);        // empty string clears
+  assert.equal(u.contact.name, "Ada");         // untouched
+  assert.equal(getCompany(board, "P", "acme").contacts[0].role, "CEO"); // persisted
+  assert.throws(() => updateContact(board, "P", "acme", "c1", { name: "  " }), /cannot be empty/);
+  assert.throws(() => updateContact(board, "P", "acme", "c9", { name: "X" }), /not found/);
+});
+
+test("removeContact deletes by id and guards", () => {
+  const { board } = tmpBoard();
+  addCompany(board, "P", { name: "Acme" });
+  addContact(board, "P", "acme", { name: "Ada" });
+  addContact(board, "P", "acme", { name: "Bo" });
+  const r = removeContact(board, "P", "acme", "c1");
+  assert.equal(r.removed, "c1");
+  assert.equal(r.contactCount, 1);
+  assert.deepEqual(getCompany(board, "P", "acme").contacts.map((c) => c.name), ["Bo"]);
+  assert.throws(() => removeContact(board, "P", "acme", "c1"), /not found/);
 });
 
 test("empty board: no companies, empty inbox", () => {

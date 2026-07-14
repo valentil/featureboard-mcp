@@ -29,7 +29,7 @@ import { saveTestPage, listTestPages, getTestPage, removeTestPage } from "./test
 import { groupBySuite } from "./testing.js";
 import { draftShare, listShares, removeShare, platformLimit } from "./social.js";
 import {
-  addCompany, listCompanies, getCompany, addContact,
+  addCompany, listCompanies, getCompany, addContact, updateContact, removeContact,
   addInboxMessage, listInbox, reviewInboxMessage, submitIntake,
   linkTicket, unlinkTicket, companiesForTicket,
   addAgreement, updateAgreement, removeAgreement,
@@ -1754,6 +1754,48 @@ server.registerTool(
     const board = getBoard();
     if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
     return addContact(board, project, company, { name, email, role, phone });
+  })
+);
+
+server.registerTool(
+  "update_contact",
+  {
+    title: "Update a CRM contact",
+    description: "Edit a contact on a company (only provided fields change). Pass an empty string to clear email/role/phone.",
+    inputSchema: {
+      project: z.string(),
+      company: z.string().describe("Company id (slug)."),
+      contact: z.string().describe("Contact id within the company (e.g. c1)."),
+      name: z.string().optional(),
+      email: z.string().optional(),
+      role: z.string().optional(),
+      phone: z.string().optional(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  writeTool(({ project, company, contact, name, email, role, phone }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return updateContact(board, project, company, contact, { name, email, role, phone });
+  })
+);
+
+server.registerTool(
+  "remove_contact",
+  {
+    title: "Remove a CRM contact",
+    description: "Remove a contact from a company by its contact id (e.g. c1).",
+    inputSchema: {
+      project: z.string(),
+      company: z.string().describe("Company id (slug)."),
+      contact: z.string().describe("Contact id within the company (e.g. c1)."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  },
+  writeTool(({ project, company, contact }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return removeContact(board, project, company, contact);
   })
 );
 

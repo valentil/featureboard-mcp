@@ -147,6 +147,33 @@ export function addContact(board, project, companyId, { name, email, role, phone
   return { company: c.id, contact, contactCount: c.contacts.length };
 }
 
+/** Update a contact on a company (only provided fields change). Throws if not found. */
+export function updateContact(board, project, companyId, contactId, patch = {}) {
+  const c = getCompany(board, project, companyId);
+  const contact = (Array.isArray(c.contacts) ? c.contacts : []).find((x) => x.id === contactId);
+  if (!contact) throw new Error(`contact ${contactId} not found on ${companyId}`);
+  if (patch.name != null) {
+    if (!String(patch.name).trim()) throw new Error("contact name cannot be empty");
+    contact.name = String(patch.name).trim();
+  }
+  if (patch.email != null) contact.email = patch.email ? String(patch.email) : null;
+  if (patch.role != null) contact.role = patch.role ? String(patch.role) : null;
+  if (patch.phone != null) contact.phone = patch.phone ? String(patch.phone) : null;
+  writeJson(companyPath(board, project, companyId), c);
+  return { company: c.id, contact };
+}
+
+/** Remove a contact from a company. Throws if not found. */
+export function removeContact(board, project, companyId, contactId) {
+  const c = getCompany(board, project, companyId);
+  const list = Array.isArray(c.contacts) ? c.contacts : [];
+  const next = list.filter((x) => x.id !== contactId);
+  if (next.length === list.length) throw new Error(`contact ${contactId} not found on ${companyId}`);
+  c.contacts = next;
+  writeJson(companyPath(board, project, companyId), c);
+  return { company: c.id, removed: contactId, contactCount: next.length };
+}
+
 // --- CRM inbox + approvals --------------------------------------------------
 
 function readInbox(board, project) {
