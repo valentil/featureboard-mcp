@@ -22,6 +22,7 @@ import {
   saveUpload, listUploads, editMediaText, listVariations,
   addComment, listComments, removeComment,
 } from "./media.js";
+import { startDriftRun, recordDriftScore, driftReport, applyDriftRemediation } from "./drift.js";
 import { saveTestPage, listTestPages, getTestPage, removeTestPage } from "./testpages.js";
 import { groupBySuite } from "./testing.js";
 import { draftShare, listShares, removeShare, platformLimit } from "./social.js";
@@ -332,7 +333,7 @@ server.registerTool(
             product: z.string().optional(),
             labels: z.array(z.string()).optional(),
             ref: z.string().optional(),
-            priority: z.number().int().optional(),
+            priority: z.coerce.number().int().optional(),
             newFile: z.boolean().optional(),
             website: z.string().optional(),
           })
@@ -400,7 +401,7 @@ server.registerTool(
             product: z.string().optional(),
             labels: z.array(z.string()).optional(),
             ref: z.string().optional(),
-            priority: z.number().int().optional(),
+            priority: z.coerce.number().int().optional(),
             newFile: z.boolean().optional(),
             website: z.string().optional(),
           })
@@ -416,7 +417,7 @@ server.registerTool(
             product: z.string().optional(),
             labels: z.array(z.string()).optional(),
             ref: z.string().optional(),
-            priority: z.number().int().optional(),
+            priority: z.coerce.number().int().optional(),
             newFile: z.boolean().optional(),
             website: z.string().optional(),
           })
@@ -483,7 +484,7 @@ server.registerTool(
       labels: z.array(z.string()).optional(),
       linkedIssue: z.string().nullable().optional(),
       ref: z.string().nullable().optional().describe("External reference id, or null to clear."),
-      priority: z.number().int().nullable().optional().describe("Manual priority rank (1 = highest), or null to clear."),
+      priority: z.coerce.number().int().nullable().optional().describe("Manual priority rank (1 = highest), or null to clear."),
       attachments: z.array(z.string()).optional().describe("Replace the attachment list on this ticket."),
       newFile: z.boolean().nullable().optional().describe("'New file' flag, or null to clear."),
       website: z.string().nullable().optional().describe("Associated website/URL, or null to clear."),
@@ -765,6 +766,123 @@ server.registerTool(
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   writeTool(({ project, text }) => meta.appendScratchpad(getBoard(), project, text))
+);
+
+/* ---------- agentic drift evaluation (FBMCPF-108) ---------- */
+server.registerTool(
+  "drift_start",
+  {
+    title: "Start a drift evaluation",
+    description:
+      "Begin a drift-evaluation run over a board's Done tickets. mode 'sample' evaluates a seeded random subset (fast statistical estimate); mode 'full' evaluates every Done ticket. Returns a runId + the tickets to score. Then, for each ticket, compare its scope/description/DoD + work log against the actual code it touched (use get_work_packet and the project's codeLocation) and call drift_record with a 0–100 fidelity score; finish with drift_report. Use the evaluate_drift prompt to run the whole loop.",
+    inputSchema: {
+      project: z.string(),
+      mode: z.enum(["sample", "full"]).optional().default("sample"),
+      sampleSize: z.coerce.number().int().optional().default(10).describe("How many Done tickets to sample (mode 'sample')."),
+      seed: z.coerce.number().int().optional().describe("Seed for reproducible sampling; one is chosen + returned if omitted."),
+      type: z.enum(["all", "feature", "bug"]).optional().default("all"),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  writeTool(({ project, mode, sampleSize, seed, type }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return startDriftRun(board, project, { mode, sampleSize, seed, type });
+  })
+);
+
+server.registerTool(
+  "drift_record",
+  {
+    title: "Record a drift score",
+    description:
+      "Record a 0–100 fidelity score for one ticket in a drift run (verdict is derived: >=80 aligned, 50–79 partial, <50 drift — or pass your own). Provide a short gap explaining any shortfall, and optionally the files you checked. Upserts by ticket.",
+    inputSchema: {
+      project: z.string(),
+      runId: z.string().optional().describe("Drift run id (defaults to the latest run)."),
+      ticket: z.string(),
+      score: z.coerce.number().describe("Fidelity 0–100 of implementation vs the ticket's intent."),
+      verdict: z.enum(["aligned", "partial", "drift"]).optional(),
+      gap: z.string().optional().describe("What drifted / what's missing (for partial/drift)."),
+      files: z.array(z.string()).optional().describe("Files/paths inspected for this ticket."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  writeTool(({ project, runId, ticket, score, verdict, gap, files }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return recordDriftScore(board, project, runId, { ticket, score, verdict, gap, files });
+  })
+);
+
+server.registerTool(
+  "drift_report",
+  {
+    title: "Drift evaluation report",
+    description:
+      "Aggregate a drift run: per-ticket scores, mean fidelity, verdict counts, drift rate, and — for sampling — a 95% Wilson confidence interval on the true drift fraction extrapolated to the whole Done population. Lists the flagged (partial/drift) tickets worst-first with their gaps, and any pending (unscored) tickets.",
+    inputSchema: { project: z.string(), runId: z.string().optional().describe("Defaults to the latest run.") },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project, runId }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return driftReport(board, project, runId);
+  })
+);
+
+server.registerTool(
+  "drift_remediate",
+  {
+    title: "Apply drift remediation",
+    description:
+      "One-click remediation across a run's flagged tickets: action 'file_bugs' files a linked, drift-labeled bug per gap; 'reopen' moves them back to Todo; 'relabel' adds a 'drift' label. verdicts selects the bands to act on (default ['drift']). Pass dryRun:true to preview. Records what it did on the run.",
+    inputSchema: {
+      project: z.string(),
+      runId: z.string().optional().describe("Defaults to the latest run."),
+      action: z.enum(["file_bugs", "reopen", "relabel"]),
+      verdicts: z.array(z.enum(["aligned", "partial", "drift"])).optional().describe("Which verdict bands to act on (default ['drift'])."),
+      dryRun: z.boolean().optional().default(false),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  },
+  writeTool(({ project, runId, action, verdicts, dryRun }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return applyDriftRemediation(board, project, runId, { action, verdicts, dryRun });
+  })
+);
+
+server.registerPrompt(
+  "evaluate_drift",
+  {
+    title: "Evaluate implementation drift",
+    description:
+      "Run a full agentic-drift evaluation: sample (or fully check) Done tickets, score how faithfully each was implemented vs its intent, report an aggregate drift rate with confidence, and offer one-click remediation.",
+    argsSchema: {
+      project: z.string().optional(),
+      mode: z.string().optional().describe("'sample' (default, fast) or 'full'."),
+      sampleSize: z.string().optional().describe("How many tickets to sample."),
+    },
+  },
+  ({ project, mode, sampleSize } = {}) => ({
+    messages: [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text:
+            `Run an agentic drift evaluation${project ? ` on project "${project}"` : ""}.\n\n` +
+            "Steps:\n" +
+            `- Call drift_start (${mode ? `mode: ${mode}` : "mode: sample"}${sampleSize ? `, sampleSize: ${sampleSize}` : ""}) to pick the Done tickets to check. Note the runId.\n` +
+            "- For EACH returned ticket, assemble the evidence: get_work_packet for its scope + definition-of-done, read its work-log entries (get_work_log), and inspect what actually changed in the project's codeLocation — prefer `git log`/`git diff` for that ticket id, and read the files it touched. Do NOT rely on the completion summary alone.\n" +
+            "- Judge fidelity of the implementation vs the ticket's intent and call drift_record with a 0–100 score and, when it's not a clean match, a one-line gap explaining what's missing/wrong (and the files you checked). Bands: >=80 aligned, 50–79 partial, <50 drift.\n" +
+            "- When every ticket is scored, call drift_report and present it: mean fidelity, verdict counts, the drift rate (with the confidence interval + population estimate for a sample), and the flagged tickets worst-first with their gaps.\n" +
+            "- Then offer remediation and, if the user picks one, run it automatically via drift_remediate: 'file_bugs' (a linked bug per gap), 'reopen' (send drifted tickets back to Todo), or 'relabel'. Default to acting on the 'drift' band; confirm scope before writing.",
+        },
+      },
+    ],
+  })
 );
 
 server.registerTool(
