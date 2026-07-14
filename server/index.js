@@ -23,6 +23,8 @@ import {
   addComment, listComments, removeComment,
 } from "./media.js";
 import { startDriftRun, recordDriftScore, driftReport, applyDriftRemediation } from "./drift.js";
+import { scanBoardCleanup, pruneBoard } from "./cleanup.js";
+import { listCodeTree, readCodeFile, codeFileMap } from "./explorer.js";
 import { saveTestPage, listTestPages, getTestPage, removeTestPage } from "./testpages.js";
 import { groupBySuite } from "./testing.js";
 import { draftShare, listShares, removeShare, platformLimit } from "./social.js";
@@ -32,6 +34,7 @@ import {
   linkTicket, unlinkTicket, companiesForTicket,
   addAgreement, updateAgreement, removeAgreement,
 } from "./crm.js";
+import { book, cancelBooking, listBookings } from "./bookings.js";
 import { addLead, listLeads, setLeadStatus, leadsMap, enrichLead, convertLead, addLeadArea, listLeadAreas, addInteraction, updateLeadLocation } from "./leads.js";
 import { buildCustomerPortal } from "./portal.js";
 import { listTemplates, generateContract } from "./contracts.js";
@@ -42,6 +45,7 @@ import {
   renderSite, siteRoot, saveAsset, listAssets, setSiteAnalytics, addRawPage,
 } from "./website.js";
 import { getGitConfig, setGitConfig, commitFeature } from "./git.js";
+import { setAnalyticsConfig, autoConfigureAnalytics, getSiteTraffic } from "./analytics.js";
 
 const DATA_DIR = process.env.FEATUREBOARD_DATA_DIR;
 
@@ -633,6 +637,103 @@ server.registerTool(
     const deleted = getBoard().deleteTask(project, ticket);
     return { deleted: ticket, title: deleted.title };
   })
+);
+
+server.registerTool(
+  "scan_board_cleanup",
+  {
+    title: "Scan board for cleanup",
+    description:
+      "Read-only deep-clean scan: finds likely-duplicate tickets (grouped by title similarity, each group nominating a keeper + removal candidates) and stale/placeholder tickets (old Todo items, placeholder titles). Returns a suggested removal set to feed prune_board. Never deletes.",
+    inputSchema: {
+      project: z.string(),
+      staleDays: z.coerce.number().int().optional().default(30).describe("Age (days) at which an open Todo counts as stale."),
+      similarity: z.coerce.number().optional().default(0.7).describe("Title-similarity threshold 0–1 for duplicate grouping."),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project, staleDays, similarity }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return scanBoardCleanup(board, project, { staleDays, similarity });
+  })
+);
+
+server.registerTool(
+  "prune_board",
+  {
+    title: "Prune board tickets",
+    description:
+      "Guarded cleanup: deletes ONLY the ticket ids you pass, and only when confirm is true (otherwise returns a dry-run preview of what would be deleted). Non-existent ids are reported, not fatal. Pair with scan_board_cleanup's suggestedRemovals.",
+    inputSchema: {
+      project: z.string(),
+      tickets: z.array(z.string()).describe("Exact ticket ids to remove."),
+      confirm: z.boolean().optional().default(false).describe("Must be true to actually delete."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  },
+  writeTool(({ project, tickets, confirm }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return pruneBoard(board, project, tickets, { confirm });
+  })
+);
+
+/* ---------- code file explorer over codeLocation (FBMCPF-82) ---------- */
+function codeRoot(project) {
+  const board = getBoard();
+  if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+  const cfg = meta.getProjectConfig(board, project);
+  if (!cfg || !cfg.codeLocation) throw new Error(`Project "${project}" has no codeLocation configured (set it with set_project_config).`);
+  return cfg.codeLocation;
+}
+
+server.registerTool(
+  "list_code_files",
+  {
+    title: "List code files",
+    description:
+      "List files and folders under the project's codeLocation (optionally a subpath), with sizes and extensions. Skips vendor/build dirs (node_modules, .git, dist, …). depth controls how many levels to expand. Sandboxed to codeLocation.",
+    inputSchema: {
+      project: z.string(),
+      subpath: z.string().optional().describe("Directory under codeLocation to list (default: root)."),
+      depth: z.coerce.number().int().optional().default(1).describe("Levels to expand (1 = just this dir)."),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project, subpath, depth }) => listCodeTree(codeRoot(project), { subpath, depth }))
+);
+
+server.registerTool(
+  "read_code_file",
+  {
+    title: "Read a code file",
+    description:
+      "Read a file under the project's codeLocation as UTF-8 text (size-capped; binary files are flagged, not dumped). Returns content + line count. Sandboxed to codeLocation (no path escape).",
+    inputSchema: {
+      project: z.string(),
+      path: z.string().describe("File path relative to codeLocation, e.g. server/index.js."),
+      maxBytes: z.coerce.number().int().optional().default(200000),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project, path: rel, maxBytes }) => readCodeFile(codeRoot(project), rel, { maxBytes }))
+);
+
+server.registerTool(
+  "code_file_map",
+  {
+    title: "Map the codebase",
+    description:
+      "Recursively map the project's codeLocation: total file count + bytes, counts by extension, and the files that exceed the split thresholds (lines/bytes) as split candidates (worst first) — useful for spotting oversized modules to decompose.",
+    inputSchema: {
+      project: z.string(),
+      splitLines: z.coerce.number().int().optional().default(400),
+      splitBytes: z.coerce.number().int().optional().default(32768),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project, splitLines, splitBytes }) => codeFileMap(codeRoot(project), { splitLines, splitBytes }))
 );
 
 // analytics & metadata (v0.3) ----------------------------------------------
@@ -2100,6 +2201,72 @@ server.registerTool(
   })
 );
 
+// Bookings / scheduling against CRM contacts (FBMCPF-84) --------------------
+
+server.registerTool(
+  "book_meeting",
+  {
+    title: "Book a call/demo with a CRM contact",
+    description:
+      "Schedule a call, demo, or meeting with a CRM company (and optionally a specific contact within it). Validates the company exists (list_companies) and the contact belongs to it. Time is an ISO timestamp; stored under crm/bookings.json with status 'scheduled'.",
+    inputSchema: {
+      project: z.string(),
+      company: z.string().describe("CRM company id (from list_companies)."),
+      at: z.string().describe("Start time as an ISO timestamp, e.g. 2026-08-01T17:00:00Z."),
+      contact: z.string().optional().describe("A contact id (c1) or name within the company."),
+      type: z.enum(["call", "demo", "meeting", "onboarding", "other"]).optional(),
+      durationMins: z.number().optional().describe("Length in minutes (default 30)."),
+      subject: z.string().optional(),
+      notes: z.string().optional(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  writeTool(({ project, company, at, contact, type, durationMins, subject, notes }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return book(board, project, { company, at, contact, type, durationMins, subject, notes });
+  })
+);
+
+server.registerTool(
+  "cancel_booking",
+  {
+    title: "Cancel a booking",
+    description: "Cancel a scheduled booking by id (from list_bookings), optionally with a reason. Idempotent: cancelling an already-cancelled booking is a no-op.",
+    inputSchema: {
+      project: z.string(),
+      id: z.string().describe("Booking id, e.g. b1."),
+      reason: z.string().optional(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  writeTool(({ project, id, reason }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return cancelBooking(board, project, id, { reason });
+  })
+);
+
+server.registerTool(
+  "list_bookings",
+  {
+    title: "List bookings",
+    description: "List bookings for the board, newest-first. Filter by company or status ('scheduled'/'cancelled'), or pass upcoming:true for scheduled future bookings sorted soonest-first.",
+    inputSchema: {
+      project: z.string(),
+      company: z.string().optional(),
+      status: z.enum(["scheduled", "cancelled"]).optional(),
+      upcoming: z.boolean().optional(),
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  tryTool(({ project, company, status, upcoming }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return listBookings(board, project, { company, status, upcoming });
+  })
+);
+
 // Mail ---------------------------------------------------------------------
 
 server.registerTool(
@@ -2439,6 +2606,69 @@ server.registerTool(
     const board = getBoard();
     if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
     return setSiteAnalytics(board, project, { provider, id, snippet, enabled });
+  })
+);
+
+// external site analytics: config + auto-configure + read proxy (FBMCPF-83) -----
+
+server.registerTool(
+  "set_analytics_config",
+  {
+    title: "Configure external analytics",
+    description:
+      "Configure which external analytics provider to READ site traffic from (distinct from set_site_analytics, which injects tracking). Provider is plausible/umami/custom (Google Analytics needs an OAuth connector). No API key is stored — the read proxy reads it from the FEATUREBOARD_ANALYTICS_KEY env var. Set enabled:false to turn the proxy off.",
+    inputSchema: {
+      project: z.string(),
+      provider: z.enum(["plausible", "umami", "ga", "custom"]).optional(),
+      siteId: z.string().optional().describe("Plausible domain, umami website id, etc."),
+      host: z.string().optional().describe("API host (e.g. plausible.io, or your self-hosted umami URL)."),
+      statsUrl: z.string().optional().describe("For provider 'custom': the full stats endpoint ({period} is substituted)."),
+      metrics: z.array(z.string()).optional().describe("Metrics to request, e.g. visitors, pageviews, bounce_rate."),
+      period: z.string().optional().describe("Default window, e.g. 7d, 30d, month."),
+      enabled: z.boolean().optional(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  writeTool(({ project, provider, siteId, host, statsUrl, metrics, period, enabled }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return setAnalyticsConfig(board, project, { provider, siteId, host, statsUrl, metrics, period, enabled });
+  })
+);
+
+server.registerTool(
+  "auto_configure_analytics",
+  {
+    title: "Auto-configure external analytics",
+    description:
+      "Derive the external analytics read config from the site's existing tracking settings (set_site_analytics), so you don't retype the domain/property, and enable the proxy. Errors if the site has no analytics configured yet.",
+    inputSchema: { project: z.string() },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  writeTool(({ project }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return autoConfigureAnalytics(board, project);
+  })
+);
+
+server.registerTool(
+  "get_site_traffic",
+  {
+    title: "Get site traffic (analytics proxy)",
+    description:
+      "Read proxy for site traffic: fetch the configured provider's stats (Plausible/umami) using the FEATUREBOARD_ANALYTICS_KEY env var and return normalised numbers so the board can show traffic. Degrades gracefully — when disabled, unconfigured, or missing a key it returns the exact request URL so you can fetch it yourself.",
+    inputSchema: {
+      project: z.string(),
+      period: z.string().optional().describe("Override the configured window, e.g. 7d, 30d."),
+      metrics: z.array(z.string()).optional().describe("Override the configured metrics list."),
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  },
+  tryTool(async ({ project, period, metrics }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return getSiteTraffic(board, project, { period, metrics });
   })
 );
 
