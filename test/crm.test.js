@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   slugify, validateApproval,
   addCompany, listCompanies, getCompany, setCompanyProducts, addContact, updateContact, removeContact,
+  reportCompanyBug, resolveCompanyBug,
   addInboxMessage, listInbox, reviewInboxMessage,
   linkTicket, unlinkTicket, companiesForTicket, companyPriorityTickets,
   validateAgreementKind, addAgreement, updateAgreement, removeAgreement,
@@ -121,6 +122,27 @@ test("inbox: add (pending), list filters, approve/reject flow", () => {
   assert.equal(listInbox(board, "P", { status: "approved" }).count, 1);
   assert.throws(() => reviewInboxMessage(board, "P", "mX", "approve"), /not found/);
   assert.throws(() => addInboxMessage(board, "P", {}), /subject or body/);
+});
+
+// FBMCPF-101 — company-reported bug resolution flow
+test("reportCompanyBug logs+links+records; resolveCompanyBug resolves; guards", () => {
+  const { board } = tmpBoard();
+  addCompany(board, "P", { name: "Acme" });
+  let seq = 0;
+  const logBug = ({ title }) => ({ ticketNumber: "FBB-" + (++seq), title, type: "bug", status: "Todo" });
+  const r = reportCompanyBug(board, "P", "acme", { title: "Crash on save" }, { logBug });
+  assert.equal(r.ticket, "FBB-1");
+  const c = getCompany(board, "P", "acme");
+  assert.ok(c.tickets.includes("FBB-1"));
+  assert.equal(c.reportedBugs[0].status, "open");
+  let call = null;
+  const setStatus = (t, st) => { call = [t, st]; return { ticketNumber: t, status: st }; };
+  const res = resolveCompanyBug(board, "P", "acme", "FBB-1", { setStatus });
+  assert.deepEqual(call, ["FBB-1", "Done"]);
+  assert.equal(res.status, "resolved");
+  assert.equal(getCompany(board, "P", "acme").reportedBugs[0].status, "resolved");
+  assert.throws(() => reportCompanyBug(board, "P", "acme", {}, { logBug }), /title is required/);
+  assert.throws(() => resolveCompanyBug(board, "P", "acme", "FBB-9", { setStatus }), /not reported/);
 });
 
 // --- FBMCPF-47: CRM-linked tickets ---

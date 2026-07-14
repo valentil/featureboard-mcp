@@ -30,6 +30,7 @@ import { groupBySuite, coverageByProduct } from "./testing.js";
 import { draftShare, listShares, removeShare, platformLimit } from "./social.js";
 import {
   addCompany, listCompanies, getCompany, setCompanyProducts, addContact, updateContact, removeContact,
+  reportCompanyBug, resolveCompanyBug,
   addInboxMessage, listInbox, reviewInboxMessage, submitIntake,
   linkTicket, unlinkTicket, companiesForTicket, companyPriorityTickets,
   addAgreement, updateAgreement, removeAgreement,
@@ -2291,6 +2292,45 @@ server.registerTool(
     const board = getBoard();
     if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
     return companyPriorityTickets(board, project, company, (id) => board.getTask(project, id));
+  })
+);
+
+server.registerTool(
+  "report_company_bug",
+  {
+    title: "Log a company-reported bug",
+    description: "Log a bug reported by a company: creates a board bug (FBB-###), links it to the company, and records the report on the company. Ties customer reports to the bug workflow.",
+    inputSchema: {
+      project: z.string(),
+      company: z.string().describe("Company id (slug)."),
+      title: z.string(),
+      description: z.string().optional(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  writeTool(({ project, company, title, description }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return reportCompanyBug(board, project, company, { title, description }, { logBug: (f) => board.addTask(project, "bug", f) });
+  })
+);
+
+server.registerTool(
+  "resolve_company_bug",
+  {
+    title: "Resolve a company-reported bug",
+    description: "Mark a company-reported bug resolved: sets the board bug to Done and flips the company's report entry to resolved.",
+    inputSchema: {
+      project: z.string(),
+      company: z.string().describe("Company id (slug)."),
+      ticket: z.string().describe("The board bug ticket (FBB-###) the company reported."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  writeTool(({ project, company, ticket }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return resolveCompanyBug(board, project, company, ticket, { setStatus: (t, st) => board.setStatus(project, t, st, "Resolved (customer-reported)") });
   })
 );
 

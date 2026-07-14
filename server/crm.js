@@ -188,6 +188,43 @@ export function removeContact(board, project, companyId, contactId) {
   return { company: c.id, removed: contactId, contactCount: next.length };
 }
 
+// --- Company-reported bug flow (FBMCPF-101) ---------------------------------
+
+/**
+ * Log a bug reported by a company: creates a board bug via the injected logBug,
+ * links it to the company, and records the report on company.reportedBugs.
+ */
+export function reportCompanyBug(board, project, companyId, { title, description } = {}, { logBug, now = new Date() } = {}) {
+  if (!title || !String(title).trim()) throw new Error("bug title is required");
+  if (typeof logBug !== "function") throw new Error("logBug function is required");
+  const c = getCompany(board, project, companyId);
+  const bug = logBug({ title: String(title).trim(), description: description ? String(description) : "" });
+  const ticket = bug.ticketNumber || bug.ticket;
+  if (!ticket) throw new Error("logBug did not return a ticket id");
+  c.tickets = Array.isArray(c.tickets) ? c.tickets : [];
+  if (!c.tickets.includes(ticket)) c.tickets.push(ticket);
+  c.reportedBugs = Array.isArray(c.reportedBugs) ? c.reportedBugs : [];
+  c.reportedBugs.push({ ticket, title: String(title).trim(), status: "open", reportedAt: now.toISOString() });
+  writeJson(companyPath(board, project, companyId), c);
+  return { project, company: c.id, ticket, bug, reportedBugs: c.reportedBugs.length };
+}
+
+/**
+ * Resolve a company-reported bug: marks the board bug done via the injected
+ * setStatus and flips the company's report entry to resolved. Throws if the
+ * company never reported that ticket.
+ */
+export function resolveCompanyBug(board, project, companyId, ticket, { setStatus, now = new Date() } = {}) {
+  const c = getCompany(board, project, companyId);
+  const entry = (Array.isArray(c.reportedBugs) ? c.reportedBugs : []).find((b) => b.ticket === ticket);
+  if (!entry) throw new Error(`bug ${ticket} was not reported by ${companyId}`);
+  if (typeof setStatus === "function") setStatus(ticket, "Done");
+  entry.status = "resolved";
+  entry.resolvedAt = now.toISOString();
+  writeJson(companyPath(board, project, companyId), c);
+  return { project, company: c.id, ticket, status: "resolved" };
+}
+
 // --- CRM inbox + approvals --------------------------------------------------
 
 function readInbox(board, project) {
