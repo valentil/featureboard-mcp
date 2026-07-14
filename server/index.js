@@ -19,6 +19,7 @@ import { predictDueDates } from "./predictive.js";
 import {
   listMedia, saveMedia, getMedia, revertMedia,
   tagMedia, annotateMedia, removeAnnotation, searchMedia,
+  saveUpload, listUploads, editMediaText,
 } from "./media.js";
 import { saveTestPage, listTestPages, getTestPage, removeTestPage } from "./testpages.js";
 import { groupBySuite } from "./testing.js";
@@ -1176,6 +1177,65 @@ server.registerTool(
 );
 
 server.registerTool(
+  "upload_reference",
+  {
+    title: "Upload a reference image",
+    description:
+      "Save a reference/source image under media/uploads/ (base64) to use as input for media generation — kept separate from the gallery. Reference it in a generate/refine prompt so Claude or an image model can work from it.",
+    inputSchema: {
+      project: z.string(),
+      name: z.string().describe("Filename with extension, e.g. moodboard.png."),
+      content: z.string().describe("Base64 image bytes (or utf8 text with encoding:'utf8')."),
+      encoding: z.enum(["base64", "utf8"]).optional().default("base64"),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  writeTool(({ project, name, content, encoding }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return saveUpload(board, project, { name, content, encoding });
+  })
+);
+
+server.registerTool(
+  "list_references",
+  {
+    title: "List reference uploads",
+    description: "List the reference/source images under media/uploads/ (inputs for generation).",
+    inputSchema: { project: z.string() },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return listUploads(board, project);
+  })
+);
+
+server.registerTool(
+  "edit_media",
+  {
+    title: "Edit a text media asset",
+    description:
+      "Directly edit an existing text/report asset (find/replace, append, or prepend) and save the result as a new version — the prior copy is archived (edit-media). For images, use refine_media or image generation instead.",
+    inputSchema: {
+      project: z.string(),
+      name: z.string().describe("Gallery asset (a text/report asset: .html/.svg/.txt/.md…)."),
+      find: z.string().optional().describe("Text to replace (all occurrences)."),
+      replace: z.string().optional().describe("Replacement for 'find' (default: remove)."),
+      append: z.string().optional(),
+      prepend: z.string().optional(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  writeTool(({ project, name, find, replace, append, prepend }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return editMediaText(board, project, name, { find, replace, append, prepend });
+  })
+);
+
+server.registerTool(
   "draft_share",
   {
     title: "Draft a social share",
@@ -2284,9 +2344,42 @@ server.registerPrompt(
             `Generate a shareable asset${project ? ` for project "${project}"` : ""} and save it to the media gallery.\n\n` +
             (goal ? `Goal: ${goal}\n\n` : "1. Ask me what the asset should show if it isn't clear.\n") +
             "Steps:\n" +
+            "- Check list_references for any uploaded reference images (media/uploads/) and work from them if present.\n" +
             "- Produce a self-contained, shareable HTML report (inline CSS, no external assets) — or an image if that fits better.\n" +
             "- Call save_media with a descriptive filename (e.g. q3-summary.html), the content, a title, the prompt/goal, any tags, and the related ticket if there is one. Use encoding:'base64' for image bytes.\n" +
             "- Confirm what was saved and its media/ path, and mention it will now appear in list_media.",
+        },
+      },
+    ],
+  })
+);
+
+server.registerPrompt(
+  "refine_media",
+  {
+    title: "Refine a media asset",
+    description:
+      "Iterate on an existing gallery asset with a follow-up instruction, saving the result as a new version (its history is preserved).",
+    argsSchema: {
+      project: z.string().optional(),
+      name: z.string().optional().describe("Gallery asset to refine."),
+      instruction: z.string().optional().describe("How to change/improve it."),
+    },
+  },
+  ({ project, name, instruction } = {}) => ({
+    messages: [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text:
+            `Refine a media asset${name ? ` ("${name}")` : ""}${project ? ` in project "${project}"` : ""}.\n\n` +
+            (instruction ? `Refinement: ${instruction}\n\n` : "1. Ask what to change if it isn't clear.\n") +
+            "Steps:\n" +
+            "- get_media the asset (and note its existing versions) to see the current content + the prompt it came from.\n" +
+            "- Produce the improved version applying the refinement, keeping the original intent.\n" +
+            "- Call save_media with the SAME name (this archives the current copy as a prior version automatically) and set prompt to the refinement instruction so the chain is recorded.\n" +
+            "- Confirm, and show the version list from get_media so the refinement chain is visible.",
         },
       },
     ],

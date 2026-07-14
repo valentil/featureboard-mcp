@@ -8,6 +8,7 @@ import {
   sanitizeAssetName, buildMetaSidecar, saveMedia,
   listVersions, getMedia, revertMedia, isTextAsset,
   tagMedia, annotateMedia, removeAnnotation, searchMedia,
+  saveUpload, listUploads, UPLOADS_DIR, editMediaText,
 } from "../server/media.js";
 
 // FBMCPF-38 — Media gallery (list assets + metadata)
@@ -224,6 +225,38 @@ test("annotateMedia: monotonic ids survive removal; text required", () => {
   assert.throws(() => annotateMedia(board, "P", "a.png", { text: " " }), /text is required/);
   // annotations surface in get_media
   assert.equal(getMedia(board, "P", "a.png").annotations.length, 2);
+});
+
+// --- FBMCPF-90: edit_media (text) ---
+test("editMediaText find/replace saves a new version; images rejected", () => {
+  const { board } = tmpBoard();
+  saveMedia(board, "P", { name: "r.html", content: "<h1>Old</h1><p>Old</p>", title: "T" });
+  const r = editMediaText(board, "P", "r.html", { find: "Old", replace: "New" });
+  assert.equal(r.name, "r.html");
+  assert.equal(getMedia(board, "P", "r.html").content, "<h1>New</h1><p>New</p>");
+  assert.equal(listVersions(board, "P", "r.html").length, 1); // prior archived
+  assert.match(r.meta.prompt, /edit: replace "Old"/);
+  // append/prepend
+  editMediaText(board, "P", "r.html", { prepend: "<!--top-->", append: "<!--end-->" });
+  const c = getMedia(board, "P", "r.html").content;
+  assert.ok(c.startsWith("<!--top-->") && c.endsWith("<!--end-->"));
+  // guards
+  assert.throws(() => editMediaText(board, "P", "r.html", {}), /provide find/);
+  assert.throws(() => editMediaText(board, "P", "r.html", { find: "zzz", replace: "x" }), /not found/);
+  saveMedia(board, "P", { name: "pic.png", content: Buffer.from("IMG").toString("base64"), encoding: "base64" });
+  assert.throws(() => editMediaText(board, "P", "pic.png", { append: "x" }), /edits text assets/);
+});
+
+// --- FBMCPF-86: reference uploads ---
+test("saveUpload writes to media/uploads and listUploads lists them", () => {
+  const { dir, board } = tmpBoard();
+  const r = saveUpload(board, "P", { name: "mood.png", content: Buffer.from("IMG").toString("base64") });
+  assert.equal(r.relPath, "media/uploads/mood.png");
+  assert.equal(fs.readFileSync(path.join(dir, MEDIA_DIR, UPLOADS_DIR, "mood.png"), "utf8"), "IMG");
+  assert.throws(() => saveUpload(board, "P", { name: "../x.png", content: "a" }), /invalid media name/);
+  assert.equal(listUploads(board, "P").count, 1);
+  // uploads/ is a subfolder — must NOT show up in the gallery
+  assert.equal(listMedia(board, "P").count, 0);
 });
 
 test("searchMedia filters by tag, kind, and free text across name/title/tags/prompt", () => {

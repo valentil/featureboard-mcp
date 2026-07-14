@@ -28,6 +28,7 @@ import path from "node:path";
 export const MEDIA_DIR = "media";
 export const META_SUFFIX = ".meta.json";
 export const VERSIONS_DIR = ".versions";
+export const UPLOADS_DIR = "uploads";
 
 const IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".avif"]);
 const REPORT_EXTS = new Set([".html", ".htm"]);
@@ -374,6 +375,72 @@ export function searchMedia(board, project, { query, tag, kind } = {}) {
     return true;
   });
   return { project, count: out.length, query: query || null, tag: tag || null, kind: kind || null, assets: out };
+}
+
+/**
+ * Save a reference/source image under media/uploads/ (base64 by default). These
+ * are inputs for generation (FBMCPF-86), kept separate from generated assets so
+ * they don't clutter the gallery. Returns the saved path.
+ */
+export function saveUpload(board, project, { name, content, encoding = "base64" } = {}) {
+  const safe = sanitizeAssetName(name);
+  if (typeof content !== "string") throw new Error("content must be a string (base64, or utf8)");
+  if (encoding !== "base64" && encoding !== "utf8") throw new Error("encoding must be 'base64' or 'utf8'");
+  const dir = path.join(board.projectDir(project), MEDIA_DIR, UPLOADS_DIR);
+  fs.mkdirSync(dir, { recursive: true });
+  const buf = encoding === "base64" ? Buffer.from(content, "base64") : Buffer.from(content, "utf8");
+  atomicWrite(path.join(dir, safe), buf);
+  return { project, name: safe, relPath: `${MEDIA_DIR}/${UPLOADS_DIR}/${safe}`, sizeBytes: buf.length };
+}
+
+/** List reference/source uploads under media/uploads/. */
+export function listUploads(board, project) {
+  const dir = path.join(board.projectDir(project), MEDIA_DIR, UPLOADS_DIR);
+  let files;
+  try {
+    files = fs.readdirSync(dir);
+  } catch {
+    return { project, count: 0, uploads: [] };
+  }
+  const uploads = files
+    .filter((f) => !f.startsWith("."))
+    .map((f) => {
+      let size = null;
+      try { size = fs.statSync(path.join(dir, f)).size; } catch { /* ignore */ }
+      return { name: f, relPath: `${MEDIA_DIR}/${UPLOADS_DIR}/${f}`, sizeBytes: size };
+    });
+  return { project, count: uploads.length, uploads };
+}
+
+/**
+ * Edit an existing text/report asset in place (find/replace, append, prepend) and
+ * save the result as a new version (the prior copy is archived — FBMCPF-40). For
+ * images use refine_media or image generation. Ports edit-media as a direct,
+ * deterministic transform of a specific file.
+ */
+export function editMediaText(board, project, name, { find, replace, append, prepend } = {}, { now = new Date() } = {}) {
+  const safe = sanitizeAssetName(name);
+  if (!isTextAsset(safe)) {
+    throw new Error(`edit_media edits text assets (html/svg/txt/md/…); use refine_media or image generation for ${safe}`);
+  }
+  if (find == null && !append && !prepend) throw new Error("provide find (with replace), append, or prepend");
+  const cur = getMedia(board, project, safe, { withContent: true });
+  let content = String(cur.content || "");
+  if (find != null) {
+    const f = String(find);
+    if (!content.includes(f)) throw new Error(`text to replace not found in ${safe}`);
+    content = content.split(f).join(replace != null ? String(replace) : "");
+  }
+  if (prepend) content = String(prepend) + content;
+  if (append) content = content + String(append);
+  const meta = cur.meta || {};
+  const editDesc = find != null ? `replace "${find}"` : append && prepend ? "prepend+append" : append ? "append" : "prepend";
+  return saveMedia(
+    board,
+    project,
+    { name: safe, content, encoding: "utf8", title: meta.title, prompt: `edit: ${editDesc}`, tags: meta.tags, ticket: meta.ticket },
+    { now }
+  );
 }
 
 /**
