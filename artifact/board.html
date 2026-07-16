@@ -27,9 +27,13 @@
     "mcp__FeatureBoard__license_status",
     "mcp__FeatureBoard__activate_license",
     "mcp__FeatureBoard__request_commercial_license",
-    "mcp__FeatureBoard__set_usage_type"
+    "mcp__FeatureBoard__set_usage_type",
+    "mcp__FeatureBoard__daily_plan",
+    "mcp__FeatureBoard__append_scratchpad"
   ],
   "mcpServerNames": [
+    "FeatureBoard",
+    "FeatureBoard",
     "FeatureBoard",
     "FeatureBoard",
     "FeatureBoard",
@@ -132,6 +136,16 @@
   html[data-theme="dark"] .chip.att { background: #2b2d3a; color: #b7bdf0; }
   .chip.sprint { background: #fdeee6; color: #b3591e; font-weight: 600; }
   html[data-theme="dark"] .chip.sprint { background: #3a2e26; color: #e0a58a; }
+  .chip.model { background: #f3ecff; color: #7c3aed; font-weight: 600; }
+  html[data-theme="dark"] .chip.model { background: #2f2937; color: #c3a7e0; }
+  .chip.eff-low { background: #e5f5ec; color: #1a7d47; }
+  .chip.eff-medium { background: #fff4e0; color: #a15c00; }
+  .chip.eff-high { background: #fde8e8; color: #b3261e; }
+  html[data-theme="dark"] .chip.eff-low { background: #263329; color: #a7d3b0; }
+  html[data-theme="dark"] .chip.eff-medium { background: #3a3527; color: #e0c58a; }
+  html[data-theme="dark"] .chip.eff-high { background: #3a2e2a; color: #e88f7a; }
+  .dpRow { display: grid; grid-template-columns: 70px 1fr 64px 62px 54px; gap: 6px; padding: 4px 0; border-top: 1px solid #eef0f5; font-size: 12px; align-items: center; }
+  html[data-theme="dark"] .dpRow { border-top-color: #37352f; }
   .chip.cap { background: #eaf6ef; color: #1a7d47; font-weight: 600; }
   .chip.cap.over { background: #fde8e8; color: #b3261e; }
   html[data-theme="dark"] .chip.cap { background: #263329; color: #a7d3b0; }
@@ -270,6 +284,7 @@
   <span class="rangeInfo" id="rangeInfo"></span>
   <div class="spacer" style="flex:1"></div>
   <button class="ghost" id="newSprintBtn" title="Create a sprint and optionally pull in the current Todo queue">🏁 New sprint</button>
+  <button class="ghost" id="dailyPlanBtn" title="Plan today: model + effort per ticket, then dispatch sub-agents">📅 Plan</button>
   <button class="ghost" id="churnBtn" title="Autonomous churn: work without stopping for questions until a condition is met, with token budgets">🔄 Churn</button>
   <button class="ghost" id="brainstormBtn" title="Bulk-add brainstormed features">💡 Brainstorm</button>
   <button class="ghost" id="importBtn" title="Import tasks from markdown / CSV / JSON">⬇ Import</button>
@@ -702,6 +717,63 @@ async function stopChurn() {
   } catch (e) { toast("Couldn't end churn: " + String(e.message).slice(0, 100)); }
 }
 
+/* ---------- daily plan (FBMCPF-153) ---------- */
+let _dp = null;
+async function openDailyPlan() {
+  showModal(
+    '<h3>\ud83d\udcc5 Daily plan \u2014 ' + esc(state.board) + '</h3>' +
+    '<div id="dpBody" style="max-height:55vh;overflow:auto"><span class="hint">Planning\u2026</span></div>' +
+    '<div class="actions"><button class="ghost" onclick="closeModal()">Close</button>' +
+    '<button class="ghost" id="dpApply" onclick="applyDailyPlan()" disabled>Apply labels</button>' +
+    '<button class="primary" id="dpGo" onclick="queueDispatch()" disabled>\ud83d\ude80 Queue dispatch</button></div>'
+  );
+  _dp = null;
+  try {
+    _dp = await call("daily_plan", { project: state.board });
+    renderDailyPlan();
+  } catch (e) {
+    const el = document.getElementById("dpBody");
+    if (el) el.innerHTML = '<span class="hint">' + esc(String(e.message).slice(0, 160)) + ' \u2014 daily_plan needs the 0.4.0+ server (repack + restart Claude Desktop).</span>';
+  }
+}
+function renderDailyPlan() {
+  const el = document.getElementById("dpBody");
+  if (!el || !_dp) return;
+  if (!_dp.plan.length) { el.innerHTML = '<span class="hint">Queue is clear \u2014 nothing to plan.</span>'; return; }
+  const rows = _dp.plan.map((r) =>
+    '<div class="dpRow"><b>' + esc(r.ticket) + '</b><span title="' + esc(r.modelBasis + ' \u00b7 ' + r.effortBasis) + '">' + esc(r.title.slice(0, 60)) + '</span>' +
+    '<span class="chip model">\ud83e\udd16 ' + esc(r.model) + '</span>' +
+    '<span class="chip eff-' + esc(r.effort) + '">' + esc(r.effort) + '</span>' +
+    '<span class="rangeInfo">' + fmtTokens(r.estimate) + '</span></div>'
+  ).join("");
+  const byM = Object.keys(_dp.byModel).map((m) => esc(m) + ' \u00d7' + _dp.byModel[m].tickets + ' (' + fmtTokens(_dp.byModel[m].tokens) + ')').join(" \u00b7 ");
+  const cut = _dp.cutline ? '<div class="hint">\u2702 Cutline: ' + _dp.cutline.unplannedTickets + ' ticket(s) beyond today\u2019s budget.</div>' : "";
+  el.innerHTML =
+    '<div class="hint">' + _dp.totals.tickets + ' tickets \u00b7 ' + fmtTokens(_dp.totals.tokens) + ' logged-basis \u00b7 ' + byM + '</div>' + rows + cut +
+    '<div class="hint" style="margin-top:6px">Parallel: ' + (_dp.dispatch.parallel.join(", ") || "\u2014") + '<br>Sequential: ' + (_dp.dispatch.sequential.join(", ") || "\u2014") + '</div>';
+  const a = document.getElementById("dpApply"), g = document.getElementById("dpGo");
+  if (a) a.disabled = !state.canWrite;
+  if (g) g.disabled = !state.canWrite;
+}
+async function applyDailyPlan() {
+  try {
+    _dp = await call("daily_plan", { project: state.board, apply: true });
+    renderDailyPlan();
+    toast("Labels applied to " + _dp.applied + " ticket(s)");
+    refresh(true);
+  } catch (e) { toast(String(e.message).slice(0, 120)); }
+}
+async function queueDispatch() {
+  if (!_dp) return;
+  const lines = _dp.plan.map((r) => "  " + r.ticket + " \u2192 " + r.model + "/" + r.effort + " (" + fmtTokens(r.estimate) + ")").join("\n");
+  const text = "[DISPATCH " + _dp.date + "] Daily plan staged from the board \u2014 run these as sub-agents per model/effort (parallel: sonnet/haiku; sequential: opus/fable):\n" + lines;
+  try {
+    await call("append_scratchpad", { project: state.board, text });
+    closeModal();
+    toast('Plan staged \u2014 say \u201crun the daily plan\u201d in chat to start the sub-agents');
+  } catch (e) { toast(String(e.message).slice(0, 120)); }
+}
+
 // Auto-refresh: on tab/window focus regain and a gentle background poll, so the
 // board reflects changes made elsewhere without manually switching projects.
 // Skips while a modal is open or a drag is in progress; silent = no loading flash.
@@ -846,7 +918,12 @@ function cardHTML(t, opts) {
   if (t.newFile) meta.push('<span class="chip" title="Build in a new file">📄 new file</span>');
   if (t.website) meta.push('<span class="chip" title="' + esc(t.website) + '">🌐 ' + esc(t.website.replace(/^https?:\/\//, '')) + '</span>');
   (t.attachments || []).forEach((a) => meta.push('<span class="chip att" title="' + esc(a) + '">📎 ' + esc(a.split(/[\\/]/).pop()) + '</span>'));
-  (t.labels || []).forEach((l) => { if (SPRINT_RE.test(String(l)) || CAP_RE.test(String(l))) return; meta.push('<span class="chip">' + esc(l) + '</span>'); });
+  const MDL_RE = /^model:(.+)$/i, EFF_RE = /^effort:(low|medium|high)$/i;
+  let _m, _e;
+  (t.labels || []).forEach((l) => { const m = String(l).match(MDL_RE); if (m) _m = m[1]; const e2 = String(l).match(EFF_RE); if (e2) _e = e2[1].toLowerCase(); });
+  if (_m) meta.push('<span class="chip model" title="Planned model">\ud83e\udd16 ' + esc(_m) + '</span>');
+  if (_e) meta.push('<span class="chip eff-' + _e + '" title="Effort level">' + _e + '</span>');
+  (t.labels || []).forEach((l) => { if (SPRINT_RE.test(String(l)) || CAP_RE.test(String(l)) || MDL_RE.test(String(l)) || EFF_RE.test(String(l))) return; meta.push('<span class="chip">' + esc(l) + '</span>'); });
   const canW = state.canWrite;
   const dragAttrs = canW
     ? ' draggable="true" ondragstart="drag(event,\'' + t.ticket + '\')" ondragend="dragEnd(event)"' +
@@ -1419,6 +1496,7 @@ $("#sprintFilter").addEventListener("change", (e) => {
   renderBoard(state.tasks);
 });
 $("#newSprintBtn").addEventListener("click", openNewSprint);
+$("#dailyPlanBtn").addEventListener("click", openDailyPlan);
 $("#churnBtn").addEventListener("click", openChurn);
 $("#addBtn").addEventListener("click", openAdd);
 $("#settingsBtn").addEventListener("click", openSettings);
