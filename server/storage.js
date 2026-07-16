@@ -203,14 +203,28 @@ function splitCsvLine(line) {
   return out;
 }
 
+// FBMCPB-10: due dates must be YYYY-MM-DD. Legacy boards carried prose in the
+// due field, which breaks date sorting and range filters. Junk is remapped to
+// the description (adds/imports) or rejected (explicit updates).
+export const DUE_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+export function normalizeDueDate(value) {
+  if (value == null || value === "") return { dueDate: null };
+  const s = String(value).trim();
+  if (DUE_DATE_RE.test(s)) return { dueDate: s };
+  return { dueDate: null, overflow: s };
+}
+
 function normalizeImported(x) {
   if (typeof x === "string") return { title: x.trim() };
   if (!x || typeof x !== "object") return null;
+  const due = normalizeDueDate(x.dueDate || x.due);
+  let description = x.description != null ? String(x.description) : (x.desc != null ? String(x.desc) : undefined);
+  if (due.overflow) description = description ? `${description} ${due.overflow}` : due.overflow; // junk due -> description
   const t = {
     title: String(x.title || x.name || "").trim(),
-    description: x.description != null ? String(x.description) : (x.desc != null ? String(x.desc) : undefined),
+    description,
     product: x.product || undefined,
-    dueDate: x.dueDate || x.due || undefined,
+    dueDate: due.dueDate || undefined,
     labels: Array.isArray(x.labels) ? x.labels : undefined,
     status: x.status || undefined,
   };
@@ -550,6 +564,52 @@ export class Board {
   }
 
   /** Scan on-disk IDs (authoritative) and reconcile with the JSON index counter. */
+  /** FBMCPB-11: ticket ids that appear more than once on the board. */
+  findDuplicateTickets(name) {
+    const dupes = [];
+    for (const file of ["featurelist.md", "buglist.md"]) {
+      const content = readFileSafe(path.join(this.projectDir(name), file));
+      if (!content) continue;
+      const seen = new Map();
+      for (const line of content.split(/\r?\n/)) {
+        const m = line.match(/^\s*- \[[ xX~\-]\]\s*\[([A-Za-z]+-\d+)\]\s*\*\*(.*?)\*\*/);
+        if (!m) continue;
+        const [, id, title] = m;
+        if (seen.has(id)) dupes.push({ ticket: id, file, first: seen.get(id), duplicate: title });
+        else seen.set(id, title);
+      }
+    }
+    return dupes;
+  }
+
+  /** FBMCPB-11: renumber later occurrences of duplicated ids to fresh ids. */
+  repairDuplicateTickets(name, { dryRun = true } = {}) {
+    const changes = [];
+    for (const file of ["featurelist.md", "buglist.md"]) {
+      const type = file === "buglist.md" ? "bug" : "feature";
+      const p = path.join(this.projectDir(name), file);
+      const content = readFileSafe(p);
+      if (!content) continue;
+      const lines = content.split(/\r?\n/);
+      const seen = new Set();
+      let touched = false;
+      for (let i = 0; i < lines.length; i++) {
+        const m = lines[i].match(/^(\s*- \[[ xX~\-]\]\s*)\[([A-Za-z]+-\d+)\]/);
+        if (!m) continue;
+        const id = m[2];
+        if (!seen.has(id)) { seen.add(id); continue; }
+        if (dryRun) { changes.push({ file, line: i + 1, from: id }); continue; }
+        const fresh = this._nextId(name, type);
+        lines[i] = lines[i].replace(`[${id}]`, `[${fresh}]`);
+        seen.add(fresh);
+        touched = true;
+        changes.push({ file, line: i + 1, from: id, to: fresh });
+      }
+      if (touched) atomicWrite(p, lines.join("\n"));
+    }
+    return { dryRun, changes };
+  }
+
   _nextId(name, type) {
     const fullPrefix = this._fullPrefix(name, type);
     const content = readFileSafe(path.join(this.projectDir(name), this._fileFor(type))) || "";
@@ -626,14 +686,17 @@ export class Board {
   addTask(name, type, fields) {
     if (!this.projectExists(name)) throw new Error(`Project "${name}" not found.`);
     const ticketNumber = this._nextId(name, type);
+    const due = normalizeDueDate(fields.dueDate);
+    let description = fields.description || "";
+    if (due.overflow) description = description ? `${description} ${due.overflow}` : due.overflow; // junk due -> description (FBMCPB-10)
     const task = {
       ticketNumber,
       title: fields.title,
-      description: fields.description || "",
+      description,
       status: fields.status || "Todo",
       completionSummary: null,
       createdDate: new Date().toISOString().split("T")[0],
-      dueDate: fields.dueDate || null,
+      dueDate: due.dueDate,
       completionDate: null,
       product: fields.product || null,
       labels: fields.labels || [],
@@ -665,6 +728,10 @@ export class Board {
     if (content == null) throw new Error(`Task ${ticket} not found (no ${file}).`);
 
     const lines = content.split(/\r?\n/);
+    // FBMCPB-11: a duplicated id would make this update ambiguous — refuse.
+    const tRe = new RegExp(`^\\s*- \\[[ xX~\\-]\\]\\s*\\[${escapeRe(ticket)}\\]`);
+    const dupCount = lines.filter((l) => tRe.test(l)).length;
+    if (dupCount > 1) throw new Error(`Ticket ${ticket} appears ${dupCount} times on this board — run repair_duplicate_ids first.`);
     let matched = false;
     let result = null;
     for (let i = 0; i < lines.length; i++) {
@@ -695,7 +762,11 @@ export class Board {
     return this._mutate(name, ticket, (t) => {
       if (fields.title != null) t.title = fields.title;
       if (fields.description != null) t.description = fields.description;
-      if (fields.dueDate !== undefined) t.dueDate = fields.dueDate;
+      if (fields.dueDate !== undefined) {
+        const due = normalizeDueDate(fields.dueDate);
+        if (due.overflow) throw new Error(`Invalid dueDate "${fields.dueDate}" — use YYYY-MM-DD, or null to clear.`);
+        t.dueDate = due.dueDate;
+      }
       if (fields.product !== undefined) t.product = fields.product;
       if (fields.labels != null) t.labels = fields.labels;
       if (fields.linkedIssue !== undefined) t.linkedIssue = fields.linkedIssue;
