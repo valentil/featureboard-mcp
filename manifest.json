@@ -95,6 +95,10 @@
       "description": "Move one or more tickets into a sprint — sets the sprint:<name> label, replacing any existing sprint label. Pass sprint: null to send tickets back to the backlog."
     },
     {
+      "name": "graduate_project",
+      "description": "One-command incubator \\u2192 dedicated-repo graduation (lifecycle \"Option C\"). Copies the project's CODE out to targetPath, EXCLUDING pad files (featurelist/buglist/scratchpad/etc) and junk (node_modules, .git, *.log, *.zip, tmp_*, ...), then repoints codeLocation, sets stage=graduated and gitTargets.codeRepo, and records the move in the scratchpad. The pad STAYS in the boards dir \\u2014 it is only read, never modified or deleted \\u2014 and the target repo additionally gets a read-only snapshot mirror of the pad files under .featureboard/. When commit is on and git is available the copied code + mirror are git-init'd (if needed) and committed; git absence/failure is tolerated as a warning. DRY-RUN BY DEFAULT: apply is false unless you pass apply:true, so the first call returns the plan (source, target, files, skipped) without touching the filesystem. CADSolver was the manual prototype."
+    },
+    {
       "name": "estimate_work",
       "description": "Per-ticket token estimates for all open tickets, derived from the board's own history: a cap:<tokens> label wins, then the median actual spend of Done tickets in the same product, then the board median, then a documented default. Each estimate carries its basis, confidence, spend so far, and a suggested model (model:<name> label or heuristic)."
     },
@@ -112,7 +116,7 @@
     },
     {
       "name": "set_status",
-      "description": "Move a task between Todo / In Progress / Done. When moving to Done you can also record structured completion metadata (model, tokens, additions, deletions) — these are written to the work log and roll up into velocity/metrics."
+      "description": "Move a task between Todo / In Progress / Review / Done. Review sits between In Progress and Done when requireReview is on; approve:true overrides the gate. When moving to Done you can also record structured completion metadata (model, tokens, additions, deletions) — these are written to the work log and roll up into velocity/metrics."
     },
     {
       "name": "decompose_feature",
@@ -120,7 +124,7 @@
     },
     {
       "name": "link_tasks",
-      "description": "Set the linked issue on a task (e.g. link a bug to the feature it affects)."
+      "description": "Relate two tickets. kind \"linked\" (default) sets `ticket`'s linked issue to `linkedIssue` (e.g. link a bug to the feature it affects). kind \"blocks\" makes `linkedIssue` a blocker of `ticket` — the child `ticket` gains `linkedIssue` in its blockedBy list; edges that would close a dependency cycle are rejected."
     },
     {
       "name": "add_attachment",
