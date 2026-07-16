@@ -183,17 +183,30 @@ export function effortOfTask(t) {
   return null;
 }
 
-/** Effort heuristic (FBMCPF-152): explicit label wins; else cap size + keywords. */
+/** Effort heuristic (FBMCPF-152): explicit label > cap-derived size > title
+ *  keywords (description is NOT scanned; free text there shouldn't override
+ *  a title's or cap's signal) > estimate-size fallback. */
 export function suggestEffort(t, estimate) {
   const labeled = effortOfTask(t);
   if (labeled) return { effort: labeled, basis: "effort label" };
-  const text = `${t.title} ${t.description || ""}`;
-  if (/architect|schema|migration|orchestr|protocol|storage format|invariant|parallel/i.test(text) || estimate > 120000) {
-    return { effort: "high", basis: estimate > 120000 ? "large estimate" : "hard keywords" };
+
+  const cap = capOfTask(t);
+  if (cap != null) {
+    if (cap <= 50000) return { effort: "low", basis: "cap size" };
+    if (cap <= 120000) return { effort: "medium", basis: "cap size" };
+    return { effort: "high", basis: "cap size" };
   }
-  if (estimate <= 50000 || /docs|copy|readme|page|label|chip|badge|rename|typo|comment/i.test(text)) {
-    return { effort: "low", basis: estimate <= 50000 ? "small estimate" : "light keywords" };
+
+  const title = t.title || "";
+  if (/architect|schema|migration|orchestr|protocol|storage format|invariant|parallel/i.test(title)) {
+    return { effort: "high", basis: "hard keywords" };
   }
+  if (/docs|copy|readme|page|label|chip|badge|rename|typo|comment/i.test(title)) {
+    return { effort: "low", basis: "light keywords" };
+  }
+
+  if (estimate > 120000) return { effort: "high", basis: "large estimate" };
+  if (estimate <= 50000) return { effort: "low", basis: "small estimate" };
   return { effort: "medium", basis: "default" };
 }
 
@@ -215,8 +228,9 @@ export function rosterModel(t, effort) {
 }
 
 /** Today's slice of the queue with model + effort per ticket (FBMCPF-152).
- *  apply=true writes model:/effort: labels back to the tickets. */
-export function dailyPlan(board, project, { budgetTokens = 5_000_000, sprint = null, apply = false } = {}) {
+ *  apply=true writes model:/effort: labels back to the tickets.
+ *  budgetTokens default 650000: ~ weekly 25M effective ÷ 5 days ÷ ×8 orchestration multiplier. */
+export function dailyPlan(board, project, { budgetTokens = 650_000, sprint = null, apply = false } = {}) {
   const plan = planBudget(board, project, { budgetTokens, days: 1, sprint });
   const tasks = board.listTasks(project, {});
   const byId = Object.fromEntries(tasks.map((t) => [t.ticketNumber, t]));

@@ -74,6 +74,21 @@ test("effort + roster + dailyPlan (FBMCPF-152)", async (t) => {
   assert.equal(suggestEffort({ labels: [], title: "New storage schema migration" }, 60000).effort, "high");
   assert.equal(suggestEffort({ labels: [], title: "fix typo in docs" }, 20000).effort, "low");
   assert.equal(suggestEffort({ labels: [], title: "add feature toggle" }, 80000).effort, "medium");
+  // cap-derived size takes precedence over keyword heuristics, and over the
+  // estimate-size fallback; description text is NOT scanned for keywords
+  // (FBMCPB-13: "badge"/"orchestr" in description used to misfire on effort)
+  assert.equal(
+    suggestEffort({ labels: ["cap:120k"], title: "storage ticket", description: "chain badge rollout" }, 999999).effort,
+    "medium"
+  );
+  assert.equal(
+    suggestEffort({ labels: ["cap:120k"], title: "storage ticket", description: "chain badge rollout" }, 999999).basis,
+    "cap size"
+  );
+  assert.equal(suggestEffort({ labels: ["cap:150k"], title: "misc ticket" }, 1).effort, "high");
+  assert.equal(suggestEffort({ labels: ["cap:40k"], title: "misc ticket" }, 999999).effort, "low");
+  // title keyword still applies when there's no cap label
+  assert.equal(suggestEffort({ labels: [], title: "docs cleanup", description: "orchestrate the release" }, 60000).effort, "low");
   // roster: fable for orchestration, haiku for mechanical docs, label wins
   assert.equal(rosterModel({ labels: ["model:opus"], title: "x" }, "low").model, "opus");
   assert.equal(rosterModel({ labels: [], title: "Orchestration strategy and design review" }, "high").model, "fable");
