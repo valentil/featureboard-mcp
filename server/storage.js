@@ -17,6 +17,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { getProjectConfig } from "./metadata.js";
 
 const FEATURE_FILE = "featurelist.md";
 const BUG_FILE = "buglist.md";
@@ -28,12 +29,13 @@ const INDEX_FILE = "index.json";
 // ---------------------------------------------------------------------------
 
 const LINE_RE =
-  /^\s*(?:(?:-|\d+\.|\(\d+\)|\d+)\s+)?\[([ xXpP\-])\]\s*(?:\[?([A-Z][A-Z0-9\-]*\d+)\]?\s+)?(.*?)(?=\s*\[Created:|\s*Linked to:|\s*$)/;
+  /^\s*(?:(?:-|\d+\.|\(\d+\)|\d+)\s+)?\[([ xXpPrR\-])\]\s*(?:\[?([A-Z][A-Z0-9\-]*\d+)\]?\s+)?(.*?)(?=\s*\[Created:|\s*Linked to:|\s*$)/;
 
 function statusFromChar(ch) {
   const c = ch.toLowerCase();
   if (c === "x") return "Done";
   if (c === "p" || c === "-") return "In Progress";
+  if (c === "r") return "Review";
   return "Todo";
 }
 
@@ -43,6 +45,8 @@ function charFromStatus(status) {
       return "x";
     case "In Progress":
       return "-";
+    case "Review":
+      return "r";
     default:
       return " ";
   }
@@ -248,11 +252,11 @@ function parseImportMarkdown(text) {
     .map((l) => l.trim())
     .filter((l) => l && !/^#{1,6}\s/.test(l))
     .map((l) => {
-      const box = l.match(/\[([ xX~\-])\]/);
+      const box = l.match(/\[([ xX~rR\-])\]/);
       const done = box && /[xX]/.test(box[1]);
       let s = l
         .replace(/^\s*(?:[-*+]|\d+[.)])\s+/, "") // bullet / numbered marker
-        .replace(/^\[[ xX~\-]\]\s*/, "") // leading checkbox
+        .replace(/^\[[ xX~rR\-]\]\s*/, "") // leading checkbox
         .replace(/\*\*/g, "")
         .trim();
       if (!s) return null;
@@ -625,7 +629,7 @@ export class Board {
       if (!content) continue;
       const seen = new Map();
       for (const line of content.split(/\r?\n/)) {
-        const m = line.match(/^\s*- \[[ xX~\-]\]\s*\[([A-Za-z]+-\d+)\]\s*\*\*(.*?)\*\*/);
+        const m = line.match(/^\s*- \[[ xX~rR\-]\]\s*\[([A-Za-z]+-\d+)\]\s*\*\*(.*?)\*\*/);
         if (!m) continue;
         const [, id, title] = m;
         if (seen.has(id)) dupes.push({ ticket: id, file, first: seen.get(id), duplicate: title });
@@ -647,7 +651,7 @@ export class Board {
       const seen = new Set();
       let touched = false;
       for (let i = 0; i < lines.length; i++) {
-        const m = lines[i].match(/^(\s*- \[[ xX~\-]\]\s*)\[([A-Za-z]+-\d+)\]/);
+        const m = lines[i].match(/^(\s*- \[[ xX~rR\-]\]\s*)\[([A-Za-z]+-\d+)\]/);
         if (!m) continue;
         const id = m[2];
         if (!seen.has(id)) { seen.add(id); continue; }
@@ -783,7 +787,7 @@ export class Board {
 
     const lines = content.split(/\r?\n/);
     // FBMCPB-11: a duplicated id would make this update ambiguous — refuse.
-    const tRe = new RegExp(`^\\s*- \\[[ xX~\\-]\\]\\s*\\[${escapeRe(ticket)}\\]`);
+    const tRe = new RegExp(`^\\s*- \\[[ xX~rR\\-]\\]\\s*\\[${escapeRe(ticket)}\\]`);
     const dupCount = lines.filter((l) => tRe.test(l)).length;
     if (dupCount > 1) throw new Error(`Ticket ${ticket} appears ${dupCount} times on this board — run repair_duplicate_ids first.`);
     let matched = false;
@@ -842,8 +846,22 @@ export class Board {
     });
   }
 
-  setStatus(name, ticket, status, completionSummary) {
+  setStatus(name, ticket, status, completionSummary, { approve = false } = {}) {
+    // FBMCPF-134 approval gate: when requireReview is on, a ticket must pass
+    // through "Review" before it can be marked Done (unless approve:true).
+    let requireReview = false;
+    if (status === "Done" && approve !== true) {
+      try {
+        const cfg = getProjectConfig(this, name);
+        requireReview = !!(cfg && cfg.requireReview);
+      } catch {
+        requireReview = false;
+      }
+    }
     return this._mutate(name, ticket, (t) => {
+      if (requireReview && status === "Done" && t.status !== "Review" && approve !== true) {
+        throw new Error('requireReview is on — move the ticket to "Review" first, or pass approve:true to override.');
+      }
       t.status = status;
       if (status === "Done") {
         if (completionSummary) t.completionSummary = completionSummary;
@@ -879,11 +897,13 @@ export class Board {
         total: features.length,
         todo: count(features, "Todo"),
         inProgress: count(features, "In Progress"),
+        inReview: count(features, "Review"),
         done: count(features, "Done"),
       },
       bugs: {
         total: bugs.length,
         open: bugs.filter((t) => t.status !== "Done").length,
+        inReview: count(bugs, "Review"),
         closed: count(bugs, "Done"),
       },
       completedByDate: completionHistogram([...features, ...bugs]),

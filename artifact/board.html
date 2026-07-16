@@ -115,6 +115,7 @@
   .banner.stop { background: #fdecec; border-color: #f2b8b4; color: #8a231c; }
 
   .board { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding: 16px; }
+  .board.four { grid-template-columns: repeat(4, 1fr); }
   .col { background: #eef0f5; border-radius: 12px; padding: 10px; min-height: 120px; }
   .col h2 {
     font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: #6a7288;
@@ -184,6 +185,14 @@
   .card:hover .sprintBtn { opacity: 1; }
   .card .sprintBtn:hover { background: #fdeee6; color: #b3591e; }
   html[data-theme="dark"] .card .sprintBtn:hover { background: #3a2e26; color: #e0a58a; }
+  .card .approve, .card .reject { position: absolute; top: 6px; border: 0; background: transparent; color: #b7bcc9; font-size: 13px; line-height: 1; padding: 2px 5px; border-radius: 6px; cursor: pointer; opacity: 0; }
+  .card .approve { right: 66px; }
+  .card .reject { right: 90px; }
+  .card:hover .approve, .card:hover .reject { opacity: 1; }
+  .card .approve:hover { background: #e6f5ec; color: #2f8f57; }
+  .card .reject:hover { background: #fdeee6; color: #b3591e; }
+  html[data-theme="dark"] .card .approve:hover { background: #26372c; color: #6fbf8f; }
+  html[data-theme="dark"] .card .reject:hover { background: #3a2e26; color: #e0a58a; }
   .card.reorder-target { border-top: 2px solid #4b5bdc; }
   .upnext { display: inline-block; font-size: 10px; font-weight: 700; color: #fff; background: #4b5bdc; border-radius: 5px; padding: 1px 6px; margin-left: 6px; vertical-align: middle; }
   .prio { font-size: 10px; font-weight: 700; color: #6a7288; background: #eef0f5; border-radius: 5px; padding: 1px 5px; }
@@ -909,7 +918,12 @@ function renderMetrics(m) {
   $("#metrics").innerHTML = html;
 }
 
-const COLS = ["Todo", "In Progress", "Done"];
+// FBMCPF-134: show a Review column when the gate is on OR any ticket sits in Review.
+function colsFor() {
+  const hasReview = (state.config && state.config.requireReview) ||
+    (state.tasks || []).some((t) => t.status === "Review");
+  return hasReview ? ["Todo", "In Progress", "Review", "Done"] : ["Todo", "In Progress", "Done"];
+}
 const CAP = 10;
 
 // effective date for a Done ticket: completion, else due, else created
@@ -951,12 +965,13 @@ function sortForColumn(list, col) {
 function renderBoard(tasks) {
   if (state.product) tasks = tasks.filter((t) => t.product === state.product);
   tasks = tasks.filter(inSprint);
-  const byCol = { "Todo": [], "In Progress": [], "Done": [] };
+  const cols = colsFor();
+  const byCol = {};
+  cols.forEach((c) => (byCol[c] = []));
   tasks.forEach((t) => (byCol[t.status] || byCol["Todo"]).push(t));
   const doneTotal = byCol["Done"].length;
   byCol["Done"] = byCol["Done"].filter(inDoneRange);
-  byCol["Todo"] = sortForColumn(byCol["Todo"], "Todo");
-  byCol["In Progress"] = sortForColumn(byCol["In Progress"], "In Progress");
+  cols.forEach((c) => { if (c !== "Done") byCol[c] = sortForColumn(byCol[c], c); });
   $("#rangeInfo").textContent = "showing " + byCol["Done"].length + " of " + doneTotal + " done · " + rangeLabel();
 
   let sprintBar = "";
@@ -983,7 +998,7 @@ function renderBoard(tasks) {
   const hint = state.canWrite
     ? '<div class="hint">Drag cards between columns to change status. Hover a card and click 🏁 to assign a sprint.</div>'
     : '<div class="hint">Read-only — writes are frozen under the current license.</div>';
-  const html = COLS.map((c) => {
+  const html = cols.map((c) => {
     const list = byCol[c];
     const isExp = expanded[c];
     const shown = isExp ? list : list.slice(0, CAP);
@@ -998,7 +1013,7 @@ function renderBoard(tasks) {
     return '<div class="col" data-status="' + c + '" ondragover="allow(event)" ondragleave="unhi(event)" ondrop="drop(event,\'' + c + '\')">' +
       '<h2>' + c + '<span>' + list.length + '</span></h2>' + sub + cards + more + '</div>';
   }).join("");
-  $("#content").innerHTML = sprintBar + hint + '<div class="board">' + html + '</div>';
+  $("#content").innerHTML = sprintBar + hint + '<div class="board' + (cols.length > 3 ? ' four' : '') + '">' + html + '</div>';
 }
 
 function cardHTML(t, opts) {
@@ -1037,8 +1052,12 @@ function cardHTML(t, opts) {
   const split = (canW && t.type === "feature" && t.status !== "Done")
     ? '<button class="split" title="Decompose into subtasks" onclick="openDecompose(event,\'' + t.ticket + '\')">⋔</button>' : "";
   const sprintBtn = canW ? '<button class="sprintBtn" title="Assign sprint" onclick="openSprintAssign(event,\'' + t.ticket + '\')">🏁</button>' : "";
+  const reviewBtns = (canW && opts.col === "Review")
+    ? '<button class="approve" title="Approve → Done" onclick="approveCard(event,\'' + t.ticket + '\')">✓</button>' +
+      '<button class="reject" title="Reject → In Progress" onclick="rejectCard(event,\'' + t.ticket + '\')">↩</button>'
+    : "";
   const next = opts.upNext ? '<span class="upnext">UP NEXT</span>' : "";
-  return '<div class="card" data-ticket="' + t.ticket + '" data-col="' + opts.col + '"' + dragAttrs + '>' + del + split + sprintBtn +
+  return '<div class="card" data-ticket="' + t.ticket + '" data-col="' + opts.col + '"' + dragAttrs + '>' + del + split + sprintBtn + reviewBtns +
     '<div class="top"><span class="tk ' + t.type + '">' + esc(t.ticket) + '</span>' + next + '</div>' +
     '<div class="title">' + esc(t.title) + '</div>' +
     (meta.length ? '<div class="meta">' + meta.join("") + '</div>' : "") + '</div>';
@@ -1151,6 +1170,26 @@ async function deleteCard(e, ticket) {
   if (!confirm("Delete " + ticket + "? This cannot be undone.")) return;
   try { await call("delete_task", { project: state.board, ticket }); toast("Deleted " + ticket); await refresh(true); }
   catch (err) { toast(err.message.slice(0, 120)); }
+}
+
+// FBMCPF-134: human approval gate actions on Review-column cards.
+async function approveCard(e, ticket) {
+  e.stopPropagation();
+  try {
+    await call("set_status", { project: state.board, ticket, status: "Done", approve: true });
+    toast(ticket + " approved → Done");
+    await refresh();
+  } catch (err) { toast(err.message.slice(0, 120)); }
+}
+async function rejectCard(e, ticket) {
+  e.stopPropagation();
+  const comment = (prompt("Reason for rejecting " + ticket + " (optional):") || "").trim();
+  try {
+    await call("set_status", { project: state.board, ticket, status: "In Progress" });
+    await call("append_scratchpad", { project: state.board, text: "[review] " + ticket + " rejected: " + comment });
+    toast(ticket + " rejected → In Progress");
+    await refresh();
+  } catch (err) { toast(err.message.slice(0, 120)); }
 }
 
 /* ---------- brainstorm (FBMCPF-29) ---------- */

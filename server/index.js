@@ -230,7 +230,7 @@ function fullView(t) {
   return trim(rest);
 }
 
-const StatusEnum = z.enum(["Todo", "In Progress", "Done"]);
+const StatusEnum = z.enum(["Todo", "In Progress", "Review", "Done"]);
 
 // projects -----------------------------------------------------------------
 
@@ -732,11 +732,12 @@ server.registerTool(
   {
     title: "Set status",
     description:
-      "Move a task between Todo / In Progress / Done. When moving to Done you can also record structured completion metadata (model, tokens, additions, deletions) — these are written to the work log and roll up into velocity/metrics.",
+      "Move a task between Todo / In Progress / Review / Done. Review sits between In Progress and Done when requireReview is on; approve:true overrides the gate. When moving to Done you can also record structured completion metadata (model, tokens, additions, deletions) — these are written to the work log and roll up into velocity/metrics.",
     inputSchema: {
       project: z.string(),
       ticket: z.string(),
       status: StatusEnum,
+      approve: z.boolean().optional().describe("Override the requireReview gate when moving straight to Done."),
       completionSummary: z.string().optional().describe("Recommended when moving to Done."),
       model: z.string().optional().describe("Model that did the work (Done only)."),
       tokens: z.number().int().optional().describe("Total tokens used (Done only)."),
@@ -747,9 +748,9 @@ server.registerTool(
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  writeTool(({ project, ticket, status, completionSummary, model, tokens, inputTokens, outputTokens, additions, deletions }) => {
+  writeTool(({ project, ticket, status, approve, completionSummary, model, tokens, inputTokens, outputTokens, additions, deletions }) => {
     const board = getBoard();
-    const result = board.setStatus(project, ticket, status, completionSummary);
+    const result = board.setStatus(project, ticket, status, completionSummary, { approve });
     // On completion, log structured metrics so they roll up into velocity.
     if (status === "Done" && (model || tokens != null || additions != null || deletions != null)) {
       meta.logWork(board, project, {
@@ -1079,6 +1080,7 @@ server.registerTool(
       brandWords: z.array(z.string()).optional().describe("Brand / trial words woven into generated media (e.g. product name, taglines, campaign phrases)."),
       brandVoice: z.string().optional().describe("Brand voice/tone for generated media, e.g. 'confident, playful, plain-spoken'."),
       imageTool: z.string().optional().describe("Preferred image-generation tool/connector/skill name for generate_image (e.g. an image MCP or an 'imagegen' skill). If unset, generate_image uses any available image generator, else falls back to SVG."),
+      requireReview: z.boolean().optional().describe("When on, a ticket must pass through Review before it can be marked Done (set_status enforces the gate; approve:true overrides)."),
       stage: z.enum(["incubating", "graduated"]).optional().describe("Project lifecycle stage (FBMCPF-149)."),
       gitTargets: z.object({
         codeRepo: z.object({ path: z.string().optional(), remote: z.string().optional(), branch: z.string().optional() }).optional(),
