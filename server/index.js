@@ -19,6 +19,10 @@ import { predictDueDates } from "./predictive.js";
 import { createSprint, listSprints, assignSprint, sprintOfTask } from "./sprints.js";
 import { graduateProject } from "./graduate.js";
 import { estimateWork, planBudget, suggestModel, dailyPlan } from "./budget.js";
+import { computeWaves } from "./planchain.js";
+import { evalReport } from "./eval.js";
+import { exportBoard, parsePmImport } from "./pmbridge.js";
+import { setRequirements, getRequirements, checkAcceptance } from "./requirements.js";
 import {
   listMedia, saveMedia, getMedia, revertMedia,
   tagMedia, annotateMedia, removeAnnotation, searchMedia,
@@ -102,7 +106,7 @@ const INSTRUCTIONS = `FeatureBoard is your task board for the user's projects. T
 When the user gives you a substantive, multi-step request (build X, fix these bugs, ship a feature):
 1. Pick or create the board. Call list_projects; if nothing fits, create_project.
 2. Break the request down onto the board. Use plan_work once to create the project (if needed) plus the initial features and bugs in a single step. Features are units of new work (FBF-###); bugs are defects (FBB-###).
-3. Step 0: check the packet's gitTargets — code commits and projectpad commits can go to DIFFERENT repos; never assume. Work one ticket at a time. Call next_task to pull the next open item (it honours manual priority). set_status <ticket> "In Progress" BEFORE you start. Call get_work_packet to assemble a focused brief (scope, linked issue, code location, custom prompt, definition of done) and read the files it points to rather than dumping them. For a substantial or code ticket, dispatch it to a fresh sub-agent with that packet so it works in isolated context; do trivial tickets inline. Only you (the orchestrator) write to the board. When finished, set_status "Done" with a one-line completionSummary AND log_work with additions/deletions (and model) so progress is recorded. If git is configured for the project, commit the change per ticket (commit_feature, message referencing the ticket id) before pulling the next. Then pull the next. (The process_next prompt runs this loop for you.)
+3. Step 0: check the packet's gitTargets — code commits and projectpad commits can go to DIFFERENT repos; never assume. Work one ticket at a time. Call next_task to pull the next open item (it honours manual priority). set_status <ticket> "In Progress" BEFORE you start. Call get_work_packet to assemble a focused brief (scope, linked issue, code location, custom prompt, definition of done) and read the files it points to rather than dumping them. For a substantial or code ticket, dispatch it to a fresh sub-agent with that packet so it works in isolated context; do trivial tickets inline. Pick the sub-agent\u2019s model from the ticket\u2019s model: label (or the packet\u2019s suggestedModel): sonnet/haiku tickets may run as PARALLEL sub-agents; opus/fable tickets run SEQUENTIALLY with orchestrator review between. Match rigor to the effort: label \u2014 low: minimal exploration, obvious change, verify, stop; medium: normal loop with tests; high: read adjacent code, protect invariants and back-compat, add tests, self-review the diff. Sub-agents NEVER write the board \u2014 the orchestrator alone sets status, logs work, and commits. Only you (the orchestrator) write to the board. When finished, set_status "Done" with a one-line completionSummary AND log_work with additions/deletions (and model) so progress is recorded. If git is configured for the project, commit the change per ticket (commit_feature, message referencing the ticket id) before pulling the next. Then pull the next. (The process_next prompt runs this loop for you.)
 4. Log new issues as you find them with log_bug, and split anything too big with decompose_feature.
 5. When the user asks how things are going, use get_metrics and list_tasks rather than guessing.
 
@@ -138,6 +142,8 @@ const CORE_TOOLS = new Set([
   "graduate_project",
   // budgeting (FBMCPF-123/124) + daily planning (FBMCPF-152)
   "estimate_work", "plan_budget", "daily_plan",
+  // eval + PM bridge + requirements (FBMCPF-128/143/138)
+  "eval_report", "export_tasks", "set_requirements", "get_requirements", "check_acceptance",
 ]);
 const TOOLSET = (process.env.FEATUREBOARD_TOOLS || "all").toLowerCase();
 const CORE_ONLY = TOOLSET === "core"
@@ -451,7 +457,7 @@ server.registerTool(
     inputSchema: {
       project: z.string(),
       content: z.string().describe("Raw backlog: markdown checklist, CSV (with header), or JSON."),
-      format: z.enum(["auto", "markdown", "csv", "json"]).optional().default("auto"),
+      format: z.enum(["auto", "markdown", "csv", "json", "auto-pm"]).optional().default("auto").describe('"auto-pm" maps Linear/Jira CSV exports (statuses, priorities, labels, refs).'),
       defaultType: z.enum(["feature", "bug"]).optional().default("feature").describe("Type for rows that don't specify one."),
       dryRun: z.boolean().optional().default(false).describe("Parse and return the tasks without creating them."),
     },
@@ -460,7 +466,7 @@ server.registerTool(
   writeTool(({ project, content, format, defaultType, dryRun }) => {
     const board = getBoard();
     if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
-    const parsed = parseImport(content, format);
+    const parsed = format === "auto-pm" ? parsePmImport(content) : parseImport(content, format);
     if (!parsed.length) throw new Error("No tasks found in the provided content.");
     if (dryRun) return { project, dryRun: true, parsed: parsed.length, tasks: parsed };
     const created = parsed.map((t) => {
@@ -497,6 +503,7 @@ server.registerTool(
             priority: z.coerce.number().int().optional(),
             newFile: z.boolean().optional(),
             website: z.string().optional(),
+            dependsOn: z.array(z.number().int().min(0)).optional().describe("Indices into the COMBINED created list (features first, then bugs, in input order) that must finish before this item. Each becomes a blockedBy edge; out-of-range, self, or cycle-closing indices are skipped with a per-item warning."),
           })
         )
         .optional()
@@ -513,6 +520,7 @@ server.registerTool(
             priority: z.coerce.number().int().optional(),
             newFile: z.boolean().optional(),
             website: z.string().optional(),
+            dependsOn: z.array(z.number().int().min(0)).optional().describe("Indices into the COMBINED created list (features first, then bugs, in input order) that must finish before this item. Each becomes a blockedBy edge; out-of-range, self, or cycle-closing indices are skipped with a per-item warning."),
           })
         )
         .optional()
@@ -530,7 +538,42 @@ server.registerTool(
     }
     const createdFeatures = features.map((f) => board.addTask(project, "feature", f));
     const createdBugs = bugs.map((b) => board.addTask(project, "bug", b));
-    return { project, created_project, features: createdFeatures, bugs: createdBugs };
+    // FBMCPF-137: wire dependsOn edges over the COMBINED created list (features
+    // first, then bugs, in input order), then compute execution waves. A bad or
+    // cycle-closing edge is skipped with a per-item warning, never failing the call.
+    const items = [...features, ...bugs];
+    const createdAll = [...createdFeatures, ...createdBugs];
+    const tickets = createdAll.map((t) => t.ticketNumber);
+    const edges = [];
+    const warnings = [];
+    for (let i = 0; i < items.length; i++) {
+      const deps = items[i] && items[i].dependsOn;
+      if (!Array.isArray(deps) || !deps.length) continue;
+      const ticket = tickets[i];
+      const blockers = [];
+      for (const d of deps) {
+        if (!Number.isInteger(d) || d < 0 || d >= tickets.length) {
+          warnings.push(`${ticket}: dependsOn index ${d} is out of range (0..${tickets.length - 1}) \u2014 skipped.`);
+          continue;
+        }
+        if (d === i) {
+          warnings.push(`${ticket}: cannot depend on itself \u2014 skipped.`);
+          continue;
+        }
+        const b = tickets[d];
+        if (!blockers.includes(b)) blockers.push(b);
+      }
+      if (!blockers.length) continue;
+      try {
+        board.updateTask(project, ticket, { blockedBy: blockers });
+        edges.push({ ticket, blockedBy: blockers });
+      } catch (e) {
+        warnings.push(`${ticket}: dependency edge rejected (${e.message}) \u2014 left unblocked.`);
+      }
+    }
+    const executionPlan = { waves: computeWaves(tickets, edges), edges };
+    if (warnings.length) executionPlan.warnings = warnings;
+    return { project, created_project, features: createdFeatures, bugs: createdBugs, executionPlan };
   })
 );
 
@@ -734,6 +777,83 @@ server.registerTool(
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   writeTool(({ project, budgetTokens, sprint, apply }) => dailyPlan(getBoard(), project, { budgetTokens, sprint, apply }))
+);
+
+server.registerTool(
+  "eval_report",
+  {
+    title: "Eval report",
+    description:
+      "Compare board-workflow vs chat-workflow trials using label conventions: experiment:board / experiment:chat marks a ticket's arm, and an optional pair:<id> label ties a board trial to its chat counterpart. Returns every labeled trial (tokens from the work log, additions/deletions, wall-clock days, rework = linked bugs within 7 days of completion), per-arm medians/totals, matched pairs with a token ratio, and a one-line summary.",
+    inputSchema: { project: z.string() },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project }) => evalReport(getBoard(), project))
+);
+
+server.registerTool(
+  "export_tasks",
+  {
+    title: "Export tasks",
+    description:
+      "Export a board's tasks to json, csv, or markdown for use outside FeatureBoard (e.g. sharing with a PM tool). Round-trips through import_tasks. Read-only.",
+    inputSchema: {
+      project: z.string(),
+      format: z.enum(["json", "csv", "markdown"]).optional().default("json"),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project, format }) => ({ project, format, content: exportBoard(getBoard(), project, format) }))
+);
+
+server.registerTool(
+  "set_requirements",
+  {
+    title: "Set ticket requirements",
+    description:
+      "Write a ticket's refined requirements pad (requirements/<TICKET>.md): intent, assumptions, acceptance criteria, and open questions. Overwrites any existing pad. Once set, the ticket's work packet carries these requirements and its definition-of-done becomes the acceptance criteria. Draft the content first (see the refine prompt), then persist it here.",
+    inputSchema: {
+      project: z.string(),
+      ticket: z.string(),
+      intent: z.string().describe("One or two sentences: what this ticket delivers and why."),
+      assumptions: z.array(z.string()).optional().describe("Explicit assumptions the work relies on."),
+      acceptanceCriteria: z.array(z.string()).optional().describe("Testable done-conditions, one per item."),
+      openQuestions: z.array(z.string()).optional().describe("Unresolved questions to raise with the user."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  },
+  writeTool(({ project, ticket, intent, assumptions, acceptanceCriteria, openQuestions }) =>
+    setRequirements(getBoard(), project, ticket, { intent, assumptions, acceptanceCriteria, openQuestions }))
+);
+
+server.registerTool(
+  "get_requirements",
+  {
+    title: "Get ticket requirements",
+    description:
+      "Read a ticket's requirements pad as structured intent / assumptions / acceptance criteria (with done flags) / open questions, plus the raw markdown. Returns null when no pad exists.",
+    inputSchema: { project: z.string(), ticket: z.string() },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project, ticket }) => getRequirements(getBoard(), project, ticket))
+);
+
+server.registerTool(
+  "check_acceptance",
+  {
+    title: "Check an acceptance criterion",
+    description:
+      "Toggle the checkbox on acceptance criterion #index (1-based) of a ticket's requirements pad. Hand-added sections are preserved. done defaults to true.",
+    inputSchema: {
+      project: z.string(),
+      ticket: z.string(),
+      index: z.number().int().min(1).describe("1-based position of the acceptance criterion."),
+      done: z.boolean().optional().describe("Checked (true, default) or unchecked (false)."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  writeTool(({ project, ticket, index, done }) =>
+    checkAcceptance(getBoard(), project, ticket, index, done !== false))
 );
 
 // duplicate-id repair (FBMCPB-11) --------------------------------------------
@@ -3650,7 +3770,7 @@ server.registerPrompt(
             "1. Call next_task to get the top open ticket (honours priority). If none, tell me the queue is clear and stop.\n" +
             "2. set_status the ticket to \"In Progress\".\n" +
             "3. Call get_work_packet for it. Read the files it points to at the code location — do not dump whole files into context.\n" +
-            "4. Do the work. If it's a substantial or code ticket, dispatch it to a fresh sub-agent with the packet so it gets isolated context; do trivial tickets inline. Only you (the orchestrator) write to the board, and work one ticket at a time.\n" +
+            "4. Do the work. If it's a substantial or code ticket, dispatch it to a fresh sub-agent with the packet so it gets isolated context \u2014 at the model from the ticket's model: label (sonnet/haiku may run in parallel; opus/fable sequentially with review), with rigor matched to its effort: label. Do trivial tickets inline. Only you (the orchestrator) write to the board.\n" +
             "5. Verify the change — run it or its tests where relevant.\n" +
             "6. set_status Done with a one-line completionSummary, and log_work with additions/deletions (and the model used).\n" +
             "7. If git is configured for the project, commit the change now — one commit per ticket, message referencing the ticket id (commit_feature or git commit).\n" +
@@ -3928,6 +4048,68 @@ server.registerPrompt(
             "5. Only you (the orchestrator) write to the board. As each sub-agent finishes: verify its work, set_status Done with a completionSummary, log_work with tokens/additions/deletions and the model used, and commit per ticket (commit_feature) when git is configured.\n" +
             "6. Respect cap:<tokens> labels \u2014 wrap up and requeue any ticket about to exceed its cap.\n" +
             "7. When the plan is exhausted or the budget is spent, post a day summary to the scratchpad and report to me.",
+        },
+      },
+    ],
+  })
+);
+
+server.registerPrompt(
+  "plan_goal",
+  {
+    title: "Turn one goal into a chained, parallelizable plan",
+    description:
+      "Decompose a single goal into 3\u201312 dependency-aware tickets, create them with plan_work in one call, then read back the execution waves \u2014 what can run in parallel and what must wait \u2014 and offer to start the first wave.",
+    argsSchema: {
+      project: z.string().optional().describe("Board to plan onto. If omitted, ask or infer."),
+      goal: z.string().optional().describe("The goal to decompose. If omitted, ask me for it."),
+    },
+  },
+  ({ project, goal } = {}) => ({
+    messages: [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text:
+            `Plan a goal into a chained set of tickets${project ? ` on project "${project}"` : ""}.\n\n` +
+            (goal ? `Goal: ${goal}\n\n` : "1. Ask me for the goal if it isn\u2019t clear yet.\n\n") +
+            "Steps:\n" +
+            "1. Restate the goal in one line, then decompose it into 3\u201312 concrete tickets (features for new work, bugs for defects). Give each a short title, a description with the real detail, a product, and a priority. Identify which steps depend on which \u2014 a step that needs another\u2019s output must wait for it.\n" +
+            "2. Call plan_work ONCE with the full features/bugs list. Set each item\u2019s dependsOn to the indices of its prerequisites in the COMBINED created list (features first, then bugs, in the order you list them). Add a cap:<tokens> label per item sized to its expected scope (e.g. cap:60k for a normal ticket, cap:200k for a big one) so the day plan can budget it.\n" +
+            "3. Read the returned executionPlan and report the waves: wave 1 is everything that can start now in PARALLEL, each later wave lists what unblocks once the previous wave is done. Call out the edges (X blocked by Y) and surface any warnings (an out-of-range or cycle-closing dependency is skipped, not fatal \u2014 fix and note it).\n" +
+            "4. Offer to start wave 1 now via the daily-plan dispatch flow: run daily_plan to stamp model:/effort: labels, then dispatch a sub-agent per ticket at its model/effort tier (sonnet/haiku in parallel, opus/fable sequentially). Only advance to the next wave once its blockers are Done. Wait for my go-ahead before dispatching.\n",
+        },
+      },
+    ],
+  })
+);
+
+server.registerPrompt(
+  "refine",
+  {
+    title: "Refine a ticket's requirements",
+    description:
+      "Turn a thin ticket into a crisp requirements pad — intent, assumptions, acceptance criteria, open questions — and persist it with set_requirements.",
+    argsSchema: {
+      project: z.string().optional().describe("Board the ticket lives on. If omitted, ask or infer."),
+      ticket: z.string().optional().describe("Ticket id to refine, e.g. FBF-12."),
+    },
+  },
+  ({ project, ticket } = {}) => ({
+    messages: [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text:
+            `Refine the requirements for ${ticket ? `ticket "${ticket}"` : "a ticket"}${project ? ` on project "${project}"` : ""}, 8090-Refinery style:\n` +
+            "1. Call get_work_packet for the ticket and read its scope, linked issue, and the files it points to at the code location — don't dump whole files.\n" +
+            "2. Call get_requirements to see any existing pad, so you refine rather than clobber.\n" +
+            "3. DRAFT the requirements: Intent (one or two sentences), Assumptions (what you're taking as given), Acceptance criteria (concrete, testable done-conditions), Open questions (genuinely ambiguous or risky items).\n" +
+            "4. If there are real open questions or the scope is ambiguous, present the draft to me and ask before persisting. If it's unambiguous, proceed.\n" +
+            "5. Persist with set_requirements. From then on the ticket's work packet carries these requirements and its definition-of-done becomes the acceptance criteria — keep them tight.\n" +
+            "6. Report the pad path and a one-line summary of what you captured.",
         },
       },
     ],

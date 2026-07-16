@@ -651,7 +651,7 @@ function churnConditionText(c) {
 function churnDirective(c) {
   return CHURN_START + " Autonomous churn is ACTIVE (started " + c.startedDate + "). " +
     "Work the queue continuously and do NOT stop to ask the user questions — when a decision is ambiguous, make the most reasonable assumption, record it in the project scratchpad (append_scratchpad), and keep going. " +
-    "Loop: next_task → set_status In Progress → get_work_packet → do the work → set_status Done with completionSummary → log_work with tokens/additions/deletions. " +
+    "Loop: next_task → set_status In Progress → get_work_packet → do the work → set_status Done with completionSummary → log_work with tokens/additions/deletions.  Dispatch sub-agents per the ticket's model: label (sonnet/haiku parallel, opus/fable sequential) and match rigor to its effort: label; only the orchestrator writes the board." +
     "STOP the churn only when: " + churnConditionText(c) + (c.budget ? ", or total spend in this churn reaches " + fmtTokens(c.budget) + " tokens" : "") + ". " +
     "Token caps: a ticket carrying a cap:<tokens> label (e.g. cap:50k) must not consume more than that; if you are about to exceed it, wrap up cleanly, log_work what was spent, note the overrun in the scratchpad, set the ticket back to Todo, and move to the next ticket. " +
     "When the stop condition is met, write a churn summary to the scratchpad and end the run. " + CHURN_END;
