@@ -20,6 +20,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { resolveGitTargets } from "./metadata.js";
 
 export const GIT_CONFIG_FILE = "git.config.json";
 
@@ -111,15 +112,51 @@ export function commitFeature(board, project, opts = {}, { exec = defaultExec, c
   if (!config.enabled) {
     return { skipped: true, reason: "git integration is disabled for this project (enable it with set_git_config)" };
   }
-  if (!cwd) throw new Error("no code repo path — set the project's codeLocation in project config");
+  // FBMCPF-149: the code and the projectpad can live in different repos. Commit code
+  // in gitTargets.codeRepo.path when set, otherwise fall back to the passed cwd
+  // (codeLocation). Explicit config wins.
+  const targets = resolveGitTargets(board, project);
+  const codeCwd = (targets.codeRepo && targets.codeRepo.path) || cwd;
+  if (!codeCwd) throw new Error("no code repo path — set the project's codeLocation in project config");
   const plan = buildCommitPlan(config, opts);
   const results = [];
   for (const step of plan.steps) {
-    const r = exec(step.args, cwd);
+    const r = exec(step.args, codeCwd);
     results.push({ step: step.label, status: r.status, stdout: (r.stdout || "").trim(), stderr: (r.stderr || "").trim() });
     if (r.status !== 0) {
       return { committed: false, failedAt: step.label, message: plan.message, pushed: false, results };
     }
   }
-  return { committed: true, message: plan.message, pushed: plan.push, results };
+  const out = { committed: true, message: plan.message, pushed: plan.push, codeRepo: codeCwd, results };
+
+  // FBMCPF-149: if the projectpad lives in its OWN git repo (distinct from the code
+  // repo), also stage/commit the board's markdown files there. Best-effort: any
+  // failure is reported as a warning string rather than throwing, so a code commit
+  // is never lost because the pad commit stumbled.
+  const padPath = targets.padRepo && targets.padRepo.path;
+  if (padPath && padPath !== codeCwd) {
+    try {
+      if (fs.existsSync(path.join(padPath, ".git"))) {
+        const projDir = board.projectDir(project);
+        let rel = path.relative(padPath, projDir);
+        if (!rel) rel = ".";
+        const padMsg = `${opts.ticket || "board"}: board update`;
+        const padResults = [];
+        let ok = true;
+        for (const step of [
+          { label: "add", args: ["add", "--", rel] },
+          { label: "commit", args: ["commit", "-m", padMsg] },
+        ]) {
+          const r = exec(step.args, padPath);
+          padResults.push({ step: step.label, status: r.status, stdout: (r.stdout || "").trim(), stderr: (r.stderr || "").trim() });
+          if (r.status !== 0) { ok = false; break; }
+        }
+        out.padCommit = { committed: ok, path: padPath, message: padMsg, results: padResults };
+        if (!ok) out.warning = `projectpad commit in ${padPath} did not complete cleanly (see padCommit.results)`;
+      }
+    } catch (e) {
+      out.warning = `projectpad commit failed: ${e.message}`;
+    }
+  }
+  return out;
 }

@@ -37,7 +37,7 @@ function atomicWrite(p, content) {
 // ---------------------------------------------------------------------------
 
 // FBMCPF-120: "sprints" holds the sprint registry (name/start/end/goal)
-const CONFIG_KEYS = ["products", "codeLocation", "agentModel", "description", "website", "featurePrefix", "bugPrefix", "customPrompt", "brandTitle", "brandSubtitle", "brandWords", "brandVoice", "brandPrimary", "brandAccent", "brandLogo", "brandFont", "imageTool", "sprints"];
+const CONFIG_KEYS = ["products", "codeLocation", "agentModel", "description", "website", "featurePrefix", "bugPrefix", "customPrompt", "brandTitle", "brandSubtitle", "brandWords", "brandVoice", "brandPrimary", "brandAccent", "brandLogo", "brandFont", "imageTool", "sprints", "stage", "gitTargets"];
 
 /** Merged view: managed config overlaid on legacy project_config.json. */
 export function getProjectConfig(board, project) {
@@ -522,6 +522,28 @@ function suggestModelForPacket(t) {
   return t.priority != null && t.priority <= 3 ? "opus" : "sonnet";
 }
 
+/**
+ * FBMCPF-149: resolve a project's git commit destinations. A project has TWO
+ * ledgers that can live in different repos: the code (at codeLocation) and the
+ * projectpad (the board's markdown files, in the boards data dir). Explicit
+ * gitTargets config wins; otherwise we fall back to codeLocation / the project dir.
+ * Returns { stage, codeRepo, padRepo, preflight }.
+ */
+export function resolveGitTargets(board, project) {
+  let cfg = {};
+  try {
+    cfg = getProjectConfig(board, project) || {};
+  } catch {
+    cfg = {};
+  }
+  const stage = cfg.stage || "incubating";
+  const gt = cfg.gitTargets || {};
+  const codeRepo = gt.codeRepo || { path: cfg.codeLocation || null };
+  const padRepo = gt.padRepo || { path: board.projectDir(project), note: "projectpad — the board's markdown files" };
+  const preflight = `stage=${stage} · code commits → ${codeRepo.path || "(none)"} · pad commits → ${padRepo.path || "(none)"}`;
+  return { stage, codeRepo, padRepo, preflight };
+}
+
 export function getWorkPacket(board, project, ticket) {
   const task = board.getTask(project, ticket);
   if (!task) throw new Error(`Ticket ${ticket} not found in "${project}".`);
@@ -578,6 +600,7 @@ export function getWorkPacket(board, project, ticket) {
       website: cfg.website || null,
     },
     filesToRead,
+    gitTargets: resolveGitTargets(board, project),
     scratchpadMentions,
     recentWork,
     suggestedModel: suggestModelForPacket(task),
