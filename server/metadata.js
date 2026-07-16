@@ -36,7 +36,8 @@ function atomicWrite(p, content) {
 // Project config
 // ---------------------------------------------------------------------------
 
-const CONFIG_KEYS = ["products", "codeLocation", "agentModel", "description", "website", "featurePrefix", "bugPrefix", "customPrompt", "brandTitle", "brandSubtitle", "brandWords", "brandVoice", "brandPrimary", "brandAccent", "brandLogo", "brandFont", "imageTool"];
+// FBMCPF-120: "sprints" holds the sprint registry (name/start/end/goal)
+const CONFIG_KEYS = ["products", "codeLocation", "agentModel", "description", "website", "featurePrefix", "bugPrefix", "customPrompt", "brandTitle", "brandSubtitle", "brandWords", "brandVoice", "brandPrimary", "brandAccent", "brandLogo", "brandFont", "imageTool", "sprints"];
 
 /** Merged view: managed config overlaid on legacy project_config.json. */
 export function getProjectConfig(board, project) {
@@ -511,6 +512,16 @@ export function agentMonitor(board, project, opts = {}) {
 
 const PATH_RE = /[A-Za-z]:\\[\\\w.\-]+|\/[\w./\-]+\.\w{1,5}/g;
 
+// FBMCPF-125: local model hint (kept in sync with budget.js suggestModel; no import to avoid a cycle)
+function suggestModelForPacket(t) {
+  for (const l of t.labels || []) { const m = String(l).match(/^model:([a-z0-9._-]+)$/i); if (m) return m[1].toLowerCase(); }
+  if (t.type === "bug") return "sonnet";
+  if (/architect|schema|storage|server|parallel|orchestr|dependenc|refactor|migration|protocol/i.test(`${t.title} ${t.description || ""}`)) return "opus";
+  const light = new Set(["Docs & Packaging", "Website", "Board UI", "Board UX", "Media", "Mail & Marketing"]);
+  if (t.product && light.has(t.product)) return "sonnet";
+  return t.priority != null && t.priority <= 3 ? "opus" : "sonnet";
+}
+
 export function getWorkPacket(board, project, ticket) {
   const task = board.getTask(project, ticket);
   if (!task) throw new Error(`Ticket ${ticket} not found in "${project}".`);
@@ -569,8 +580,9 @@ export function getWorkPacket(board, project, ticket) {
     filesToRead,
     scratchpadMentions,
     recentWork,
+    suggestedModel: suggestModelForPacket(task),
     definitionOfDone,
     closeOut:
-      "When done: set_status Done with a one-line completionSummary, then log_work with additions/deletions (and model). Only the orchestrator writes to the board; work one ticket at a time.",
+      "When done: set_status Done with a one-line completionSummary, then log_work with additions/deletions (and model), and — when git is configured — commit per ticket (commit_feature, message referencing the ticket id). Only the orchestrator writes to the board; work one ticket at a time.",
   };
 }

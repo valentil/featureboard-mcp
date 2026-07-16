@@ -16,6 +16,8 @@ import { Board, parseImport, suggestTestStub, generateTestFromPrompt, bugImpactS
 import * as license from "./license.js";
 import * as meta from "./metadata.js";
 import { predictDueDates } from "./predictive.js";
+import { createSprint, listSprints, assignSprint, sprintOfTask } from "./sprints.js";
+import { estimateWork, planBudget, suggestModel } from "./budget.js";
 import {
   listMedia, saveMedia, getMedia, revertMedia,
   tagMedia, annotateMedia, removeAnnotation, searchMedia,
@@ -99,7 +101,7 @@ const INSTRUCTIONS = `FeatureBoard is your task board for the user's projects. T
 When the user gives you a substantive, multi-step request (build X, fix these bugs, ship a feature):
 1. Pick or create the board. Call list_projects; if nothing fits, create_project.
 2. Break the request down onto the board. Use plan_work once to create the project (if needed) plus the initial features and bugs in a single step. Features are units of new work (FBF-###); bugs are defects (FBB-###).
-3. Work one ticket at a time. Call next_task to pull the next open item (it honours manual priority). set_status <ticket> "In Progress" BEFORE you start. Call get_work_packet to assemble a focused brief (scope, linked issue, code location, custom prompt, definition of done) and read the files it points to rather than dumping them. For a substantial or code ticket, dispatch it to a fresh sub-agent with that packet so it works in isolated context; do trivial tickets inline. Only you (the orchestrator) write to the board. When finished, set_status "Done" with a one-line completionSummary AND log_work with additions/deletions (and model) so progress is recorded. Then pull the next. (The process_next prompt runs this loop for you.)
+3. Work one ticket at a time. Call next_task to pull the next open item (it honours manual priority). set_status <ticket> "In Progress" BEFORE you start. Call get_work_packet to assemble a focused brief (scope, linked issue, code location, custom prompt, definition of done) and read the files it points to rather than dumping them. For a substantial or code ticket, dispatch it to a fresh sub-agent with that packet so it works in isolated context; do trivial tickets inline. Only you (the orchestrator) write to the board. When finished, set_status "Done" with a one-line completionSummary AND log_work with additions/deletions (and model) so progress is recorded. If git is configured for the project, commit the change per ticket (commit_feature, message referencing the ticket id) before pulling the next. Then pull the next. (The process_next prompt runs this loop for you.)
 4. Log new issues as you find them with log_bug, and split anything too big with decompose_feature.
 5. When the user asks how things are going, use get_metrics and list_tasks rather than guessing.
 
@@ -129,6 +131,10 @@ const CORE_TOOLS = new Set([
   "set_usage_type",
   // used by the board UI artifact (keep the panels working in core mode)
   "import_tasks", "get_regressions", "get_test_runs", "append_scratchpad",
+  // sprints (FBMCPF-120)
+  "create_sprint", "list_sprints", "assign_sprint",
+  // budgeting (FBMCPF-123/124)
+  "estimate_work", "plan_budget",
 ]);
 const TOOLSET = (process.env.FEATUREBOARD_TOOLS || "all").toLowerCase();
 const CORE_ONLY = TOOLSET === "core"
@@ -298,6 +304,7 @@ server.registerTool(
       status: StatusEnum.optional(),
       product: z.string().optional(),
       label: z.string().optional(),
+      sprint: z.string().optional().describe('Filter to tickets in this sprint (sprint:<name> label); pass "none" for tickets not in any sprint.'),
       search: z.string().optional(),
       ref: z.string().optional().describe("Filter to tickets carrying this external reference id."),
       limit: z.number().int().min(1).max(500).optional().default(50),
@@ -306,9 +313,16 @@ server.registerTool(
     },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
-  tryTool(({ project, limit, offset, compact, ref, ...filters }) => {
+  tryTool(({ project, limit, offset, compact, ref, sprint, ...filters }) => {
     let all = getBoard().listTasks(project, filters);
     if (ref) all = all.filter((t) => (t.ref || "") === ref);
+    if (sprint) {
+      const want = sprint.toLowerCase();
+      all = all.filter((t) => {
+        const s = (sprintOfTask(t) || "").toLowerCase();
+        return want === "none" ? !s : s === want;
+      });
+    }
     const total = all.length;
     const page = all.slice(offset, offset + limit);
     const tasks = page.map(compact ? compactView : fullView);
@@ -538,7 +552,8 @@ server.registerTool(
     const dueVal = (t) => (t.dueDate ? Date.parse(t.dueDate) || Infinity : Infinity);
     const num = (t) => parseInt((t.ticketNumber || "").replace(/\D+/g, ""), 10) || 0;
     open.sort((a, b) => rank(a) - rank(b) || prio(a) - prio(b) || dueVal(a) - dueVal(b) || num(a) - num(b));
-    return { next: fullView(open[0]), remaining: open.length };
+    const sm = suggestModel(open[0]); // FBMCPF-125: model tiering hint
+    return { next: fullView(open[0]), remaining: open.length, suggestedModel: sm.model, modelBasis: sm.basis };
   })
 );
 
@@ -567,6 +582,120 @@ server.registerTool(
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   writeTool(({ project, ticket, ...fields }) => getBoard().updateTask(project, ticket, fields))
+);
+
+// sprints (FBMCPF-120) -------------------------------------------------------
+server.registerTool(
+  "create_sprint",
+  {
+    title: "Create sprint",
+    description:
+      "Create (or update) a named sprint on a board, with optional start/end dates and a one-line goal. " +
+      "The registry is persisted in the project config; tickets join a sprint via a sprint:<name> label " +
+      "(see assign_sprint), so label-only sprints written by the board UI keep working.",
+    inputSchema: {
+      project: z.string(),
+      name: z.string().describe('Sprint name, e.g. "Sprint 1" or "2026-W29". No ":", ",", "[" or "]".'),
+      start: z.string().optional().describe("YYYY-MM-DD"),
+      end: z.string().optional().describe("YYYY-MM-DD"),
+      goal: z.string().optional().describe("One-line sprint goal."),
+      tickets: z.array(z.string()).optional().describe("Tickets to pull into the sprint right away."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  writeTool(({ project, name, start, end, goal, tickets }) => {
+    const board = getBoard();
+    const created = createSprint(board, project, { name, start, end, goal });
+    const assigned = tickets && tickets.length ? assignSprint(board, project, tickets, created.name) : null;
+    return { created, ...(assigned ? { assigned: assigned.updated } : {}) };
+  })
+);
+
+server.registerTool(
+  "list_sprints",
+  {
+    title: "List sprints",
+    description:
+      "List a board's sprints (config registry plus any label-only sprints) with progress per sprint " +
+      "(total/done/inProgress/todo, complete flag) and the count of open backlog tickets in no sprint.",
+    inputSchema: { project: z.string() },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project }) => listSprints(getBoard(), project))
+);
+
+server.registerTool(
+  "assign_sprint",
+  {
+    title: "Assign sprint",
+    description:
+      "Move one or more tickets into a sprint — sets the sprint:<name> label, replacing any existing sprint label. " +
+      "Pass sprint: null to send tickets back to the backlog.",
+    inputSchema: {
+      project: z.string(),
+      tickets: z.array(z.string()).min(1),
+      sprint: z.string().nullable().describe("Sprint name, or null to clear."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  writeTool(({ project, tickets, sprint }) => assignSprint(getBoard(), project, tickets, sprint))
+);
+
+// estimator + budget planner (FBMCPF-123/124) --------------------------------
+server.registerTool(
+  "estimate_work",
+  {
+    title: "Estimate work",
+    description:
+      "Per-ticket token estimates for all open tickets, derived from the board's own history: a cap:<tokens> label wins, " +
+      "then the median actual spend of Done tickets in the same product, then the board median, then a documented default. " +
+      "Each estimate carries its basis, confidence, spend so far, and a suggested model (model:<name> label or heuristic).",
+    inputSchema: { project: z.string() },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project }) => estimateWork(getBoard(), project))
+);
+
+server.registerTool(
+  "plan_budget",
+  {
+    title: "Plan budget",
+    description:
+      "Map a token budget onto the priority-ordered open queue BEFORE spending it: assigns tickets to days (greedy load-balance), " +
+      "draws the cutline where the budget runs out, and reports the Opus/Sonnet split with blended cost units. " +
+      "Optionally restrict to one sprint. Read-only — apply model choices with update_task labels if you want them stuck.",
+    inputSchema: {
+      project: z.string(),
+      budgetTokens: z.number().int().positive().optional().default(25000000).describe("Weekly token budget (default 25M)."),
+      days: z.number().int().min(1).max(14).optional().default(5),
+      sprint: z.string().optional().describe("Limit the plan to tickets in this sprint."),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project, budgetTokens, days, sprint }) => planBudget(getBoard(), project, { budgetTokens, days, sprint }))
+);
+
+// duplicate-id repair (FBMCPB-11) --------------------------------------------
+server.registerTool(
+  "repair_duplicate_ids",
+  {
+    title: "Repair duplicate ticket ids",
+    description:
+      "Find ticket ids that appear more than once on a board (legacy data can carry collisions like FBF-491 twice), " +
+      "and optionally renumber the later occurrences to fresh ids. Dry-run by default; pass apply:true to write. " +
+      "Note: updates to a duplicated id are refused until the board is repaired.",
+    inputSchema: {
+      project: z.string(),
+      apply: z.boolean().optional().default(false).describe("Renumber later occurrences (writes the board files)."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  writeTool(({ project, apply }) => {
+    const board = getBoard();
+    const duplicates = board.findDuplicateTickets(project);
+    const repair = board.repairDuplicateTickets(project, { dryRun: !apply });
+    return { duplicates, ...repair };
+  })
 );
 
 server.registerTool(
@@ -847,7 +976,12 @@ server.registerTool(
     const board = getBoard();
     const base = board.getMetrics(project);
     const v = meta.velocity(meta.readWorkLog(board, project));
-    return { ...base, velocity: { totals: v.totals, tokensLast7Days: v.tokensLast7Days, tokensLast30Days: v.tokensLast30Days, tokensByDate: v.byDate } };
+    const sp = listSprints(board, project);
+    return {
+      ...base,
+      ...(sp.sprints.length ? { sprints: sp.sprints, backlogOpen: sp.backlogOpen } : {}),
+      velocity: { totals: v.totals, tokensLast7Days: v.tokensLast7Days, tokensLast30Days: v.tokensLast30Days, tokensByDate: v.byDate },
+    };
   })
 );
 
@@ -3436,9 +3570,10 @@ server.registerPrompt(
             "4. Do the work. If it's a substantial or code ticket, dispatch it to a fresh sub-agent with the packet so it gets isolated context; do trivial tickets inline. Only you (the orchestrator) write to the board, and work one ticket at a time.\n" +
             "5. Verify the change — run it or its tests where relevant.\n" +
             "6. set_status Done with a one-line completionSummary, and log_work with additions/deletions (and the model used).\n" +
+            "7. If git is configured for the project, commit the change now — one commit per ticket, message referencing the ticket id (commit_feature or git commit).\n" +
             (continuous === "yes"
-              ? "7. Repeat from step 1 until the queue is empty, but pause to check in with me on anything ambiguous, risky, or destructive before proceeding."
-              : "7. Then stop and report what you did and what's next in the queue."),
+              ? "8. Repeat from step 1 until the queue is empty, but pause to check in with me on anything ambiguous, risky, or destructive before proceeding."
+              : "8. Then stop and report what you did and what's next in the queue."),
         },
       },
     ],
@@ -3731,7 +3866,7 @@ server.registerPrompt(
           text:
             `Make branding consistent${project ? ` for project "${project}"` : ""}.\n\n` +
             "1. Call get_branding to see the current kit and which fields are missing.\n" +
-            "2. Fill the gaps with set_branding — name, tagline, 3–6 brand words, a voice/tone line, primary + accent colors (hex), a font, and a logo ref if there is one. Ask me only for what you can't infer.\n" +
+            "2. Fill the gaps with set_branding — name, tagline, 3\u20136 brand words, a voice/tone line, primary + accent colors (hex), a font, and a logo ref if there is one. Ask me only for what you can't infer.\n" +
             "3. Apply it everywhere going forward: pass get_branding's `instruction` into every media generation; the website already picks up the brand colors/font (set_branding applyToSite, or set_site colors/font); keep campaigns, emails, and contracts on-voice.\n" +
             "4. Confirm the kit back to me in one short summary (name, colors, voice).",
         },
