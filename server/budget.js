@@ -1,0 +1,174 @@
+// Estimator + budget planner (FBMCPF-123/124) and model tiering (FBMCPF-125).
+//
+// estimateWork: per-ticket token estimates for open work, from (in precedence
+// order) a cap:<tokens> label, the median actual spend for Done tickets in the
+// same product, the board-wide median, or a documented default. Deterministic
+// and explainable: every estimate carries its basis.
+//
+// planBudget: walks the priority-ordered open queue and maps the coming week's
+// token spend BEFORE it happens — day assignments, the cutline where the
+// budget runs out, and an Opus/Sonnet split with blended cost units.
+
+import * as meta from "./metadata.js";
+
+export const CAP_LABEL_RE = /^cap:(\d+(?:\.\d+)?)([km]?)$/i;
+export const MODEL_LABEL_RE = /^model:([a-z0-9._-]+)$/i;
+
+const DEFAULT_ESTIMATE = 60000; // tokens, when no history and no cap label
+const MIN_SAMPLES = 3; // actual spends needed before a median is trusted
+// blended relative cost per token (planning weight, not pricing)
+const COST_UNITS = { opus: 5, sonnet: 1, haiku: 0.25 };
+
+export function capOfTask(t) {
+  for (const l of t.labels || []) {
+    const m = String(l).match(CAP_LABEL_RE);
+    if (m) return Math.round(parseFloat(m[1]) * (m[2]?.toLowerCase() === "m" ? 1e6 : m[2]?.toLowerCase() === "k" ? 1e3 : 1));
+  }
+  return null;
+}
+
+export function modelOfTask(t) {
+  for (const l of t.labels || []) {
+    const m = String(l).match(MODEL_LABEL_RE);
+    if (m) return m[1].toLowerCase();
+  }
+  return null;
+}
+
+/** Heuristic model suggestion when no model: label is present (FBMCPF-125). */
+export function suggestModel(t) {
+  if (modelOfTask(t)) return { model: modelOfTask(t), basis: "model label" };
+  if (t.type === "bug") return { model: "sonnet", basis: "bug → sonnet" };
+  const hard = /architect|schema|storage|server|parallel|orchestr|dependenc|refactor|migration|protocol/i;
+  if (hard.test(`${t.title} ${t.description || ""}`)) return { model: "opus", basis: "architecture keywords" };
+  const lightProducts = new Set(["Docs & Packaging", "Website", "Board UI", "Board UX", "Media", "Mail & Marketing"]);
+  if (t.product && lightProducts.has(t.product)) return { model: "sonnet", basis: "light product" };
+  return { model: t.priority != null && t.priority <= 3 ? "opus" : "sonnet", basis: "priority default" };
+}
+
+function median(xs) {
+  if (!xs.length) return null;
+  const s = xs.slice().sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? s[mid] : Math.round((s[mid - 1] + s[mid]) / 2);
+}
+
+function spendByTicket(entries) {
+  const spend = {};
+  for (const e of entries || []) {
+    if (!e.ticket) continue;
+    const n = e.tokens || (e.inputTokens || 0) + (e.outputTokens || 0) || 0;
+    spend[e.ticket] = (spend[e.ticket] || 0) + n;
+  }
+  return spend;
+}
+
+/** Per-ticket estimates for all open (Todo / In Progress) tickets. */
+export function estimateWork(board, project) {
+  const tasks = board.listTasks(project, {});
+  const spend = spendByTicket(meta.readWorkLog(board, project));
+
+  // history: actual spends of Done tickets, grouped by product
+  const byProduct = {};
+  const allActuals = [];
+  for (const t of tasks) {
+    if (t.status !== "Done") continue;
+    const s = spend[t.ticketNumber];
+    if (!s) continue;
+    allActuals.push(s);
+    const p = t.product || "(none)";
+    (byProduct[p] = byProduct[p] || []).push(s);
+  }
+  const boardMedian = median(allActuals);
+
+  const open = tasks.filter((t) => t.status !== "Done");
+  const estimates = open.map((t) => {
+    const cap = capOfTask(t);
+    let estimate, basis, confidence;
+    if (cap != null) {
+      estimate = cap; basis = "cap label"; confidence = "high";
+    } else {
+      const pm = median(byProduct[t.product || "(none)"] || []);
+      if (pm != null && (byProduct[t.product || "(none)"] || []).length >= MIN_SAMPLES) {
+        estimate = pm; basis = `product median (${t.product})`; confidence = "medium";
+      } else if (boardMedian != null && allActuals.length >= MIN_SAMPLES) {
+        estimate = boardMedian; basis = "board median"; confidence = "low";
+      } else {
+        estimate = DEFAULT_ESTIMATE; basis = "default"; confidence = "low";
+      }
+    }
+    const spent = spend[t.ticketNumber] || 0;
+    const m = suggestModel(t);
+    return {
+      ticket: t.ticketNumber, title: t.title, status: t.status,
+      product: t.product || null, priority: t.priority != null ? t.priority : null,
+      estimate, spent, remaining: Math.max(0, estimate - spent),
+      basis, confidence, model: m.model, modelBasis: m.basis,
+    };
+  });
+
+  return {
+    project,
+    openTickets: estimates.length,
+    history: { doneWithSpend: allActuals.length, boardMedian, defaultEstimate: DEFAULT_ESTIMATE },
+    estimates,
+  };
+}
+
+/** Map a token budget onto the priority-ordered queue before spending it. */
+export function planBudget(board, project, { budgetTokens = 25_000_000, days = 5, sprint = null } = {}) {
+  const { estimates, history } = estimateWork(board, project);
+  const sprintRe = /^sprint:(.+)$/i;
+  const tasks = board.listTasks(project, {});
+  const sprintOf = (tk) => {
+    const t = tasks.find((x) => x.ticketNumber === tk);
+    for (const l of (t && t.labels) || []) { const m = String(l).match(sprintRe); if (m) return m[1].trim(); }
+    return null;
+  };
+  let queue = estimates;
+  if (sprint) queue = queue.filter((e) => (sprintOf(e.ticket) || "").toLowerCase() === String(sprint).toLowerCase());
+  // priority order (1 = top, unset last), then older tickets first
+  const num = (tk) => parseInt(String(tk).replace(/\D+/g, ""), 10) || 0;
+  queue = queue.slice().sort((a, b) => {
+    const pa = a.priority == null ? Infinity : a.priority;
+    const pb = b.priority == null ? Infinity : b.priority;
+    return pa - pb || num(a.ticket) - num(b.ticket);
+  });
+
+  const dayLoads = Array.from({ length: Math.max(1, days) }, () => 0);
+  const planned = [], unplanned = [];
+  let cumulative = 0;
+  const byModel = {};
+  let costUnits = 0;
+  for (const e of queue) {
+    if (cumulative + e.remaining <= budgetTokens) {
+      cumulative += e.remaining;
+      // greedy: put the ticket on the lightest day
+      let day = 0;
+      for (let i = 1; i < dayLoads.length; i++) if (dayLoads[i] < dayLoads[day]) day = i;
+      dayLoads[day] += e.remaining;
+      byModel[e.model] = (byModel[e.model] || 0) + e.remaining;
+      costUnits += e.remaining * (COST_UNITS[e.model] ?? 1);
+      planned.push({ ...e, day: day + 1, cumulative });
+    } else {
+      unplanned.push({ ticket: e.ticket, title: e.title, estimate: e.remaining, model: e.model });
+    }
+  }
+  return {
+    project, budgetTokens, days, sprint: sprint || null,
+    history,
+    plan: planned,
+    cutline: unplanned.length
+      ? { after: planned.length ? planned[planned.length - 1].ticket : null, unplannedTickets: unplanned.length, unplannedTokens: unplanned.reduce((a, c) => a + c.estimate, 0) }
+      : null,
+    unplanned,
+    totals: {
+      plannedTickets: planned.length,
+      plannedTokens: cumulative,
+      remainingBudget: budgetTokens - cumulative,
+      byModel,
+      costUnits: Math.round(costUnits),
+      byDay: dayLoads.map((tokens, i) => ({ day: i + 1, tokens })),
+    },
+  };
+}
