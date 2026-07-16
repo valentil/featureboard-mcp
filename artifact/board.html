@@ -29,9 +29,11 @@
     "mcp__FeatureBoard__request_commercial_license",
     "mcp__FeatureBoard__set_usage_type",
     "mcp__FeatureBoard__daily_plan",
-    "mcp__FeatureBoard__append_scratchpad"
+    "mcp__FeatureBoard__append_scratchpad",
+    "mcp__FeatureBoard__plan_budget"
   ],
   "mcpServerNames": [
+    "FeatureBoard",
     "FeatureBoard",
     "FeatureBoard",
     "FeatureBoard",
@@ -150,6 +152,21 @@
   .chip.cap.over { background: #fde8e8; color: #b3261e; }
   html[data-theme="dark"] .chip.cap { background: #263329; color: #a7d3b0; }
   html[data-theme="dark"] .chip.cap.over { background: #3a2e2a; color: #e88f7a; }
+  /* budget panel (FBMCPF-126) */
+  .bpBarTrack { background: #eef0f5; border-radius: 6px; height: 8px; overflow: hidden; margin: 4px 0 8px; }
+  .bpBarFill { display: block; height: 100%; background: #1a7d47; border-radius: 6px; }
+  .bpBarFill.warn { background: #a15c00; }
+  .bpBarFill.over { background: #b3261e; }
+  html[data-theme="dark"] .bpBarTrack { background: #37352f; }
+  html[data-theme="dark"] .bpBarFill { background: #a7d3b0; }
+  html[data-theme="dark"] .bpBarFill.warn { background: #e0c58a; }
+  html[data-theme="dark"] .bpBarFill.over { background: #e88f7a; }
+  .bpDayRow { display: grid; grid-template-columns: 48px 1fr 48px; gap: 6px; align-items: center; font-size: 12px; margin: 2px 0; }
+  .bpDayRow .bpBarTrack { margin: 0; }
+  .bpInputs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  .bpInputs label { flex: 1; min-width: 100px; font-size: 12px; }
+  .bpWarn { color: #b3261e; font-size: 12px; margin: 2px 0; }
+  html[data-theme="dark"] .bpWarn { color: #e88f7a; }
   .empty { color: #9aa1b3; font-size: 12px; text-align: center; padding: 18px 0; }
   .card[draggable="true"] { cursor: grab; }
   .card.dragging { opacity: .45; }
@@ -284,6 +301,7 @@
   <span class="rangeInfo" id="rangeInfo"></span>
   <div class="spacer" style="flex:1"></div>
   <button class="ghost" id="newSprintBtn" title="Create a sprint and optionally pull in the current Todo queue">🏁 New sprint</button>
+  <button class="ghost" id="budgetBtn" title="Week plan, burnup vs budget, model split">💰 Budget</button>
   <button class="ghost" id="dailyPlanBtn" title="Plan today: model + effort per ticket, then dispatch sub-agents">📅 Plan</button>
   <button class="ghost" id="churnBtn" title="Autonomous churn: work without stopping for questions until a condition is met, with token budgets">🔄 Churn</button>
   <button class="ghost" id="brainstormBtn" title="Bulk-add brainstormed features">💡 Brainstorm</button>
@@ -772,6 +790,84 @@ async function queueDispatch() {
     closeModal();
     toast('Plan staged \u2014 say \u201crun the daily plan\u201d in chat to start the sub-agents');
   } catch (e) { toast(String(e.message).slice(0, 120)); }
+}
+
+/* ---------- budget panel (FBMCPF-126): week plan, burnup vs budget, model split ---------- */
+let _bp = null;
+async function openBudget() {
+  showModal(
+    '<h3>\ud83d\udcb0 Budget \u2014 ' + esc(state.board) + '</h3>' +
+    '<div class="bpInputs">' +
+      '<label>Weekly budget<input id="bpBudget" type="text" value="25m"></label>' +
+      '<label>Orchestration \u00d7<input id="bpMult" type="number" value="8" min="1" step="0.5"></label>' +
+      '<label>Days<input id="bpDays" type="number" value="5" min="1" max="14"></label>' +
+    '</div>' +
+    '<div id="bpBody" style="max-height:50vh;overflow:auto"><span class="hint">Planning\u2026</span></div>' +
+    '<div class="actions"><button class="ghost" onclick="closeModal()">Close</button>' +
+    '<button class="primary" onclick="recalcBudget()">\ud83d\udd04 Recalc</button></div>'
+  );
+  await recalcBudget();
+}
+async function recalcBudget() {
+  const el = document.getElementById("bpBody");
+  const budgetEl = document.getElementById("bpBudget"), multEl = document.getElementById("bpMult"), daysEl = document.getElementById("bpDays");
+  const budgetStr = (budgetEl && budgetEl.value || "25m").trim();
+  const multiplier = parseFloat(multEl && multEl.value) || 8;
+  const days = parseInt(daysEl && daysEl.value, 10) || 5;
+  const budget = parseCap("cap:" + budgetStr);
+  if (budget == null) { if (el) el.innerHTML = '<span class="hint">Enter a budget like 25m, 650k, or a plain number of tokens.</span>'; return; }
+  if (el) el.innerHTML = '<span class="hint">Planning\u2026</span>';
+  try {
+    _bp = await call("plan_budget", { project: state.board, budgetTokens: Math.round(budget / multiplier), days });
+    renderBudget(budget, multiplier);
+  } catch (e) {
+    if (el) el.innerHTML = '<span class="hint">' + esc(String(e.message).slice(0, 160)) + ' \u2014 plan_budget needs the 0.4.0+ server (repack + restart Claude Desktop).</span>';
+  }
+}
+function renderBudget(budget, multiplier) {
+  const el = document.getElementById("bpBody");
+  if (!el || !_bp) return;
+  const t = _bp.totals || {};
+  const effective = (t.plannedTokens || 0) * multiplier;
+  const byM = Object.keys(t.byModel || {}).map((m) => esc(m) + ' \u00d7' + fmtTokens(t.byModel[m]) + ' logged').join(" \u00b7 ") || "\u2014";
+  const cut = _bp.cutline
+    ? '<div class="hint">\u2702 Cutline: ' + _bp.cutline.unplannedTickets + ' ticket(s) beyond this week\u2019s budget (' + fmtTokens(_bp.cutline.unplannedTokens) + ' logged over).</div>'
+    : "";
+
+  // burnup: actual spend this week (Monday-to-now) from the work log, logged-basis \u00d7 multiplier
+  const [mon] = weekBounds(today());
+  let spentLogged = 0;
+  (state.workLog || []).forEach((e) => { if (e.date && e.date >= mon) spentLogged += e.tokens || ((e.inputTokens || 0) + (e.outputTokens || 0)) || 0; });
+  const spentEff = spentLogged * multiplier;
+  const pct = budget > 0 ? Math.min(100, (spentEff / budget) * 100) : 0;
+  const barClass = spentEff >= budget ? "over" : (spentEff >= budget * 0.8 ? "warn" : "");
+  const burnup =
+    '<div class="hint">Spent this week: ' + fmtTokens(spentEff) + ' of ' + fmtTokens(budget) + ' budget (' + Math.round(pct) + '%, effective)</div>' +
+    '<div class="bpBarTrack"><span class="bpBarFill ' + barClass + '" style="width:' + pct + '%"></span></div>';
+
+  const byDay = t.byDay || [];
+  const byDayMax = Math.max(1, ...byDay.map((d) => d.tokens || 0));
+  const dayRows = byDay.map((d) =>
+    '<div class="bpDayRow"><span>Day ' + d.day + '</span>' +
+    '<span class="bpBarTrack"><span class="bpBarFill" style="width:' + Math.round(((d.tokens || 0) / byDayMax) * 100) + '%"></span></span>' +
+    '<span class="rangeInfo">' + fmtTokens(d.tokens || 0) + '</span></div>'
+  ).join("");
+
+  const rows = (_bp.plan || []).map((r) =>
+    '<div class="dpRow"><b>' + esc(r.ticket) + '</b><span title="' + esc(r.basis + ' \u00b7 day ' + r.day) + '">' + esc(r.title.slice(0, 60)) + '</span>' +
+    '<span class="chip model">\ud83e\udd16 ' + esc(r.model) + '</span>' +
+    '<span class="rangeInfo">day ' + r.day + '</span>' +
+    '<span class="rangeInfo">' + fmtTokens(r.remaining) + '</span></div>'
+  ).join("") || '<span class="hint">Queue is clear \u2014 nothing to plan.</span>';
+
+  const overCap = state.tasks.filter((tk) => tk.status !== "Done" && capOf(tk) != null && spentOn(tk.ticket) >= capOf(tk));
+  const overCapHtml = overCap.length
+    ? '<div class="bpWarn">' + overCap.map((tk) => '\u26a0 ' + esc(tk.ticket) + ' over cap').join('<br>') + '</div>'
+    : "";
+
+  el.innerHTML =
+    '<div class="hint">' + (t.plannedTickets || 0) + ' tickets planned \u00b7 ' + fmtTokens(t.plannedTokens || 0) + ' logged \u00d7' + multiplier + ' = ' + fmtTokens(effective) + ' effective \u00b7 ' + byM + '</div>' +
+    burnup + cut + overCapHtml + dayRows + rows;
 }
 
 // Auto-refresh: on tab/window focus regain and a gentle background poll, so the
@@ -1496,6 +1592,7 @@ $("#sprintFilter").addEventListener("change", (e) => {
   renderBoard(state.tasks);
 });
 $("#newSprintBtn").addEventListener("click", openNewSprint);
+$("#budgetBtn").addEventListener("click", openBudget);
 $("#dailyPlanBtn").addEventListener("click", openDailyPlan);
 $("#churnBtn").addEventListener("click", openChurn);
 $("#addBtn").addEventListener("click", openAdd);
