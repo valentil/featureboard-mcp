@@ -15,6 +15,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { getRequirements } from "./requirements.js";
+import { decisionsForTicket } from "./decisions.js";
+import { handoffsFor } from "./handoffs.js";
 
 const WORK_LOG = "agent_work_log.md";
 const LEGACY_CONFIG = "project_config.json";
@@ -38,7 +40,7 @@ function atomicWrite(p, content) {
 // ---------------------------------------------------------------------------
 
 // FBMCPF-120: "sprints" holds the sprint registry (name/start/end/goal)
-const CONFIG_KEYS = ["products", "codeLocation", "agentModel", "description", "website", "featurePrefix", "bugPrefix", "customPrompt", "brandTitle", "brandSubtitle", "brandWords", "brandVoice", "brandPrimary", "brandAccent", "brandLogo", "brandFont", "imageTool", "sprints", "stage", "gitTargets", "requireReview"];
+const CONFIG_KEYS = ["products", "codeLocation", "agentModel", "description", "website", "featurePrefix", "bugPrefix", "customPrompt", "brandTitle", "brandSubtitle", "brandWords", "brandVoice", "brandPrimary", "brandAccent", "brandLogo", "brandFont", "imageTool", "sprints", "stage", "gitTargets", "requireReview", "slackWebhook", "slackEvents"];
 
 /** Merged view: managed config overlaid on legacy project_config.json. */
 export function getProjectConfig(board, project) {
@@ -626,5 +628,12 @@ export function getWorkPacket(board, project, ticket) {
       "When done: set_status Done with a one-line completionSummary, then log_work with additions/deletions (and model), and — when git is configured — commit per ticket (commit_feature, message referencing the ticket id). Only the orchestrator writes to the board; work one ticket at a time.",
   };
   if (requirements) packet.requirements = requirements;
+  // FBMCPF-139/144: relevant ADRs + predecessor handoffs (only when non-empty)
+  try {
+    const decisions = decisionsForTicket(board, project, task.ticketNumber);
+    if (decisions.length) packet.decisions = decisions;
+    const handoffs = handoffsFor(board, project, task.ticketNumber);
+    if (handoffs.length) packet.handoffs = handoffs;
+  } catch {}
   return packet;
 }

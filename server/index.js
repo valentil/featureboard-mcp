@@ -23,6 +23,9 @@ import { computeWaves } from "./planchain.js";
 import { evalReport } from "./eval.js";
 import { exportBoard, parsePmImport } from "./pmbridge.js";
 import { setRequirements, getRequirements, checkAcceptance } from "./requirements.js";
+import { notifySlack, notifyTicketEvent } from "./slack.js";
+import { addDecision, listDecisions, decisionsForTicket } from "./decisions.js";
+import { writeHandoff } from "./handoffs.js";
 import {
   listMedia, saveMedia, getMedia, revertMedia,
   tagMedia, annotateMedia, removeAnnotation, searchMedia,
@@ -144,6 +147,8 @@ const CORE_TOOLS = new Set([
   "estimate_work", "plan_budget", "daily_plan",
   // eval + PM bridge + requirements (FBMCPF-128/143/138)
   "eval_report", "export_tasks", "set_requirements", "get_requirements", "check_acceptance",
+  // decisions + handoffs (FBMCPF-139/144)
+  "add_decision", "list_decisions", "set_handoff",
 ]);
 const TOOLSET = (process.env.FEATUREBOARD_TOOLS || "all").toLowerCase();
 const CORE_ONLY = TOOLSET === "core"
@@ -770,7 +775,7 @@ server.registerTool(
       "Returns dispatch groups: sonnet/haiku tickets safe to run as parallel sub-agents, opus/fable sequential. Pair with the daily_plan prompt to execute.",
     inputSchema: {
       project: z.string(),
-      budgetTokens: z.number().int().positive().optional().default(5000000).describe("Today's logged-token budget (default 5M)."),
+      budgetTokens: z.number().int().positive().optional().default(650000).describe("Today's logged-token budget (default 650k; ~weekly 25M effective \u00f7 5 days \u00f7 \u00d78 orchestration multiplier)."),
       sprint: z.string().optional().describe("Limit to one sprint."),
       apply: z.boolean().optional().default(false).describe("Write model:/effort: labels to the planned tickets."),
     },
@@ -856,6 +861,74 @@ server.registerTool(
     checkAcceptance(getBoard(), project, ticket, index, done !== false))
 );
 
+server.registerTool(
+  "notify_slack",
+  {
+    title: "Notify Slack",
+    description:
+      "Post a message to THIS project's user-configured Slack incoming webhook. This is deliberate outbound egress: the board is otherwise local-only, and this sends to the https://hooks.slack.com/... URL the user set in project config (slackWebhook) — nowhere else. No-ops with sent:false when Slack is unconfigured or the event isn't in the project's slackEvents allow-list; failures return a warning and never throw.",
+    inputSchema: {
+      project: z.string(),
+      text: z.string().describe("Message to post (Slack mrkdwn)."),
+      event: z.enum(["done", "review", "summary"]).optional().default("summary").describe("Event class; must be in the project's slackEvents to actually send."),
+    },
+    annotations: { openWorldHint: true, readOnlyHint: false, destructiveHint: false },
+  },
+  tryTool(({ project, text, event }) => notifySlack(getBoard(), project, { text, event }))
+);
+
+server.registerTool(
+  "add_decision",
+  {
+    title: "Add an architecture decision record",
+    description:
+      "Append a new ADR to a project's decision log (decisions.md): context, decision, consequences, and any tickets it relates to. Auto-numbers ADR-<n>. Append-only — never rewrites prior ADRs. Relevant ADRs surface automatically in ticket work packets.",
+    inputSchema: {
+      project: z.string(),
+      title: z.string().describe("Short title for the decision."),
+      context: z.string().optional().describe("What prompted this decision."),
+      decision: z.string().describe("The choice that was made."),
+      consequences: z.string().optional().describe("Tradeoffs / follow-on effects."),
+      tickets: z.array(z.string()).optional().describe("Ticket ids this decision relates to."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  writeTool(({ project, title, context, decision, consequences, tickets }) =>
+    addDecision(getBoard(), project, { title, context, decision, consequences, tickets }))
+);
+
+server.registerTool(
+  "list_decisions",
+  {
+    title: "List architecture decision records",
+    description:
+      "Read a project's ADR log as structured entries: id, title, date, context, decision, consequences, tickets. Pass ticket to filter to decisions relevant to that ticket.",
+    inputSchema: {
+      project: z.string(),
+      ticket: z.string().optional().describe("Filter to decisions relevant to this ticket id."),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project, ticket }) =>
+    ticket ? decisionsForTicket(getBoard(), project, ticket) : listDecisions(getBoard(), project))
+);
+
+server.registerTool(
+  "set_handoff",
+  {
+    title: "Set ticket handoff note",
+    description:
+      "Write a ticket's handoff note (handoffs/<TICKET>.md): free-form markdown for whatever a successor ticket needs to know. Overwrites any existing note. Surfaces automatically in the work packets of tickets blockedBy this one; read it via get_work_packet.",
+    inputSchema: {
+      project: z.string(),
+      ticket: z.string(),
+      note: z.string().describe("Free-form markdown handoff note for successor tickets."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  },
+  writeTool(({ project, ticket, note }) => writeHandoff(getBoard(), project, ticket, note))
+);
+
 // duplicate-id repair (FBMCPB-11) --------------------------------------------
 server.registerTool(
   "repair_duplicate_ids",
@@ -897,12 +970,21 @@ server.registerTool(
       outputTokens: z.number().int().optional(),
       additions: z.number().int().optional().describe("Lines added (Done only)."),
       deletions: z.number().int().optional().describe("Lines deleted (Done only)."),
+      handoff: z.string().optional().describe("Handoff note for successor tickets, written to handoffs/<TICKET>.md (Done only)."),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  writeTool(({ project, ticket, status, approve, completionSummary, model, tokens, inputTokens, outputTokens, additions, deletions }) => {
+  writeTool(({ project, ticket, status, approve, completionSummary, model, tokens, inputTokens, outputTokens, additions, deletions, handoff }) => {
     const board = getBoard();
     const result = board.setStatus(project, ticket, status, completionSummary, { approve });
+    if (status === "Done" && handoff) writeHandoff(board, project, ticket, handoff); // FBMCPF-144
+    // FBMCPF-155: non-blocking Slack notification on Done/Review (never throws).
+    if (status === "Done" || status === "Review") {
+      try {
+        const t = board.getTask(project, ticket);
+        notifyTicketEvent(board, project, status === "Done" ? "done" : "review", t).catch(() => {});
+      } catch {}
+    }
     // On completion, log structured metrics so they roll up into velocity.
     if (status === "Done" && (model || tokens != null || additions != null || deletions != null)) {
       meta.logWork(board, project, {
@@ -1232,7 +1314,9 @@ server.registerTool(
       brandWords: z.array(z.string()).optional().describe("Brand / trial words woven into generated media (e.g. product name, taglines, campaign phrases)."),
       brandVoice: z.string().optional().describe("Brand voice/tone for generated media, e.g. 'confident, playful, plain-spoken'."),
       imageTool: z.string().optional().describe("Preferred image-generation tool/connector/skill name for generate_image (e.g. an image MCP or an 'imagegen' skill). If unset, generate_image uses any available image generator, else falls back to SVG."),
-      requireReview: z.boolean().optional().describe("When on, a ticket must pass through Review before it can be marked Done (set_status enforces the gate; approve:true overrides)."),
+      requireReview: z.boolean().optional(),
+      slackWebhook: z.string().url().optional().nullable().describe("Project's https://hooks.slack.com/... webhook; null clears. Opt-in egress."),
+      slackEvents: z.array(z.enum(["done", "review", "summary"])).optional().describe("Which events may post to Slack (default all three).").describe("When on, a ticket must pass through Review before it can be marked Done (set_status enforces the gate; approve:true overrides)."),
       stage: z.enum(["incubating", "graduated"]).optional().describe("Project lifecycle stage (FBMCPF-149)."),
       gitTargets: z.object({
         codeRepo: z.object({ path: z.string().optional(), remote: z.string().optional(), branch: z.string().optional() }).optional(),
