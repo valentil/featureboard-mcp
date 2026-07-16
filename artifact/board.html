@@ -1,4 +1,61 @@
 <!doctype html>
+<script type="application/json" id="cowork-artifact-meta">
+{
+  "name": "Featureboard Mcp Board",
+  "schemaVersion": 1,
+  "description": "The FeatureBoard plugin's own full board UI (artifact/board.html, shipped in the MCP), rendered as a live Cowork artifact. Dark/light theme, add/edit/decompose/status controls, sprints (create, label, filter, assign), churn mode (autonomous run-until-condition directives injected into work packets), per-ticket token caps with live spend, analytics, scratchpad, licensing — all wired to the FeatureBoard MCP via callMcpTool.",
+  "mcpTools": [
+    "mcp__FeatureBoard__list_projects",
+    "mcp__FeatureBoard__list_tasks",
+    "mcp__FeatureBoard__get_metrics",
+    "mcp__FeatureBoard__get_project_config",
+    "mcp__FeatureBoard__set_project_config",
+    "mcp__FeatureBoard__set_status",
+    "mcp__FeatureBoard__update_task",
+    "mcp__FeatureBoard__delete_task",
+    "mcp__FeatureBoard__add_feature",
+    "mcp__FeatureBoard__log_bug",
+    "mcp__FeatureBoard__add_features_bulk",
+    "mcp__FeatureBoard__decompose_feature",
+    "mcp__FeatureBoard__import_tasks",
+    "mcp__FeatureBoard__get_scratchpad",
+    "mcp__FeatureBoard__set_scratchpad",
+    "mcp__FeatureBoard__get_work_log",
+    "mcp__FeatureBoard__get_health",
+    "mcp__FeatureBoard__get_regressions",
+    "mcp__FeatureBoard__get_test_runs",
+    "mcp__FeatureBoard__license_status",
+    "mcp__FeatureBoard__activate_license",
+    "mcp__FeatureBoard__request_commercial_license",
+    "mcp__FeatureBoard__set_usage_type"
+  ],
+  "mcpServerNames": [
+    "FeatureBoard",
+    "FeatureBoard",
+    "FeatureBoard",
+    "FeatureBoard",
+    "FeatureBoard",
+    "FeatureBoard",
+    "FeatureBoard",
+    "FeatureBoard",
+    "FeatureBoard",
+    "FeatureBoard",
+    "FeatureBoard",
+    "FeatureBoard",
+    "FeatureBoard",
+    "FeatureBoard",
+    "FeatureBoard",
+    "FeatureBoard",
+    "FeatureBoard",
+    "FeatureBoard",
+    "FeatureBoard",
+    "FeatureBoard",
+    "FeatureBoard",
+    "FeatureBoard",
+    "FeatureBoard"
+  ]
+}
+</script>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
@@ -73,6 +130,12 @@
   .chip.prod { background: #edf7ee; color: #2f7d43; }
   .chip.att { background: #eef1fb; color: #4b5bdc; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   html[data-theme="dark"] .chip.att { background: #2b2d3a; color: #b7bdf0; }
+  .chip.sprint { background: #fdeee6; color: #b3591e; font-weight: 600; }
+  html[data-theme="dark"] .chip.sprint { background: #3a2e26; color: #e0a58a; }
+  .chip.cap { background: #eaf6ef; color: #1a7d47; font-weight: 600; }
+  .chip.cap.over { background: #fde8e8; color: #b3261e; }
+  html[data-theme="dark"] .chip.cap { background: #263329; color: #a7d3b0; }
+  html[data-theme="dark"] .chip.cap.over { background: #3a2e2a; color: #e88f7a; }
   .empty { color: #9aa1b3; font-size: 12px; text-align: center; padding: 18px 0; }
   .card[draggable="true"] { cursor: grab; }
   .card.dragging { opacity: .45; }
@@ -84,6 +147,10 @@
   .card:hover .split { opacity: 1; }
   .card .split:hover { background: #e8ecfd; color: #384bcc; }
   html[data-theme="dark"] .card .split:hover { background: #2f2937; color: #c3a7e0; }
+  .card .sprintBtn { position: absolute; top: 6px; right: 46px; border: 0; background: transparent; color: #b7bcc9; font-size: 12px; line-height: 1; padding: 2px 5px; border-radius: 6px; cursor: pointer; opacity: 0; }
+  .card:hover .sprintBtn { opacity: 1; }
+  .card .sprintBtn:hover { background: #fdeee6; color: #b3591e; }
+  html[data-theme="dark"] .card .sprintBtn:hover { background: #3a2e26; color: #e0a58a; }
   .card.reorder-target { border-top: 2px solid #4b5bdc; }
   .upnext { display: inline-block; font-size: 10px; font-weight: 700; color: #fff; background: #4b5bdc; border-radius: 5px; padding: 1px 6px; margin-left: 6px; vertical-align: middle; }
   .prio { font-size: 10px; font-weight: 700; color: #6a7288; background: #eef0f5; border-radius: 5px; padding: 1px 5px; }
@@ -94,6 +161,20 @@
   html[data-theme="dark"] .card.reorder-target { border-top-color: #d97757; }
   .col.over { outline: 2px dashed #4b5bdc; outline-offset: -2px; background: #e7eaf6; }
   .hint { color: #9aa1b3; font-size: 11px; margin: 2px 6px 8px; }
+  .sprintbar {
+    margin: 10px 16px -6px; padding: 8px 12px; border-radius: 10px; font-size: 12px;
+    background: #fdeee6; border: 1px solid #f2cdb4; color: #8a4a1e;
+  }
+  html[data-theme="dark"] .sprintbar { background: #3a2e26; border-color: #4a3a2e; color: #e0a58a; }
+  .churnbar {
+    margin: 10px 16px -6px; padding: 8px 12px; border-radius: 10px; font-size: 12px;
+    background: #eef1fb; border: 1px solid #c9d2f2; color: #33418f;
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  }
+  .churnbar.met { background: #e5f5ec; border-color: #b9e2c9; color: #1a7d47; }
+  .churnbar button { padding: 3px 9px; font-size: 11px; }
+  html[data-theme="dark"] .churnbar { background: #2b2d3a; border-color: #3d4152; color: #b7bdf0; }
+  html[data-theme="dark"] .churnbar.met { background: #263329; border-color: #35473a; color: #a7d3b0; }
 
   .overlay {
     position: fixed; inset: 0; background: rgba(20,26,45,.45); display: none;
@@ -167,6 +248,7 @@
     <button data-type="bug">Bugs</button>
   </div>
   <select id="productFilter" title="Filter by product"><option value="">All products</option></select>
+  <select id="sprintFilter" title="Filter by sprint"><option value="">All sprints</option></select>
   <div class="spacer"></div>
   <div class="metrics" id="metrics"></div>
   <span class="badge" id="healthBadge" style="display:none"></span>
@@ -187,6 +269,8 @@
   <button class="ghost" id="rangeToday">Today</button>
   <span class="rangeInfo" id="rangeInfo"></span>
   <div class="spacer" style="flex:1"></div>
+  <button class="ghost" id="newSprintBtn" title="Create a sprint and optionally pull in the current Todo queue">🏁 New sprint</button>
+  <button class="ghost" id="churnBtn" title="Autonomous churn: work without stopping for questions until a condition is met, with token budgets">🔄 Churn</button>
   <button class="ghost" id="brainstormBtn" title="Bulk-add brainstormed features">💡 Brainstorm</button>
   <button class="ghost" id="importBtn" title="Import tasks from markdown / CSV / JSON">⬇ Import</button>
   <button class="ghost" id="linksBtn" title="Linked issues & epics">🔗 Links</button>
@@ -214,7 +298,8 @@ const today = () => new Date().toISOString().slice(0, 10);
 let state = {
   board: store.get("board", null), type: store.get("type", "all"),
   range: store.get("range", "week"), refDate: store.get("refDate", today()),
-  product: store.get("product", ""), license: null, canWrite: true, tasks: [],
+  product: store.get("product", ""), sprint: store.get("sprint", ""),
+  license: null, canWrite: true, tasks: [], workLog: [], config: null,
 };
 const expanded = {}; // column -> show-all toggle
 
@@ -306,17 +391,21 @@ async function refresh(silent) {
   _refreshing = true;
   if (!silent) $("#content").innerHTML = '<div class="loading">Loading ' + state.board + '…</div>';
   try {
-    const [tasks, metrics, health, cfg] = await Promise.all([
+    const [tasks, metrics, health, cfg, wl] = await Promise.all([
       loadTasks(state.board, state.type),
       call("get_metrics", { project: state.board }).catch(() => null),
       call("get_health", { project: state.board }).catch(() => null),
       call("get_project_config", { project: state.board }).catch(() => null),
+      call("get_work_log", { project: state.board, limit: 500 }).catch(() => null),
     ]);
     state.tasks = tasks;
+    state.workLog = (wl && wl.entries) || [];
+    state.config = cfg;
     applyBranding(cfg);
     renderMetrics(metrics);
     renderHealth(health);
     populateProducts(tasks);
+    populateSprints(tasks);
     renderBoard(state.tasks);
   } finally { _refreshing = false; }
 }
@@ -343,6 +432,274 @@ function populateProducts(tasks) {
   const sel = $("#productFilter");
   sel.innerHTML = opts.join("");
   if (![...set].includes(cur)) { state.product = ""; sel.value = ""; }
+}
+
+/* ---------- sprints (FBMCPF-119) ----------
+   A sprint is a `sprint:<name>` label on the ticket — readable by any client and
+   round-trips through the existing update_task/labels API (no server change).
+   Optional start/end dates for a sprint live in localStorage per board. */
+const SPRINT_RE = /^sprint:(.+)$/i;
+function sprintOf(t) {
+  for (const l of (t.labels || [])) { const m = String(l).match(SPRINT_RE); if (m) return m[1].trim(); }
+  return null;
+}
+function sprintReg() { return store.get("sprints_" + state.board, []); } // [{name,start,end}]
+function saveSprintReg(list) { store.set("sprints_" + state.board, list); }
+function sprintMeta(name) { return sprintReg().find((s) => s.name === name) || null; }
+function allSprints(tasks) {
+  const names = new Set(sprintReg().map((s) => s.name));
+  (tasks || []).forEach((t) => { const s = sprintOf(t); if (s) names.add(s); });
+  return [...names].sort();
+}
+function populateSprints(tasks) {
+  const names = allSprints(tasks);
+  const cur = state.sprint;
+  const sel = $("#sprintFilter");
+  sel.innerHTML = '<option value="">All sprints</option><option value="__none">No sprint (backlog)</option>' +
+    names.map((n) => '<option value="' + esc(n) + '"' + (n === cur ? " selected" : "") + '>🏁 ' + esc(n) + '</option>').join("");
+  if (cur && cur !== "__none" && !names.includes(cur)) { state.sprint = ""; store.set("sprint", ""); }
+  sel.value = state.sprint;
+}
+function inSprint(t) {
+  if (!state.sprint) return true;
+  const s = sprintOf(t);
+  return state.sprint === "__none" ? !s : s === state.sprint;
+}
+async function setSprintLabel(t, name) {
+  const labels = (t.labels || []).filter((l) => !SPRINT_RE.test(String(l)));
+  if (name) labels.push("sprint:" + name);
+  return call("update_task", { project: state.board, ticket: t.ticket, labels });
+}
+function openNewSprint() {
+  if (!state.canWrite) { toast("Writes are frozen under the current license"); return; }
+  const todoCount = state.tasks.filter((t) => t.status === "Todo" && (!state.product || t.product === state.product)).length;
+  showModal(
+    '<h3>🏁 New sprint</h3>' +
+    '<p>Sprints are labels (<code>sprint:name</code>) on tickets, so they travel with the board. Dates are optional.</p>' +
+    '<label>Sprint name</label><input id="nsName" placeholder="e.g. Sprint 1 or 2026-W29">' +
+    '<div style="display:flex;gap:8px"><label style="flex:1">Start<input id="nsStart" type="date"></label>' +
+    '<label style="flex:1">End<input id="nsEnd" type="date"></label></div>' +
+    '<label style="display:flex;align-items:center;gap:6px;margin-top:10px"><input type="checkbox" id="nsAssign" style="width:auto"> Pull in the current Todo queue (' + todoCount + ' ticket' + (todoCount === 1 ? "" : "s") + ')</label>' +
+    '<div class="actions"><button class="ghost" onclick="closeModal()">Cancel</button><button class="primary" onclick="submitNewSprint()">Create sprint</button></div>'
+  );
+}
+async function submitNewSprint() {
+  const name = $("#nsName").value.trim();
+  if (!name) { toast("Sprint name is required"); return; }
+  if (/[:,\[\]]/.test(name)) { toast("Sprint names can't contain : , [ or ]"); return; }
+  const start = $("#nsStart").value || null, end = $("#nsEnd").value || null;
+  if (start && end && end < start) { toast("Sprint end is before its start"); return; }
+  const reg = sprintReg();
+  const existing = reg.find((s) => s.name === name);
+  if (existing) { existing.start = start || existing.start; existing.end = end || existing.end; }
+  else reg.push({ name, start, end });
+  saveSprintReg(reg);
+  const assign = $("#nsAssign").checked;
+  closeModal();
+  if (assign) {
+    const todo = state.tasks.filter((t) => t.status === "Todo" && (!state.product || t.product === state.product));
+    try {
+      await Promise.all(todo.map((t) => setSprintLabel(t, name)));
+      toast("Sprint “" + name + "” created — " + todo.length + " ticket(s) assigned");
+    } catch (e) { toast("Sprint created; assigning failed: " + String(e.message).slice(0, 80)); }
+  } else {
+    toast("Sprint “" + name + "” created");
+  }
+  state.sprint = name; store.set("sprint", name);
+  populateSprints(state.tasks);
+  await refresh(true);
+}
+function openSprintAssign(e, ticket) {
+  if (e) e.stopPropagation();
+  if (!state.canWrite) { toast("Writes are frozen under the current license"); return; }
+  const t = state.tasks.find((x) => x.ticket === ticket); if (!t) return;
+  const cur = sprintOf(t) || "";
+  const names = allSprints(state.tasks);
+  showModal(
+    '<h3>🏁 Sprint — ' + esc(ticket) + '</h3>' +
+    '<p>' + esc(t.title) + '</p>' +
+    '<label>Assign to</label><select id="saSel"><option value="">No sprint (backlog)</option>' +
+      names.map((n) => '<option value="' + esc(n) + '"' + (n === cur ? " selected" : "") + '>' + esc(n) + '</option>').join("") + '</select>' +
+    '<label>…or a new sprint</label><input id="saNew" placeholder="new sprint name">' +
+    '<label>Token cap for this ticket (optional, e.g. 50k)</label><input id="saCap" value="' + (capOf(t) != null ? esc(fmtTokens(capOf(t))) : "") + '" placeholder="max AI spend — enforced during churns">' +
+    (spentOn(ticket) > 0 ? '<p style="margin-top:6px">⚡ ' + fmtTokens(spentOn(ticket)) + ' tokens spent so far on this ticket.</p>' : '') +
+    '<div class="actions"><button class="ghost" onclick="closeModal()">Cancel</button><button class="primary" onclick="submitSprintAssign(\'' + ticket + '\')">Save</button></div>'
+  );
+}
+async function submitSprintAssign(ticket) {
+  const t = state.tasks.find((x) => x.ticket === ticket); if (!t) return;
+  const nw = $("#saNew").value.trim();
+  if (nw && /[:,\[\]]/.test(nw)) { toast("Sprint names can't contain : , [ or ]"); return; }
+  const name = nw || $("#saSel").value;
+  if (nw) {
+    const reg = sprintReg();
+    if (!reg.some((s) => s.name === nw)) { reg.push({ name: nw, start: null, end: null }); saveSprintReg(reg); }
+  }
+  const capRaw = $("#saCap").value.trim();
+  let cap = null;
+  if (capRaw) {
+    cap = parseCap("cap:" + capRaw) || (parseInt(capRaw, 10) || null);
+    if (!cap) { toast("Token cap should be a number like 50000, 50k or 1m"); return; }
+  }
+  const labels = (t.labels || []).filter((l) => !SPRINT_RE.test(String(l)) && !CAP_RE.test(String(l)));
+  if (name) labels.push("sprint:" + name);
+  if (cap) labels.push("cap:" + cap);
+  try {
+    await call("update_task", { project: state.board, ticket, labels });
+    closeModal();
+    toast((name ? ticket + " → 🏁 " + name : "Removed sprint from " + ticket) + (cap ? " · cap " + fmtTokens(cap) : ""));
+    await refresh(true);
+  } catch (e) { toast(String(e.message).slice(0, 120)); }
+}
+
+/* ---------- churn mode + token caps (FBMCPF-121) ----------
+   Churn = an autonomous run: the agent keeps pulling tickets WITHOUT stopping to
+   ask questions until a condition is met (N tickets done, token budget spent,
+   a sprint finished, or a date reached). The directive is appended to the
+   project's customPrompt via set_project_config, so it lands in every work
+   packet the orchestrating agent assembles — the board is the control panel.
+   Token caps ride on tickets as cap:<tokens> labels (e.g. cap:50k); spend is
+   read live from the work log. */
+const CAP_RE = /^cap:(\d+(?:\.\d+)?)([km]?)$/i;
+const CHURN_START = "[CHURN MODE]", CHURN_END = "[/CHURN MODE]";
+function parseCap(s) {
+  const m = String(s || "").match(CAP_RE); if (!m) return null;
+  const n = parseFloat(m[1]); const u = (m[2] || "").toLowerCase();
+  return Math.round(n * (u === "m" ? 1e6 : u === "k" ? 1e3 : 1));
+}
+function capOf(t) {
+  for (const l of (t.labels || [])) { const c = parseCap(l); if (c != null) return c; }
+  return null;
+}
+function spentOn(ticket) {
+  let n = 0;
+  (state.workLog || []).forEach((e) => { if (e.ticket === ticket) n += e.tokens || ((e.inputTokens || 0) + (e.outputTokens || 0)) || 0; });
+  return n;
+}
+function churnGet() { return store.get("churn_" + state.board, null); }
+function churnSave(c) { store.set("churn_" + state.board, c); }
+function churnProgress(c) {
+  const doneNow = state.tasks.filter((t) => t.status === "Done").length;
+  const doneSince = Math.max(0, doneNow - (c.baselineDone || 0));
+  let tokensSince = 0;
+  (state.workLog || []).forEach((e) => {
+    if (!c.startedDate || (e.date && e.date >= c.startedDate)) tokensSince += e.tokens || ((e.inputTokens || 0) + (e.outputTokens || 0)) || 0;
+  });
+  let met = false, label = "";
+  if (c.kind === "tickets") { met = doneSince >= c.value; label = doneSince + "/" + c.value + " tickets done"; }
+  else if (c.kind === "tokens") { met = tokensSince >= c.value; label = fmtTokens(tokensSince) + "/" + fmtTokens(c.value) + " tokens"; }
+  else if (c.kind === "sprint") {
+    const inS = state.tasks.filter((t) => sprintOf(t) === c.value);
+    const open = inS.filter((t) => t.status !== "Done").length;
+    met = inS.length > 0 && open === 0; label = "sprint “" + c.value + "”: " + (inS.length - open) + "/" + inS.length + " done";
+  }
+  else if (c.kind === "date") { met = today() > c.value; label = "until " + c.value; }
+  const overBudget = c.budget ? tokensSince >= c.budget : false;
+  return { doneSince, tokensSince, met, overBudget, label };
+}
+function churnConditionText(c) {
+  if (c.kind === "tickets") return c.value + " more ticket(s) are Done";
+  if (c.kind === "tokens") return fmtTokens(c.value) + " tokens have been spent in this churn";
+  if (c.kind === "sprint") return "every ticket in sprint “" + c.value + "” is Done";
+  return "the date " + c.value + " is reached";
+}
+function churnDirective(c) {
+  return CHURN_START + " Autonomous churn is ACTIVE (started " + c.startedDate + "). " +
+    "Work the queue continuously and do NOT stop to ask the user questions — when a decision is ambiguous, make the most reasonable assumption, record it in the project scratchpad (append_scratchpad), and keep going. " +
+    "Loop: next_task → set_status In Progress → get_work_packet → do the work → set_status Done with completionSummary → log_work with tokens/additions/deletions. " +
+    "STOP the churn only when: " + churnConditionText(c) + (c.budget ? ", or total spend in this churn reaches " + fmtTokens(c.budget) + " tokens" : "") + ". " +
+    "Token caps: a ticket carrying a cap:<tokens> label (e.g. cap:50k) must not consume more than that; if you are about to exceed it, wrap up cleanly, log_work what was spent, note the overrun in the scratchpad, set the ticket back to Todo, and move to the next ticket. " +
+    "When the stop condition is met, write a churn summary to the scratchpad and end the run. " + CHURN_END;
+}
+function stripChurn(prompt) {
+  const s = String(prompt || "");
+  const a = s.indexOf(CHURN_START), b = s.indexOf(CHURN_END);
+  if (a < 0) return s.trim();
+  return (b < 0 ? s.slice(0, a) : s.slice(0, a) + s.slice(b + CHURN_END.length)).replace(/\s+$/, "").trim();
+}
+async function applyChurnPrompt(c) {
+  const cfg = await call("get_project_config", { project: state.board });
+  const base = stripChurn(cfg.customPrompt);
+  const next = c ? (base ? base + "\n\n" : "") + churnDirective(c) : base;
+  await call("set_project_config", { project: state.board, customPrompt: next });
+}
+function openChurn() {
+  if (!state.canWrite) { toast("Writes are frozen under the current license"); return; }
+  const c = churnGet();
+  if (c) {
+    const p = churnProgress(c);
+    showModal(
+      '<h3>🔄 Churn active</h3>' +
+      '<p>Working autonomously until <b>' + esc(churnConditionText(c)) + '</b>.</p>' +
+      '<p>Progress: <b>' + esc(p.label) + '</b> · ' + p.doneSince + ' ticket(s) done · ' + fmtTokens(p.tokensSince) + ' tokens spent' +
+      (c.budget ? ' of ' + fmtTokens(c.budget) + ' budget' : '') + '.</p>' +
+      (p.met || p.overBudget ? '<p><b>The stop condition has been met</b> — end the churn to clear the directive.</p>' : '') +
+      '<div class="actions"><button class="ghost" onclick="closeModal()">Close</button>' +
+      '<button class="primary" onclick="stopChurn()">⏹ End churn</button></div>'
+    );
+    return;
+  }
+  const sprints = allSprints(state.tasks);
+  showModal(
+    '<h3>🔄 Start a churn</h3>' +
+    '<p>The agent works the queue without stopping for questions until the condition is met. The directive is injected into every work packet via the project prompt.</p>' +
+    '<label>Churn until…</label>' +
+    '<select id="chKind" onchange="churnKindUI()">' +
+      '<option value="tickets">N tickets are done</option>' +
+      '<option value="tokens">A token budget is spent</option>' +
+      (sprints.length ? '<option value="sprint">A sprint is complete</option>' : '') +
+      '<option value="date">A date is reached</option>' +
+    '</select>' +
+    '<div id="chValWrap"><label id="chValLbl">Tickets</label><input id="chVal" type="number" min="1" value="5"></div>' +
+    '<div id="chSprintWrap" style="display:none"><label>Sprint</label><select id="chSprint">' +
+      sprints.map((s) => '<option value="' + esc(s) + '"' + (s === state.sprint ? " selected" : "") + '>🏁 ' + esc(s) + '</option>').join("") + '</select></div>' +
+    '<div id="chDateWrap" style="display:none"><label>Date</label><input id="chDate" type="date"></div>' +
+    '<label>Total token budget for the churn (optional, e.g. 500k)</label><input id="chBudget" placeholder="hard stop even if the condition isn\'t met">' +
+    '<div class="actions"><button class="ghost" onclick="closeModal()">Cancel</button><button class="primary" onclick="submitChurn()">▶ Start churn</button></div>'
+  );
+}
+function churnKindUI() {
+  const k = $("#chKind").value;
+  $("#chValWrap").style.display = (k === "tickets" || k === "tokens") ? "" : "none";
+  $("#chSprintWrap").style.display = k === "sprint" ? "" : "none";
+  $("#chDateWrap").style.display = k === "date" ? "" : "none";
+  if (k === "tickets") { $("#chValLbl").textContent = "Tickets"; $("#chVal").value = $("#chVal").value || 5; }
+  if (k === "tokens") { $("#chValLbl").textContent = "Tokens (plain number, no k/m)"; }
+}
+async function submitChurn() {
+  const kind = $("#chKind").value;
+  let value = null;
+  if (kind === "tickets" || kind === "tokens") {
+    value = parseInt($("#chVal").value, 10);
+    if (!value || value < 1) { toast("Enter a positive number"); return; }
+  } else if (kind === "sprint") {
+    value = $("#chSprint").value;
+    if (!value) { toast("Pick a sprint"); return; }
+  } else {
+    value = $("#chDate").value;
+    if (!value) { toast("Pick a date"); return; }
+    if (value <= today()) { toast("Pick a future date"); return; }
+  }
+  const budget = parseCap("cap:" + ($("#chBudget").value.trim() || "")) || (parseInt($("#chBudget").value, 10) || null);
+  const c = {
+    kind, value, budget,
+    startedDate: today(),
+    baselineDone: state.tasks.filter((t) => t.status === "Done").length,
+  };
+  try {
+    await applyChurnPrompt(c);
+    churnSave(c);
+    closeModal(); toast("Churn started — directive injected into work packets");
+    renderBoard(state.tasks);
+  } catch (e) { toast("Couldn't start churn: " + String(e.message).slice(0, 100)); }
+}
+async function stopChurn() {
+  try {
+    await applyChurnPrompt(null);
+    churnSave(null);
+    closeModal(); toast("Churn ended — directive removed");
+    renderBoard(state.tasks);
+  } catch (e) { toast("Couldn't end churn: " + String(e.message).slice(0, 100)); }
 }
 
 // Auto-refresh: on tab/window focus regain and a gentle background poll, so the
@@ -422,6 +779,7 @@ function sortForColumn(list, col) {
 
 function renderBoard(tasks) {
   if (state.product) tasks = tasks.filter((t) => t.product === state.product);
+  tasks = tasks.filter(inSprint);
   const byCol = { "Todo": [], "In Progress": [], "Done": [] };
   tasks.forEach((t) => (byCol[t.status] || byCol["Todo"]).push(t));
   const doneTotal = byCol["Done"].length;
@@ -430,8 +788,29 @@ function renderBoard(tasks) {
   byCol["In Progress"] = sortForColumn(byCol["In Progress"], "In Progress");
   $("#rangeInfo").textContent = "showing " + byCol["Done"].length + " of " + doneTotal + " done · " + rangeLabel();
 
+  let sprintBar = "";
+  if (state.sprint === "__none") {
+    sprintBar = '<div class="sprintbar">🏁 Backlog — ' + tasks.length + ' ticket(s) not assigned to any sprint</div>';
+  } else if (state.sprint) {
+    const m = sprintMeta(state.sprint);
+    const dates = m && (m.start || m.end) ? " · " + (m.start || "…") + " → " + (m.end || "…") : "";
+    sprintBar = '<div class="sprintbar">🏁 Sprint <b>' + esc(state.sprint) + '</b>' + dates + ' · ' + doneTotal + '/' + tasks.length + ' done</div>';
+  }
+
+  const churn = churnGet();
+  if (churn) {
+    const p = churnProgress(churn);
+    const stateTxt = (p.met || p.overBudget)
+      ? '✅ <b>Stop condition met</b> — end the churn to clear the directive.'
+      : '🔄 <b>Churn active</b> — no-questions mode until ' + esc(churnConditionText(churn)) + '.';
+    sprintBar += '<div class="churnbar' + ((p.met || p.overBudget) ? ' met' : '') + '">' + stateTxt +
+      '<span>' + esc(p.label) + ' · ' + fmtTokens(p.tokensSince) + ' tokens spent' +
+      (churn.budget ? ' of ' + fmtTokens(churn.budget) + ' budget' : '') + '</span>' +
+      (state.canWrite ? '<button class="ghost" onclick="stopChurn()">⏹ End churn</button>' : '') + '</div>';
+  }
+
   const hint = state.canWrite
-    ? '<div class="hint">Drag cards between columns to change status.</div>'
+    ? '<div class="hint">Drag cards between columns to change status. Hover a card and click 🏁 to assign a sprint.</div>'
     : '<div class="hint">Read-only — writes are frozen under the current license.</div>';
   const html = COLS.map((c) => {
     const list = byCol[c];
@@ -448,7 +827,7 @@ function renderBoard(tasks) {
     return '<div class="col" data-status="' + c + '" ondragover="allow(event)" ondragleave="unhi(event)" ondrop="drop(event,\'' + c + '\')">' +
       '<h2>' + c + '<span>' + list.length + '</span></h2>' + sub + cards + more + '</div>';
   }).join("");
-  $("#content").innerHTML = hint + '<div class="board">' + html + '</div>';
+  $("#content").innerHTML = sprintBar + hint + '<div class="board">' + html + '</div>';
 }
 
 function cardHTML(t, opts) {
@@ -457,12 +836,17 @@ function cardHTML(t, opts) {
   if (t.priority != null) meta.push('<span class="prio">#' + t.priority + '</span>');
   if (t.due) meta.push('<span class="chip due">📅 ' + t.due + '</span>');
   if (t.product) meta.push('<span class="chip prod">' + esc(t.product) + '</span>');
+  const sp = sprintOf(t);
+  if (sp) meta.push('<span class="chip sprint" title="Sprint">🏁 ' + esc(sp) + '</span>');
+  const cap = capOf(t), spent = spentOn(t.ticket);
+  if (cap != null) meta.push('<span class="chip cap' + (spent >= cap ? " over" : "") + '" title="Token spend vs cap">⚡ ' + fmtTokens(spent) + '/' + fmtTokens(cap) + '</span>');
+  else if (spent > 0) meta.push('<span class="chip cap" title="Tokens spent (no cap)">⚡ ' + fmtTokens(spent) + '</span>');
   if (t.ref) meta.push('<span class="chip ref">↔ ' + esc(t.ref) + '</span>');
   if (t.linked) meta.push('<span class="chip ref" title="Linked issue">🔗 ' + esc(t.linked) + '</span>');
   if (t.newFile) meta.push('<span class="chip" title="Build in a new file">📄 new file</span>');
   if (t.website) meta.push('<span class="chip" title="' + esc(t.website) + '">🌐 ' + esc(t.website.replace(/^https?:\/\//, '')) + '</span>');
   (t.attachments || []).forEach((a) => meta.push('<span class="chip att" title="' + esc(a) + '">📎 ' + esc(a.split(/[\\/]/).pop()) + '</span>'));
-  (t.labels || []).forEach((l) => meta.push('<span class="chip">' + esc(l) + '</span>'));
+  (t.labels || []).forEach((l) => { if (SPRINT_RE.test(String(l)) || CAP_RE.test(String(l))) return; meta.push('<span class="chip">' + esc(l) + '</span>'); });
   const canW = state.canWrite;
   const dragAttrs = canW
     ? ' draggable="true" ondragstart="drag(event,\'' + t.ticket + '\')" ondragend="dragEnd(event)"' +
@@ -471,8 +855,9 @@ function cardHTML(t, opts) {
   const del = canW ? '<button class="del" title="Delete" onclick="deleteCard(event,\'' + t.ticket + '\')">✕</button>' : "";
   const split = (canW && t.type === "feature" && t.status !== "Done")
     ? '<button class="split" title="Decompose into subtasks" onclick="openDecompose(event,\'' + t.ticket + '\')">⋔</button>' : "";
+  const sprintBtn = canW ? '<button class="sprintBtn" title="Assign sprint" onclick="openSprintAssign(event,\'' + t.ticket + '\')">🏁</button>' : "";
   const next = opts.upNext ? '<span class="upnext">UP NEXT</span>' : "";
-  return '<div class="card" data-ticket="' + t.ticket + '" data-col="' + opts.col + '"' + dragAttrs + '>' + del + split +
+  return '<div class="card" data-ticket="' + t.ticket + '" data-col="' + opts.col + '"' + dragAttrs + '>' + del + split + sprintBtn +
     '<div class="top"><span class="tk ' + t.type + '">' + esc(t.ticket) + '</span>' + next + '</div>' +
     '<div class="title">' + esc(t.title) + '</div>' +
     (meta.length ? '<div class="meta">' + meta.join("") + '</div>' : "") + '</div>';
@@ -518,7 +903,7 @@ function cardDrop(e, targetTicket) {
 }
 
 async function reorder(ticket, targetTicket, col) {
-  let list = state.tasks.filter((t) => t.status === col && (!state.product || t.product === state.product));
+  let list = state.tasks.filter((t) => t.status === col && (!state.product || t.product === state.product) && inSprint(t));
   list = sortForColumn(list, col);
   const ids = list.map((t) => t.ticket).filter((x) => x !== ticket);
   const at = ids.indexOf(targetTicket);
@@ -539,6 +924,8 @@ async function reorder(ticket, targetTicket, col) {
 /* ---------- add / delete tasks ---------- */
 function openAdd() {
   const prods = [...new Set(state.tasks.map((t) => t.product).filter(Boolean))].sort();
+  const sprints = allSprints(state.tasks);
+  const curSprint = state.sprint && state.sprint !== "__none" ? state.sprint : "";
   showModal(
     '<h3>Add task</h3>' +
     '<label>Type</label><select id="adType"><option value="feature">Feature</option><option value="bug">Bug</option></select>' +
@@ -546,6 +933,9 @@ function openAdd() {
     '<label>Description</label><textarea id="adDesc" rows="2"></textarea>' +
     '<label>Product</label><input id="adProd" list="adProdList" placeholder="optional"><datalist id="adProdList">' +
       prods.map((p) => '<option value="' + esc(p) + '">').join("") + '</datalist>' +
+    '<label>Sprint</label><select id="adSprint"><option value="">No sprint (backlog)</option>' +
+      sprints.map((s) => '<option value="' + esc(s) + '"' + (s === curSprint ? " selected" : "") + '>🏁 ' + esc(s) + '</option>').join("") + '</select>' +
+    '<label>Token cap (optional, e.g. 50k)</label><input id="adCap" placeholder="max AI spend for this ticket">' +
     '<label>Due date</label><input id="adDue" type="date">' +
     '<label>Priority (1 = top, optional)</label><input id="adPrio" type="number" min="1">' +
     '<div class="actions"><button class="ghost" onclick="closeModal()">Cancel</button><button class="primary" onclick="submitAdd()">Add</button></div>'
@@ -558,6 +948,15 @@ async function submitAdd() {
   const args = { project: state.board, title };
   const desc = $("#adDesc").value.trim(); if (desc) args.description = desc;
   const prod = $("#adProd").value.trim(); if (prod) args.product = prod;
+  const labels = [];
+  const sprint = $("#adSprint") ? $("#adSprint").value : ""; if (sprint) labels.push("sprint:" + sprint);
+  const capRaw = $("#adCap") ? $("#adCap").value.trim() : "";
+  if (capRaw) {
+    const cap = parseCap("cap:" + capRaw) || (parseInt(capRaw, 10) || null);
+    if (!cap) { toast("Token cap should be a number like 50000, 50k or 1m"); return; }
+    labels.push("cap:" + cap);
+  }
+  if (labels.length) args.labels = labels;
   const due = $("#adDue").value; if (due) args.dueDate = due;
   const prio = parseInt($("#adPrio").value, 10); if (prio) args.priority = prio;
   try {
@@ -679,7 +1078,7 @@ function openLinks() {
 /* ---------- auto-prioritize Todo (FBMCPF-31) ---------- */
 async function autoPrioritize() {
   if (!state.canWrite) { toast("Writes are frozen under the current license"); return; }
-  let todo = state.tasks.filter((t) => t.status === "Todo" && (!state.product || t.product === state.product));
+  let todo = state.tasks.filter((t) => t.status === "Todo" && (!state.product || t.product === state.product) && inSprint(t));
   if (!todo.length) { toast("No Todo tickets to prioritize"); return; }
   const dueVal = (t) => (t.due ? (Date.parse(t.due) || Infinity) : Infinity);
   todo = todo.slice().sort((a, b) => dueVal(a) - dueVal(b) || ticketNumOf(a.ticket) - ticketNumOf(b.ticket));
@@ -1015,6 +1414,12 @@ $("#productFilter").addEventListener("change", (e) => {
   state.product = e.target.value; store.set("product", state.product);
   renderBoard(state.tasks);
 });
+$("#sprintFilter").addEventListener("change", (e) => {
+  state.sprint = e.target.value; store.set("sprint", state.sprint);
+  renderBoard(state.tasks);
+});
+$("#newSprintBtn").addEventListener("click", openNewSprint);
+$("#churnBtn").addEventListener("click", openChurn);
 $("#addBtn").addEventListener("click", openAdd);
 $("#settingsBtn").addEventListener("click", openSettings);
 $("#notesBtn").addEventListener("click", openNotes);
