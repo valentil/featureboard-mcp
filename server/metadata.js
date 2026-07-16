@@ -14,6 +14,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { getRequirements } from "./requirements.js";
 
 const WORK_LOG = "agent_work_log.md";
 const LEGACY_CONFIG = "project_config.json";
@@ -578,7 +579,23 @@ export function getWorkPacket(board, project, ticket) {
       ? ["Reproduce the issue", "Fix the root cause (edit at the code location, not projectpads)", "Verify the fix", "Add or adjust a test that would have caught it", "Record the fix in the completion summary"]
       : ["Implement the described behaviour", "Verify it works end to end", "Add or adjust a test", "Update docs if user-facing", "Summarize what was built"];
 
-  return {
+  // FBMCPF-138: if a requirements packet exists for this ticket, surface it and
+  // make the definition of done ticket-specific — each acceptance criterion
+  // (prefixed "AC:") plus the generic wrap-up item — instead of the generic list.
+  let requirements = null;
+  try {
+    requirements = getRequirements(board, project, task.ticketNumber);
+  } catch {
+    requirements = null;
+  }
+  let effectiveDoD = definitionOfDone;
+  if (requirements && requirements.acceptanceCriteria.length) {
+    effectiveDoD = requirements.acceptanceCriteria
+      .map((c) => `AC: ${c.text}`)
+      .concat(definitionOfDone[definitionOfDone.length - 1]);
+  }
+
+  const packet = {
     ticket: task.ticketNumber,
     type: task.type,
     status: task.status,
@@ -604,8 +621,10 @@ export function getWorkPacket(board, project, ticket) {
     scratchpadMentions,
     recentWork,
     suggestedModel: suggestModelForPacket(task),
-    definitionOfDone,
+    definitionOfDone: effectiveDoD,
     closeOut:
       "When done: set_status Done with a one-line completionSummary, then log_work with additions/deletions (and model), and — when git is configured — commit per ticket (commit_feature, message referencing the ticket id). Only the orchestrator writes to the board; work one ticket at a time.",
   };
+  if (requirements) packet.requirements = requirements;
+  return packet;
 }
