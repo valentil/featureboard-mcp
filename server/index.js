@@ -17,7 +17,7 @@ import * as license from "./license.js";
 import * as meta from "./metadata.js";
 import { predictDueDates } from "./predictive.js";
 import { createSprint, listSprints, assignSprint, sprintOfTask } from "./sprints.js";
-import { estimateWork, planBudget, suggestModel } from "./budget.js";
+import { estimateWork, planBudget, suggestModel, dailyPlan } from "./budget.js";
 import {
   listMedia, saveMedia, getMedia, revertMedia,
   tagMedia, annotateMedia, removeAnnotation, searchMedia,
@@ -133,8 +133,8 @@ const CORE_TOOLS = new Set([
   "import_tasks", "get_regressions", "get_test_runs", "append_scratchpad",
   // sprints (FBMCPF-120)
   "create_sprint", "list_sprints", "assign_sprint",
-  // budgeting (FBMCPF-123/124)
-  "estimate_work", "plan_budget",
+  // budgeting (FBMCPF-123/124) + daily planning (FBMCPF-152)
+  "estimate_work", "plan_budget", "daily_plan",
 ]);
 const TOOLSET = (process.env.FEATUREBOARD_TOOLS || "all").toLowerCase();
 const CORE_ONLY = TOOLSET === "core"
@@ -673,6 +673,26 @@ server.registerTool(
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
   tryTool(({ project, budgetTokens, days, sprint }) => planBudget(getBoard(), project, { budgetTokens, days, sprint }))
+);
+
+server.registerTool(
+  "daily_plan",
+  {
+    title: "Daily plan",
+    description:
+      "Plan TODAY: pick the day's slice of the priority queue (default budget 5M logged tokens \u2248 one day of a 25M week), " +
+      "assign each ticket a model from the roster (fable=orchestration/design, opus=architecture/invariants, sonnet=standard implementation, " +
+      "haiku=mechanical docs/copy) and an effort level (low/medium/high). apply:true writes model:/effort: labels onto the tickets. " +
+      "Returns dispatch groups: sonnet/haiku tickets safe to run as parallel sub-agents, opus/fable sequential. Pair with the daily_plan prompt to execute.",
+    inputSchema: {
+      project: z.string(),
+      budgetTokens: z.number().int().positive().optional().default(5000000).describe("Today's logged-token budget (default 5M)."),
+      sprint: z.string().optional().describe("Limit to one sprint."),
+      apply: z.boolean().optional().default(false).describe("Write model:/effort: labels to the planned tickets."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  writeTool(({ project, budgetTokens, sprint, apply }) => dailyPlan(getBoard(), project, { budgetTokens, sprint, apply }))
 );
 
 // duplicate-id repair (FBMCPB-11) --------------------------------------------
@@ -3813,6 +3833,38 @@ server.registerPrompt(
             "- Call get_site (and list_pages if the change targets a sub-page) to see the current site.\n" +
             "- Apply the change with the smallest fitting tool: set_site (title/tagline/theme/sections), edit_site_section (one section), or add_page/remove_page (a page). Preserve everything you're not changing.\n" +
             "- Confirm what changed and note that the page(s) were re-rendered.",
+        },
+      },
+    ],
+  })
+);
+
+server.registerPrompt(
+  "daily_plan",
+  {
+    title: "Plan today's work and dispatch it across models",
+    description:
+      "Build the day plan (model + effort per ticket), apply it, then start sub-agents on every planned ticket at the right model/effort tier.",
+    argsSchema: {
+      project: z.string().optional().describe("Board to plan. If omitted, ask or infer."),
+      budget: z.string().optional().describe("Today's logged-token budget, e.g. 5000000."),
+    },
+  },
+  ({ project, budget } = {}) => ({
+    messages: [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text:
+            `Run the daily plan${project ? ` for project "${project}"` : ""}.\n\n` +
+            "1. Call daily_plan" + (budget ? ` with budgetTokens ${budget}` : "") + " (apply: false) and show me the plan: ticket, model, effort, estimate, and the dispatch groups. Pause for my go-ahead if anything looks off; otherwise continue.\n" +
+            "2. Call daily_plan again with apply: true to stamp model:/effort: labels onto the tickets.\n" +
+            "3. Dispatch: for every ticket in dispatch.parallel (sonnet/haiku), set_status In Progress, get_work_packet, and start a sub-agent at that model with the packet as its brief \u2014 these can run in parallel. Work dispatch.sequential tickets (opus/fable) one at a time: sub-agent or inline, with a review between tickets.\n" +
+            "4. Effort mapping for each sub-agent brief: low \u2192 minimal exploration, make the obvious change, verify, stop; medium \u2192 normal loop with tests; high \u2192 read adjacent code first, consider invariants and back-compat, add tests, self-review the diff before finishing.\n" +
+            "5. Only you (the orchestrator) write to the board. As each sub-agent finishes: verify its work, set_status Done with a completionSummary, log_work with tokens/additions/deletions and the model used, and commit per ticket (commit_feature) when git is configured.\n" +
+            "6. Respect cap:<tokens> labels \u2014 wrap up and requeue any ticket about to exceed its cap.\n" +
+            "7. When the plan is exhausted or the budget is spent, post a day summary to the scratchpad and report to me.",
         },
       },
     ],

@@ -65,3 +65,35 @@ test("planBudget: cutline, day spread, model split, sprint filter", () => {
   const p1 = plan2.plan.find((x) => x.ticket === t1.ticketNumber);
   assert.equal(p1.remaining, 60000);
 });
+
+test("effort + roster + dailyPlan (FBMCPF-152)", async (t) => {
+  const { suggestEffort, effortOfTask, rosterModel, dailyPlan } = await import("../server/budget.js");
+  // effort: label wins, then size/keywords
+  assert.equal(effortOfTask({ labels: ["effort:high"] }), "high");
+  assert.equal(suggestEffort({ labels: ["effort:low"], title: "x" }, 999999).effort, "low");
+  assert.equal(suggestEffort({ labels: [], title: "New storage schema migration" }, 60000).effort, "high");
+  assert.equal(suggestEffort({ labels: [], title: "fix typo in docs" }, 20000).effort, "low");
+  assert.equal(suggestEffort({ labels: [], title: "add feature toggle" }, 80000).effort, "medium");
+  // roster: fable for orchestration, haiku for mechanical docs, label wins
+  assert.equal(rosterModel({ labels: ["model:opus"], title: "x" }, "low").model, "opus");
+  assert.equal(rosterModel({ labels: [], title: "Orchestration strategy and design review" }, "high").model, "fable");
+  assert.equal(rosterModel({ labels: [], type: "feature", title: "update README copy and listing docs" }, "low").model, "haiku");
+  // dailyPlan end-to-end with apply
+  const b = tmpBoard();
+  const t1 = b.addTask("Proj", "feature", { title: "arch: storage schema rework", labels: ["cap:150k"], priority: 1 });
+  const t2 = b.addTask("Proj", "feature", { title: "update docs copy", labels: ["cap:30k"], priority: 2 });
+  const dp = dailyPlan(b, "Proj", { budgetTokens: 500000, apply: true });
+  assert.equal(dp.plan.length, 2);
+  assert.equal(dp.applied, 2);
+  const p1 = dp.plan.find((x) => x.ticket === t1.ticketNumber);
+  const p2 = dp.plan.find((x) => x.ticket === t2.ticketNumber);
+  assert.equal(p1.effort, "high");
+  assert.equal(p1.model, "opus");
+  assert.equal(p2.model, "haiku");
+  assert.ok(dp.dispatch.sequential.includes(t1.ticketNumber));
+  assert.ok(dp.dispatch.parallel.includes(t2.ticketNumber));
+  // labels written
+  assert.ok(b.getTask("Proj", t1.ticketNumber).labels.includes("model:opus"));
+  assert.ok(b.getTask("Proj", t1.ticketNumber).labels.includes("effort:high"));
+  assert.ok(b.getTask("Proj", t1.ticketNumber).labels.includes("cap:150k")); // cap preserved
+});

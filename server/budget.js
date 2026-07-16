@@ -17,7 +17,7 @@ export const MODEL_LABEL_RE = /^model:([a-z0-9._-]+)$/i;
 const DEFAULT_ESTIMATE = 60000; // tokens, when no history and no cap label
 const MIN_SAMPLES = 3; // actual spends needed before a median is trusted
 // blended relative cost per token (planning weight, not pricing)
-const COST_UNITS = { opus: 5, sonnet: 1, haiku: 0.25 };
+const COST_UNITS = { fable: 6, opus: 5, sonnet: 1, haiku: 0.25 };
 
 export function capOfTask(t) {
   for (const l of t.labels || []) {
@@ -169,6 +169,86 @@ export function planBudget(board, project, { budgetTokens = 25_000_000, days = 5
       byModel,
       costUnits: Math.round(costUnits),
       byDay: dayLoads.map((tokens, i) => ({ day: i + 1, tokens })),
+    },
+  };
+}
+
+export const EFFORT_LABEL_RE = /^effort:(low|medium|high)$/i;
+
+export function effortOfTask(t) {
+  for (const l of t.labels || []) {
+    const m = String(l).match(EFFORT_LABEL_RE);
+    if (m) return m[1].toLowerCase();
+  }
+  return null;
+}
+
+/** Effort heuristic (FBMCPF-152): explicit label wins; else cap size + keywords. */
+export function suggestEffort(t, estimate) {
+  const labeled = effortOfTask(t);
+  if (labeled) return { effort: labeled, basis: "effort label" };
+  const text = `${t.title} ${t.description || ""}`;
+  if (/architect|schema|migration|orchestr|protocol|storage format|invariant|parallel/i.test(text) || estimate > 120000) {
+    return { effort: "high", basis: estimate > 120000 ? "large estimate" : "hard keywords" };
+  }
+  if (estimate <= 50000 || /docs|copy|readme|page|label|chip|badge|rename|typo|comment/i.test(text)) {
+    return { effort: "low", basis: estimate <= 50000 ? "small estimate" : "light keywords" };
+  }
+  return { effort: "medium", basis: "default" };
+}
+
+/** Model roster (FBMCPF-152): what each Claude tier is trusted with.
+ *  fable  — orchestration, cross-cutting design, spec/architecture review
+ *  opus   — architecture, multi-file server changes, storage invariants
+ *  sonnet — standard implementation: UI, features, most bugs, integrations
+ *  haiku  — mechanical work: docs/copy edits, label churn, data reshaping */
+export function rosterModel(t, effort) {
+  const labeled = modelOfTask(t);
+  if (labeled) return { model: labeled, basis: "model label" };
+  const text = `${t.title} ${t.description || ""}`;
+  if (/orchestrat|cross-cutting|design review|spec review|roadmap|strategy/i.test(text)) return { model: "fable", basis: "orchestration/design keywords" };
+  if (effort === "low" && /docs|copy|readme|listing|comparison page|privacy|typo|comment/i.test(text) && t.type !== "bug") {
+    return { model: "haiku", basis: "mechanical docs/copy" };
+  }
+  const s = suggestModel(t);
+  return { model: s.model, basis: s.basis };
+}
+
+/** Today's slice of the queue with model + effort per ticket (FBMCPF-152).
+ *  apply=true writes model:/effort: labels back to the tickets. */
+export function dailyPlan(board, project, { budgetTokens = 5_000_000, sprint = null, apply = false } = {}) {
+  const plan = planBudget(board, project, { budgetTokens, days: 1, sprint });
+  const tasks = board.listTasks(project, {});
+  const byId = Object.fromEntries(tasks.map((t) => [t.ticketNumber, t]));
+  const rows = plan.plan.map((e) => {
+    const t = byId[e.ticket] || { labels: [], title: e.title };
+    const eff = suggestEffort(t, e.estimate);
+    const mod = rosterModel(t, eff.effort);
+    return { ticket: e.ticket, title: e.title, estimate: e.remaining, spent: e.spent, model: mod.model, modelBasis: mod.basis, effort: eff.effort, effortBasis: eff.basis };
+  });
+  const byModel = {};
+  rows.forEach((r) => { byModel[r.model] = byModel[r.model] || { tickets: 0, tokens: 0 }; byModel[r.model].tickets++; byModel[r.model].tokens += r.estimate; });
+  let applied = 0;
+  if (apply) {
+    for (const r of rows) {
+      const t = byId[r.ticket];
+      if (!t) continue;
+      const labels = (t.labels || []).filter((l) => !MODEL_LABEL_RE.test(String(l)) && !EFFORT_LABEL_RE.test(String(l)));
+      labels.push(`model:${r.model}`, `effort:${r.effort}`);
+      board.updateTask(project, r.ticket, { labels });
+      applied++;
+    }
+  }
+  return {
+    project, date: new Date().toISOString().slice(0, 10), budgetTokens, sprint: sprint || null,
+    plan: rows, byModel,
+    cutline: plan.cutline, unplanned: plan.unplanned,
+    totals: { tickets: rows.length, tokens: plan.totals.plannedTokens, costUnits: plan.totals.costUnits },
+    applied: apply ? applied : 0,
+    dispatch: {
+      parallel: rows.filter((r) => r.model === "sonnet" || r.model === "haiku").map((r) => r.ticket),
+      sequential: rows.filter((r) => r.model === "opus" || r.model === "fable").map((r) => r.ticket),
+      note: "sonnet/haiku tickets can run as parallel sub-agents; opus/fable tickets run sequentially with review between.",
     },
   };
 }
