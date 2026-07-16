@@ -136,6 +136,8 @@
   .chip.prod { background: #edf7ee; color: #2f7d43; }
   .chip.att { background: #eef1fb; color: #4b5bdc; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   html[data-theme="dark"] .chip.att { background: #2b2d3a; color: #b7bdf0; }
+  .chip.blocked { background: #fde8e8; color: #b3261e; font-weight: 600; }
+  html[data-theme="dark"] .chip.blocked { background: #3a2e2a; color: #e88f7a; }
   .chip.sprint { background: #fdeee6; color: #b3591e; font-weight: 600; }
   html[data-theme="dark"] .chip.sprint { background: #3a2e26; color: #e0a58a; }
   .chip.model { background: #f3ecff; color: #7c3aed; font-weight: 600; }
@@ -375,6 +377,7 @@ function normalize(t) {
     attachments: t.attachments || [],
     newFile: t.newFile || false, website: t.website || null,
     linked: t.linked || t.linkedIssue || null,
+    blockedBy: t.blockedBy || [],
     priority: t.priority != null ? t.priority : null,
   };
 }
@@ -1011,6 +1014,11 @@ function cardHTML(t, opts) {
   else if (spent > 0) meta.push('<span class="chip cap" title="Tokens spent (no cap)">⚡ ' + fmtTokens(spent) + '</span>');
   if (t.ref) meta.push('<span class="chip ref">↔ ' + esc(t.ref) + '</span>');
   if (t.linked) meta.push('<span class="chip ref" title="Linked issue">🔗 ' + esc(t.linked) + '</span>');
+  if (t.blockedBy && t.blockedBy.length) {
+    const anyOpen = t.blockedBy.some((id) => { const b = state.tasks.find((x) => x.ticket === id); return b && b.status !== "Done"; });
+    if (anyOpen) meta.push('<span class="chip blocked" title="Blocked by: ' + esc(t.blockedBy.join(", ")) + '">⛓ blocked by ' + t.blockedBy.length + '</span>');
+    else meta.push('<span class="chip" title="All blockers done: ' + esc(t.blockedBy.join(", ")) + '">⛓ ✓</span>');
+  }
   if (t.newFile) meta.push('<span class="chip" title="Build in a new file">📄 new file</span>');
   if (t.website) meta.push('<span class="chip" title="' + esc(t.website) + '">🌐 ' + esc(t.website.replace(/^https?:\/\//, '')) + '</span>');
   (t.attachments || []).forEach((a) => meta.push('<span class="chip att" title="' + esc(a) + '">📎 ' + esc(a.split(/[\\/]/).pop()) + '</span>'));

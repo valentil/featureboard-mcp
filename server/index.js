@@ -12,7 +12,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { Board, parseImport, suggestTestStub, generateTestFromPrompt, bugImpactScan, computeRegressions } from "./storage.js";
+import { Board, parseImport, suggestTestStub, generateTestFromPrompt, bugImpactScan, computeRegressions, isBlocked } from "./storage.js";
 import * as license from "./license.js";
 import * as meta from "./metadata.js";
 import { predictDueDates } from "./predictive.js";
@@ -217,6 +217,7 @@ function compactView(t) {
     ref: t.ref,
     priority: t.priority,
     linked: t.linkedIssue,
+    blockedBy: t.blockedBy,
     attachments: t.attachments,
     newFile: t.newFile,
     website: t.website,
@@ -543,17 +544,24 @@ server.registerTool(
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
   tryTool(({ project, type }) => {
-    const open = getBoard()
-      .listTasks(project, { type })
-      .filter((t) => t.status !== "Done");
-    if (!open.length) return { next: null, remaining: 0 };
+    const board = getBoard();
+    const openAll = board.listTasks(project, { type }).filter((t) => t.status !== "Done");
+    if (!openAll.length) return { next: null, remaining: 0 };
+    // FBMCPF-133: blocked tickets stay in the queue but are not served.
+    const open = openAll.filter((t) => !isBlocked(board, project, t));
+    const blockedSkipped = openAll.length - open.length;
+    if (!open.length) {
+      return { next: null, remaining: openAll.length, ...(blockedSkipped ? { blockedSkipped } : {}) };
+    }
     const rank = (t) => (t.status === "In Progress" ? 0 : 1);
     const prio = (t) => (t.priority != null ? t.priority : Infinity);
     const dueVal = (t) => (t.dueDate ? Date.parse(t.dueDate) || Infinity : Infinity);
     const num = (t) => parseInt((t.ticketNumber || "").replace(/\D+/g, ""), 10) || 0;
     open.sort((a, b) => rank(a) - rank(b) || prio(a) - prio(b) || dueVal(a) - dueVal(b) || num(a) - num(b));
     const sm = suggestModel(open[0]); // FBMCPF-125: model tiering hint
-    return { next: fullView(open[0]), remaining: open.length, suggestedModel: sm.model, modelBasis: sm.basis };
+    const res = { next: fullView(open[0]), remaining: openAll.length, suggestedModel: sm.model, modelBasis: sm.basis };
+    if (blockedSkipped) res.blockedSkipped = blockedSkipped;
+    return res;
   })
 );
 
@@ -578,6 +586,7 @@ server.registerTool(
       attachments: z.array(z.string()).optional().describe("Replace the attachment list on this ticket."),
       newFile: z.boolean().nullable().optional().describe("'New file' flag, or null to clear."),
       website: z.string().nullable().optional().describe("Associated website/URL, or null to clear."),
+      blockedBy: z.array(z.string()).nullable().optional().describe("Ticket ids that block this one (empty array or null clears). Adding an edge that closes a loop is rejected."),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
@@ -798,15 +807,30 @@ server.registerTool(
   "link_tasks",
   {
     title: "Link tasks",
-    description: "Set the linked issue on a task (e.g. link a bug to the feature it affects).",
+    description:
+      "Relate two tickets. kind \"linked\" (default) sets `ticket`'s linked issue to `linkedIssue` " +
+      "(e.g. link a bug to the feature it affects). kind \"blocks\" makes `linkedIssue` a blocker of " +
+      "`ticket` — the child `ticket` gains `linkedIssue` in its blockedBy list; edges that would close a " +
+      "dependency cycle are rejected.",
     inputSchema: {
       project: z.string(),
       ticket: z.string(),
       linkedIssue: z.string(),
+      kind: z.enum(["linked", "blocks"]).optional().default("linked"),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  writeTool(({ project, ticket, linkedIssue }) => getBoard().linkTasks(project, ticket, linkedIssue))
+  writeTool(({ project, ticket, linkedIssue, kind }) => {
+    const board = getBoard();
+    if (kind === "blocks") {
+      const existing = board.getTask(project, ticket);
+      if (!existing) throw new Error(`Task ${ticket} not found.`);
+      const cur = existing.blockedBy || [];
+      const next = cur.includes(linkedIssue) ? cur : [...cur, linkedIssue];
+      return board.updateTask(project, ticket, { blockedBy: next });
+    }
+    return board.linkTasks(project, ticket, linkedIssue);
+  })
 );
 
 server.registerTool(

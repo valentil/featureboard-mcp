@@ -77,6 +77,7 @@ export function parseMarkdown(content, sourceFile) {
     const attachMatch = line.match(/\[Attachments:\s*([^\]]*)\]/);
     const newFileMatch = line.match(/\[NewFile:\s*([^\]]*)\]/i);
     const websiteMatch = line.match(/\[Website:\s*([^\]]*)\]/i);
+    const blockedByMatch = line.match(/\[BlockedBy:\s*([^\]]*)\]/i);
     const linkEmoji = titleAndDesc.match(/🔗\s*([A-Z][A-Z0-9\-]*\d+)/);
     const linkWord = rest.match(/Linked to:\s*([A-Z][A-Z0-9\-]*\d+)/);
 
@@ -104,6 +105,7 @@ export function parseMarkdown(content, sourceFile) {
         .replace(/\[Labels:[^\]]*\]/g, "")
         .replace(/\[NewFile:[^\]]*\]/gi, "")
         .replace(/\[Website:[^\]]*\]/gi, "")
+        .replace(/\[BlockedBy:[^\]]*\]/gi, "")
         .replace(/\[Attachments:[^\]]*\]/g, "")
         .replace(/\[Ref:[^\]]*\]/g, "")
         .replace(/\[Priority:[^\]]*\]/g, "")
@@ -149,6 +151,9 @@ export function parseMarkdown(content, sourceFile) {
         ? /^(true|yes|1|on)$/i.test(newFileMatch[1].trim())
         : null,
       website: websiteMatch ? websiteMatch[1].trim() || null : null,
+      blockedBy: blockedByMatch
+        ? blockedByMatch[1].split(",").map((b) => b.trim()).filter(Boolean)
+        : [],
       source: sourceFile,
       _raw: rawLine,
     });
@@ -165,6 +170,8 @@ export function serializeTask(t) {
   const labels = t.labels && t.labels.length ? ` [Labels: ${t.labels.join(", ")}]` : "";
   const newFile = t.newFile != null ? ` [NewFile: ${t.newFile}]` : "";
   const website = t.website ? ` [Website: ${t.website}]` : "";
+  const blockedBy =
+    t.blockedBy && t.blockedBy.length ? ` [BlockedBy: ${t.blockedBy.join(", ")}]` : "";
   const ref = t.ref ? ` [Ref: ${t.ref}]` : "";
   const priority = t.priority != null ? ` [Priority: ${t.priority}]` : "";
   const attachments =
@@ -179,7 +186,7 @@ export function serializeTask(t) {
   const meta = ` [Created: ${created}${due}${completed}]`;
 
   const descPart = t.description ? `: ${t.description}` : ":";
-  return `- [${statusChar}]${idPart} **${t.title}**${descPart}${link}${product}${labels}${newFile}${website}${ref}${priority}${attachments}${summary}${meta}`;
+  return `- [${statusChar}]${idPart} **${t.title}**${descPart}${link}${product}${labels}${newFile}${website}${ref}${priority}${attachments}${blockedBy}${summary}${meta}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -440,6 +447,52 @@ export function computeRegressions(bugs, features) {
     })
     .sort((a, b) => b.openBugs - a.openBugs || b.bugs.length - a.bugs.length);
   return { regressions, unlinkedBugs: orphans.map((b) => ({ ticket: b.ticketNumber, title: b.title, status: b.status })) };
+}
+
+// ---------------------------------------------------------------------------
+// Ticket dependencies (FBMCPF-133) — blockedBy edges
+// ---------------------------------------------------------------------------
+
+/**
+ * Would adding `blockedBy` as the set of blockers for `ticket` close a loop in
+ * the blockedBy graph? Walks the current edges of every task on the board (both
+ * features and bugs), overriding `ticket`'s edges with the proposed list, and
+ * reports true if any proposed blocker can reach `ticket` again (self-blocking
+ * included). Dangling ids simply terminate the walk.
+ */
+export function wouldCycle(board, project, ticket, blockedBy) {
+  const list = (blockedBy || []).map((b) => String(b).trim()).filter(Boolean);
+  if (list.includes(ticket)) return true; // self-block
+  const edges = new Map();
+  for (const t of board.listTasks(project, {})) {
+    edges.set(t.ticketNumber, (t.blockedBy || []).slice());
+  }
+  edges.set(ticket, list.slice());
+  const seen = new Set();
+  const stack = [...list];
+  while (stack.length) {
+    const cur = stack.pop();
+    if (cur === ticket) return true;
+    if (seen.has(cur)) continue;
+    seen.add(cur);
+    for (const n of edges.get(cur) || []) stack.push(n);
+  }
+  return false;
+}
+
+/**
+ * A task is blocked when ANY ticket in its blockedBy list is present on the
+ * board and not yet Done. Missing (dangling) blocker refs are tolerated and do
+ * not count as blocking.
+ */
+export function isBlocked(board, project, task) {
+  const list = (task && task.blockedBy) || [];
+  if (!list.length) return false;
+  const byId = new Map(board.listTasks(project, {}).map((t) => [t.ticketNumber, t]));
+  return list.some((id) => {
+    const b = byId.get(id);
+    return b && b.status !== "Done";
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -706,6 +759,7 @@ export class Board {
       attachments: fields.attachments || [],
       newFile: fields.newFile != null ? fields.newFile : null,
       website: fields.website || null,
+      blockedBy: fields.blockedBy || [],
       type,
     };
     const file = this._fileFor(type);
@@ -775,6 +829,15 @@ export class Board {
       if (fields.attachments != null) t.attachments = fields.attachments;
       if (fields.newFile !== undefined) t.newFile = fields.newFile;
       if (fields.website !== undefined) t.website = fields.website;
+      if (fields.blockedBy !== undefined) {
+        const list = Array.isArray(fields.blockedBy)
+          ? fields.blockedBy.map((b) => String(b).trim()).filter(Boolean)
+          : [];
+        if (list.length && wouldCycle(this, name, ticket, list)) {
+          throw new Error("would create a dependency cycle");
+        }
+        t.blockedBy = list;
+      }
       return t;
     });
   }
