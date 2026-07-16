@@ -17,6 +17,7 @@ import * as license from "./license.js";
 import * as meta from "./metadata.js";
 import { predictDueDates } from "./predictive.js";
 import { createSprint, listSprints, assignSprint, sprintOfTask } from "./sprints.js";
+import { graduateProject } from "./graduate.js";
 import { estimateWork, planBudget, suggestModel, dailyPlan } from "./budget.js";
 import {
   listMedia, saveMedia, getMedia, revertMedia,
@@ -133,6 +134,8 @@ const CORE_TOOLS = new Set([
   "import_tasks", "get_regressions", "get_test_runs", "append_scratchpad",
   // sprints (FBMCPF-120)
   "create_sprint", "list_sprints", "assign_sprint",
+  // graduation (FBMCPF-150)
+  "graduate_project",
   // budgeting (FBMCPF-123/124) + daily planning (FBMCPF-152)
   "estimate_work", "plan_budget", "daily_plan",
 ]);
@@ -648,6 +651,35 @@ server.registerTool(
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   writeTool(({ project, tickets, sprint }) => assignSprint(getBoard(), project, tickets, sprint))
+);
+
+// graduation (FBMCPF-150) ---------------------------------------------------
+server.registerTool(
+  "graduate_project",
+  {
+    title: "Graduate project",
+    description:
+      "One-command incubator \u2192 dedicated-repo graduation (lifecycle \"Option C\"). Copies the project's " +
+      "CODE out to targetPath, EXCLUDING pad files (featurelist/buglist/scratchpad/etc) and junk " +
+      "(node_modules, .git, *.log, *.zip, tmp_*, ...), then repoints codeLocation, sets stage=graduated and " +
+      "gitTargets.codeRepo, and records the move in the scratchpad. The pad STAYS in the boards dir \u2014 it is " +
+      "only read, never modified or deleted \u2014 and the target repo additionally gets a read-only snapshot " +
+      "mirror of the pad files under .featureboard/. When commit is on and git is available the copied code + " +
+      "mirror are git-init'd (if needed) and committed; git absence/failure is tolerated as a warning. " +
+      "DRY-RUN BY DEFAULT: apply is false unless you pass apply:true, so the first call returns the plan " +
+      "(source, target, files, skipped) without touching the filesystem. CADSolver was the manual prototype.",
+    inputSchema: {
+      project: z.string(),
+      targetPath: z.string().describe("Destination directory for the graduated code repo."),
+      excludes: z.array(z.string()).optional().describe("Extra basename glob-ish excludes on top of the defaults."),
+      commit: z.boolean().optional().default(true).describe("git-init (if needed) + commit the copied code in the target."),
+      apply: z.boolean().optional().default(false).describe("false = dry-run plan only; true = actually move the code."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+  },
+  writeTool(({ project, targetPath, excludes, commit, apply }) =>
+    graduateProject(getBoard(), project, targetPath, { excludes, commit, dryRun: !apply })
+  )
 );
 
 // estimator + budget planner (FBMCPF-123/124) --------------------------------
