@@ -64,7 +64,7 @@ import {
   listSiteTemplates, applySiteTemplate,
   renderSite, siteRoot, saveAsset, listAssets, setSiteAnalytics, addRawPage,
 } from "./website.js";
-import { getGitConfig, setGitConfig, commitFeature, mirrorGraduatedPad, getTicketDiff, getGlobalConfig, setGlobalConfig, resolveGitMode, evaluateCommitGate, reconcileChurn } from "./git.js";
+import { getGitConfig, setGitConfig, commitFeature, mirrorGraduatedPad, getTicketDiff, getGlobalConfig, setGlobalConfig, resolveGitMode, evaluateCommitGate, reconcileChurn, getHistoryMap, suggestHistoricalFiles } from "./git.js";
 import { createWorktree, listWorktrees, cleanupWorktree, mergeBackGuidance } from "./worktrees.js";
 import { addReviewComment, listReviewComments, resolveReviewComment, ticketsWithUnresolvedReviews } from "./reviews.js";
 import { scaffoldSite } from "./sitegen.js";
@@ -2194,7 +2194,23 @@ server.registerTool(
     inputSchema: { project: z.string(), ticket: z.string() },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
-  tryTool(({ project, ticket }) => meta.getWorkPacket(getBoard(), project, ticket))
+  tryTool(({ project, ticket }) => {
+    const board = getBoard();
+    // FBMCPF-192: history-driven filesToRead hints (best-effort). The git scan
+    // lives in git.js; gate on git being enabled so a non-git project does zero
+    // git work, and swallow any failure so a git hiccup never breaks packet
+    // assembly (the packet is returned without hints).
+    let historicalFiles = [];
+    try {
+      if (getGitConfig(board, project).enabled) {
+        const task = board.getTask(project, ticket);
+        historicalFiles = suggestHistoricalFiles(getHistoryMap(board, project), task, { limit: 5 });
+      }
+    } catch {
+      historicalFiles = [];
+    }
+    return meta.getWorkPacket(board, project, ticket, { historicalFiles });
+  })
 );
 
 // testing (FBMCPF-63/34/35/36) ---------------------------------------------

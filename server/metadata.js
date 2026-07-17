@@ -622,7 +622,7 @@ export function resolveGitTargets(board, project) {
   return { stage, codeRepo, padRepo, preflight };
 }
 
-export function getWorkPacket(board, project, ticket) {
+export function getWorkPacket(board, project, ticket, opts = {}) {
   const task = board.getTask(project, ticket);
   if (!task) throw new Error(`Ticket ${ticket} not found in "${project}".`);
   const cfg = getProjectConfig(board, project);
@@ -721,5 +721,12 @@ export function getWorkPacket(board, project, ticket) {
     const wt = worktreeForTicket(board, project, task.ticketNumber);
     if (wt) packet.worktree = wt;
   } catch {}
+  // FBMCPF-192: history-driven filesToRead hints — files that Done tickets
+  // sharing this ticket's product/labels historically touched. Computed by the
+  // caller (the git scan lives in git.js; importing it here would create a
+  // metadata\u2194git cycle) and passed in, so getWorkPacket stays git-free.
+  if (Array.isArray(opts.historicalFiles) && opts.historicalFiles.length) {
+    packet.historicalFiles = opts.historicalFiles;
+  }
   return packet;
 }

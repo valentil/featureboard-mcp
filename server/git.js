@@ -730,3 +730,174 @@ export function reconcileChurn(board, project, { exec = defaultExec, allowGit = 
     },
   };
 }
+
+// ---------------------------------------------------------------------------
+// FBMCPF-192: history-driven filesToRead hints — which files did Done tickets
+// of a given product/label historically touch?
+//
+// The scan is O(Done tickets) git calls (per ticket: its recorded commits'
+// `git show --name-only`, or a `git log --grep --name-only` fallback), so it is
+// built lazily and cached in a sidecar keyed by the code repo's HEAD hash: while
+// HEAD is unchanged the map is reused verbatim (new commits move HEAD and
+// invalidate it). An in-memory memo (repo+HEAD) skips even re-reading the
+// sidecar within a process. Every entry point is wrapped so a git hiccup or a
+// missing/disabled repo yields null/[] rather than breaking packet assembly.
+// ---------------------------------------------------------------------------
+
+const HISTORY_FILE = ".featureboard.history.json";
+const historyMemo = new Map(); // `${repo}\u0000${head}` -> map object
+
+// Control labels (model:/cap:/effort:/sprint:/priority:) describe orchestration,
+// not the code a ticket touches, so they make poor file-correlation keys.
+const CONTROL_LABEL_RE = /^(model|cap|effort|sprint|priority):/i;
+
+function currentHead(exec, repo) {
+  try {
+    const r = exec(["rev-parse", "HEAD"], repo);
+    if (r.status !== 0) return null;
+    const h = (r.stdout || "").trim();
+    return h || null;
+  } catch {
+    return null;
+  }
+}
+
+function filesFromShow(exec, repo, hash) {
+  try {
+    const r = exec(["show", "--name-only", "--format=", hash], repo);
+    if (r.status !== 0) return [];
+    return (r.stdout || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function filesFromGrep(exec, repo, ticket) {
+  try {
+    const r = exec(["log", "--fixed-strings", `--grep=${ticket}`, "--name-only", "--format="], repo);
+    if (r.status !== 0) return [];
+    return (r.stdout || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Scan the code repo and build { head, builtAt, products, labels } where
+ * products/labels are { <key>: { <file>: ticketCount } } — how many Done tickets
+ * of that product/label touched each file. Per ticket the files it touched are
+ * deduped first, so a file counts once per ticket per bucket. Prefers commits
+ * recorded by commit_feature (FBMCPF-188); falls back to grepping the ticket id
+ * in commit messages. Returns null when there's no usable git repo. Pure-ish:
+ * only reads git + the board; never writes.
+ */
+export function buildHistoryMap(board, project, { exec = defaultExec } = {}) {
+  const targets = resolveGitTargets(board, project);
+  const repo = (targets.codeRepo && targets.codeRepo.path) || null;
+  if (!repo || !fs.existsSync(path.join(repo, ".git"))) return null;
+  const head = currentHead(exec, repo);
+  if (!head) return null;
+
+  const products = {};
+  const labels = {};
+  const bump = (bucket, key, file) => {
+    if (!key) return;
+    const m = (bucket[key] = bucket[key] || {});
+    m[file] = (m[file] || 0) + 1;
+  };
+
+  const doneTasks = board.listTasks(project, {}).filter((t) => t.status === "Done");
+  for (const t of doneTasks) {
+    const tk = t.ticketNumber;
+    let files;
+    const recorded = recordedCommitsForTicket(board, project, tk);
+    if (recorded.length) {
+      const set = new Set();
+      for (const h of recorded) for (const file of filesFromShow(exec, repo, h)) set.add(file);
+      files = [...set];
+    } else {
+      files = [...new Set(filesFromGrep(exec, repo, tk))];
+    }
+    if (!files.length) continue;
+    for (const file of files) {
+      bump(products, t.product, file);
+      for (const l of (t.labels || [])) {
+        if (CONTROL_LABEL_RE.test(String(l))) continue;
+        bump(labels, String(l), file);
+      }
+    }
+  }
+  return { head, builtAt: new Date().toISOString(), products, labels };
+}
+
+/**
+ * Cached accessor for buildHistoryMap: returns the map for the code repo's
+ * current HEAD, reusing an in-memory memo, then a HEAD-keyed sidecar
+ * (<project>/.featureboard.history.json), and only rebuilding+rewriting when
+ * HEAD has moved (or refresh:true). Never throws — returns null when there's no
+ * usable repo or anything goes wrong, so callers can treat "no hints" uniformly.
+ */
+export function getHistoryMap(board, project, { exec = defaultExec, refresh = false } = {}) {
+  try {
+    const targets = resolveGitTargets(board, project);
+    const repo = (targets.codeRepo && targets.codeRepo.path) || null;
+    if (!repo || !fs.existsSync(path.join(repo, ".git"))) return null;
+    const head = currentHead(exec, repo);
+    if (!head) return null;
+
+    const memoKey = `${repo}\u0000${head}`;
+    if (!refresh && historyMemo.has(memoKey)) return historyMemo.get(memoKey);
+
+    const sidecarPath = path.join(board.projectDir(project), HISTORY_FILE);
+    if (!refresh) {
+      const cached = readJsonSafe(sidecarPath);
+      if (cached && cached.head === head && cached.products) {
+        historyMemo.set(memoKey, cached);
+        return cached;
+      }
+    }
+
+    const map = buildHistoryMap(board, project, { exec });
+    if (!map) return null;
+    try {
+      atomicWrite(sidecarPath, JSON.stringify(map, null, 2) + "\n");
+    } catch {
+      // sidecar persistence is a best-effort cache — the in-memory memo still helps
+    }
+    historyMemo.set(memoKey, map);
+    return map;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Pure ranking: given a history map and a task, return the top `limit` files
+ * historically touched by Done tickets sharing this task's product and
+ * (non-control) labels, each as { path, score, from:[...], source:"historical" }.
+ * `score` sums the product- and label-bucket frequencies (a file strong across
+ * several of the task's signals ranks higher). Returns [] when the map is null
+ * or nothing matches — so a thin history simply yields no hints.
+ */
+export function suggestHistoricalFiles(map, task, { limit = 5 } = {}) {
+  if (!map || !task) return [];
+  const counts = {};
+  const add = (bucket, key, sourceLabel) => {
+    const m = bucket && bucket[key];
+    if (!m) return;
+    for (const [file, c] of Object.entries(m)) {
+      const e = counts[file] || (counts[file] = { path: file, score: 0, from: new Set() });
+      e.score += c;
+      e.from.add(sourceLabel);
+    }
+  };
+  if (task.product) add(map.products, task.product, `product:${task.product}`);
+  for (const l of (task.labels || [])) {
+    if (CONTROL_LABEL_RE.test(String(l))) continue;
+    add(map.labels, String(l), `label:${l}`);
+  }
+  return Object.values(counts)
+    .sort((a, b) => b.score - a.score || a.path.localeCompare(b.path))
+    .slice(0, Math.max(1, limit))
+    .map((e) => ({ path: e.path, score: e.score, from: [...e.from], source: "historical" }));
+}
