@@ -16,7 +16,7 @@ import { Board, parseImport, suggestTestStub, generateTestFromPrompt, bugImpactS
 import * as license from "./license.js";
 import * as meta from "./metadata.js";
 import { predictDueDates } from "./predictive.js";
-import { createSprint, listSprints, assignSprint, sprintOfTask } from "./sprints.js";
+import { createSprint, listSprints, assignSprint, sprintOfTask, planRollover, applyRollover } from "./sprints.js";
 import { buildReportPacket, closeSprint, getSprintReport, AUDIENCES } from "./reports.js";
 import { graduateProject } from "./graduate.js";
 import { estimateWork, planBudget, suggestModel, dailyPlan } from "./budget.js";
@@ -847,19 +847,39 @@ server.registerTool(
     description:
       "Close a sprint and generate four audience-specific close-out reports (marketing, sales, technical, executive) from its tickets, work log, and metrics (velocity, tokens, $ cost, ADRs touched, CRM ticket links). " +
       "Refuses to close while the sprint still has open (non-Done) tickets unless force:true. Writes reports/<sprint>/<audience>.md pads under the project and returns their paths, a metric summary, and a per-audience LLM prompt (packet + brief) for richer draft copy. " +
-      "Posts a Slack summary when the project has Slack configured (never fails the close on a Slack error).",
+      "Posts a Slack summary when the project has Slack configured (never fails the close on a Slack error). " +
+      "Also handles the sprint's remaining open tickets per rolloverMode (FBMCPF-197): 'review' (default) returns a categorized rollover plan without moving anything; 'auto' retags P0/P1 tickets into nextSprint (or flags them rollover-pending if no nextSprint given), labels P2/P3 tickets rollover-candidate for human review, and drops the sprint label from P4+/unprioritized tickets back to the backlog; 'off' skips rollover handling entirely. The result's existing shape is unchanged — rollover info is added as a `rollover` section.",
     inputSchema: {
       project: z.string(),
       sprint: z.string().describe("Sprint name (its sprint:<name> label)."),
       force: z.boolean().optional().describe("Close even if some tickets are still open (they are reported as carryover)."),
+      rolloverMode: z
+        .enum(["auto", "review", "off"])
+        .optional()
+        .describe(
+          "How to handle tickets still open when the sprint closes. 'review' (default): categorized rollover plan only, nothing moves. " +
+            "'auto': P0/P1 -> nextSprint (or rollover-pending flag if no nextSprint); P2/P3 -> rollover-candidate label; P4+/unprioritized -> dropped back to backlog. " +
+            "'off': no rollover handling (legacy behavior)."
+        ),
+      nextSprint: z.string().optional().describe("Sprint name P0/P1 tickets roll into under rolloverMode 'auto' (created/registered if it doesn't exist yet)."),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  writeTool(async ({ project, sprint, force }) => {
+  writeTool(async ({ project, sprint, force, rolloverMode, nextSprint }) => {
     const board = getBoard();
     if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
     const notify = (text) => notifySlack(board, project, { text, event: "summary" });
-    return closeSprint(board, project, sprint, { force: !!force, notify });
+    const result = await closeSprint(board, project, sprint, { force: !!force, notify });
+    const mode = rolloverMode || "review";
+    let rollover;
+    if (mode === "off") {
+      rollover = { mode: "off" };
+    } else if (mode === "auto") {
+      rollover = { mode: "auto", ...applyRollover(board, project, sprint, { nextSprint: nextSprint || null }) };
+    } else {
+      rollover = { mode: "review", ...planRollover(board, project, sprint, { nextSprint: nextSprint || null }) };
+    }
+    return { ...result, rollover };
   })
 );
 

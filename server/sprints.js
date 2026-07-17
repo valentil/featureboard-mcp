@@ -97,3 +97,98 @@ export function assignSprint(board, project, tickets, sprint) {
   }
   return { sprint: name, updated };
 }
+
+// priority-aware rollover on close_sprint (FBMCPF-197) ----------------------
+//
+// When a sprint closes with open (non-Done) tickets, close_sprint's
+// rolloverMode decides what happens to them:
+//   'review' (default) — planRollover() only: a categorized plan, nothing moves.
+//   'auto'              — applyRollover() mutates the board per the plan.
+//   'off'               — legacy behavior, neither function is called.
+//
+// Priority buckets (ticket.priority; null/undefined counts as unprioritized):
+//   P0/P1 (0 or 1)      -> autoRoll: retag sprint:<old> -> sprint:<nextSprint>
+//                          when a nextSprint name is given; otherwise the
+//                          ticket stays put and gets a `rollover-pending` label.
+//   P2/P3 (2 or 3)      -> flagged: gets a `rollover-candidate` label for a
+//                          human to triage; sprint label is left alone.
+//   P4+ / unprioritized -> dropped: sprint label removed (back to backlog).
+
+export const ROLLOVER_CANDIDATE_LABEL = "rollover-candidate";
+export const ROLLOVER_PENDING_LABEL = "rollover-pending";
+
+function priorityBucket(priority) {
+  if (priority == null) return "drop";
+  if (priority <= 1) return "auto";
+  if (priority <= 3) return "flag";
+  return "drop";
+}
+
+function openSprintTickets(board, project, sprintName) {
+  const name = String(sprintName || "").trim();
+  return board
+    .listTasks(project, {})
+    .filter((t) => (sprintOfTask(t) || "").toLowerCase() === name.toLowerCase() && t.status !== "Done");
+}
+
+/**
+ * Categorize a sprint's still-open tickets into rollover buckets by priority.
+ * Pure read — never mutates. Used both to preview ('review' mode) and as the
+ * basis for applyRollover ('auto' mode).
+ */
+export function planRollover(board, project, sprintName, { nextSprint = null } = {}) {
+  const open = openSprintTickets(board, project, sprintName);
+  const buckets = { auto: [], flag: [], drop: [] };
+  for (const t of open) {
+    buckets[priorityBucket(t.priority)].push({
+      ticket: t.ticketNumber,
+      title: t.title,
+      priority: t.priority != null ? t.priority : null,
+      status: t.status,
+    });
+  }
+  return {
+    sprint: sprintName,
+    nextSprint: nextSprint || null,
+    autoRoll: buckets.auto,
+    flagged: buckets.flag,
+    dropped: buckets.drop,
+  };
+}
+
+function addLabel(board, project, ticket, label) {
+  const t = board.getTask(project, ticket);
+  if ((t.labels || []).includes(label)) return t;
+  return board.updateTask(project, ticket, { labels: [...(t.labels || []), label] }, { source: "close_sprint_rollover" });
+}
+
+/**
+ * Apply planRollover()'s plan to the board: retag P0/P1 tickets into
+ * nextSprint (or flag them rollover-pending if no nextSprint was given),
+ * label P2/P3 tickets rollover-candidate, and drop the sprint label from
+ * P4+/unprioritized tickets back to the backlog.
+ */
+export function applyRollover(board, project, sprintName, { nextSprint = null } = {}) {
+  const plan = planRollover(board, project, sprintName, { nextSprint });
+
+  const autoRolled = plan.autoRoll.map((item) => {
+    if (nextSprint) {
+      const r = assignSprint(board, project, [item.ticket], nextSprint);
+      return { ...r.updated[0], sprint: nextSprint };
+    }
+    const u = addLabel(board, project, item.ticket, ROLLOVER_PENDING_LABEL);
+    return { ticket: u.ticketNumber, sprint: sprintName, labels: u.labels, flag: ROLLOVER_PENDING_LABEL };
+  });
+
+  const flaggedUpdated = plan.flagged.map((item) => {
+    const u = addLabel(board, project, item.ticket, ROLLOVER_CANDIDATE_LABEL);
+    return { ticket: u.ticketNumber, labels: u.labels };
+  });
+
+  const droppedUpdated = plan.dropped.map((item) => {
+    const r = assignSprint(board, project, [item.ticket], null);
+    return r.updated[0];
+  });
+
+  return { ...plan, applied: true, autoRolled, flaggedUpdated, droppedUpdated };
+}
