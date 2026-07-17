@@ -6,7 +6,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { Board, localDateStr } from "../server/storage.js";
 import { logWork } from "../server/metadata.js";
-import { getTimelineData } from "../server/events.js";
+import { getTimelineData, resolveCompletedAt, completedAtForTask } from "../server/events.js";
 
 // FBMCPB-18 — piano-roll timeline data accuracy:
 //   - createdDate/completionDate must be stamped from the LOCAL calendar day,
@@ -148,4 +148,49 @@ test("completedAt/completedSource/asOf are present in the payload for the timeli
   assert.ok(s.completedAt, "span carries completedAt");
   assert.ok("completedSource" in s, "span carries completedSource");
   assert.ok("completedClamped" in s, "span carries completedClamped");
+});
+
+// FBMCPF-164 — exact completion timestamp derived for get_task (completedAt),
+// sharing one resolver with getTimelineData's span-end logic.
+
+test("completedAtForTask derives the exact Done timestamp from the status event (get_task's completedAt)", () => {
+  const b = tmpBoard();
+  const t = b.addTask("Proj", "feature", { title: "Precise done-time" });
+  b.setStatus("Proj", t.ticketNumber, "In Progress");
+  b.setStatus("Proj", t.ticketNumber, "Done", "shipped");
+  const done = b.getTask("Proj", t.ticketNumber);
+
+  const { completedAt, completedSource } = completedAtForTask(b, "Proj", done);
+  assert.equal(completedSource, "status_event");
+  assert.ok(completedAt, "a completion timestamp is derived");
+  // real time-of-day, not the coarse date-only end-of-day fallback
+  assert.ok(!completedAt.endsWith("T23:59:59"), "not the date-only fallback stamp");
+  // and it agrees with the timeline span end for the same ticket
+  const span = spanFor(getTimelineData(b, "Proj"), t.ticketNumber);
+  assert.equal(completedAt, span.completedAt);
+});
+
+test("completedAtForTask returns null completedAt for a ticket that isn't Done (get_task omits it)", () => {
+  const b = tmpBoard();
+  const t = b.addTask("Proj", "feature", { title: "Still open" });
+  b.setStatus("Proj", t.ticketNumber, "In Progress");
+  const open = b.getTask("Proj", t.ticketNumber);
+  const { completedAt } = completedAtForTask(b, "Proj", open);
+  assert.equal(completedAt, null);
+});
+
+test("resolveCompletedAt clamps a Done event that lands after now (shared clamp for get_task + timeline)", () => {
+  const evs = [{ field: "status", to: "Done", ts: "2099-01-01T00:00:00.000Z" }];
+  const asOf = new Date("2026-07-16T20:00:00.000Z");
+  const r = resolveCompletedAt(evs, [], { status: "Done" }, asOf);
+  assert.equal(r.completedClamped, true);
+  assert.equal(r.completedAt, asOf.toISOString());
+  assert.ok(r.completedSource.endsWith("_clamped"));
+});
+
+test("resolveCompletedAt falls back to date-only completionDate as local end-of-day when there is no Done trail", () => {
+  const r = resolveCompletedAt([], [], { status: "Done", completionDate: "2026-07-10" }, new Date("2026-07-16T00:00:00Z"));
+  assert.equal(r.completedSource, "completion_date");
+  assert.equal(r.completedAt, "2026-07-10T23:59:59");
+  assert.equal(r.completedClamped, false);
 });

@@ -557,6 +557,56 @@ function timelineModel(work, ticket, task) {
   return null;
 }
 
+/**
+ * FBMCPF-164 / FBMCPB-18: resolve a ticket's exact completion moment from the
+ * event stream + work log, WITHOUT reading a time-of-day from the markdown
+ * (which only carries a date). Preference: last status\u2192Done audit event,
+ * else the ticket's last work-log entry once it's actually Done, else its
+ * date-only completionDate read as local end-of-day. A Done ticket's result is
+ * clamped so it can never land after `now` (defends against a future-dated
+ * completionDate or clock skew). Returns { completedAt, completedSource,
+ * completedClamped }; completedAt is null for a ticket that isn't finished and
+ * has no Done trail. `evs`/`wls` are this ticket's events / work-log entries in
+ * chronological (append) order.
+ */
+export function resolveCompletedAt(evs, wls, task, now = new Date()) {
+  const nowMs = now.getTime();
+  let completedAt = null, completedSource = null;
+  const done = (evs || []).filter((e) => e.field === "status" && e.to === "Done");
+  if (done.length) { completedAt = done[done.length - 1].ts; completedSource = "status_event"; }
+  else if (task && task.status === "Done" && wls && wls.length) {
+    const last = wls[wls.length - 1];
+    const ts = `${last.date}T${last.time}`;
+    if (!Number.isNaN(Date.parse(ts))) { completedAt = ts; completedSource = "work_log"; }
+  }
+  if (!completedAt && task && task.completionDate) {
+    completedAt = `${task.completionDate}T23:59:59`;
+    completedSource = "completion_date";
+  }
+  let completedClamped = false;
+  if (task && task.status === "Done" && completedAt) {
+    const parsed = Date.parse(completedAt);
+    if (!Number.isNaN(parsed) && parsed > nowMs) {
+      completedAt = now.toISOString();
+      completedSource = completedSource ? `${completedSource}_clamped` : "clamped";
+      completedClamped = true;
+    }
+  }
+  return { completedAt, completedSource, completedClamped };
+}
+
+/**
+ * FBMCPF-164: board-level convenience \u2014 the exact completion timestamp for
+ * one ticket, derived (never stored in markdown) from its Done audit event /
+ * work log. Used by get_task to expose completedAt without a full timeline pass.
+ */
+export function completedAtForTask(board, project, task, now = new Date()) {
+  if (!task) return { completedAt: null, completedSource: null, completedClamped: false };
+  const evs = eventsForTicket(board, project, task.ticketNumber);
+  const wls = readWorkLog(board, project).filter((w) => w.ticket === task.ticketNumber);
+  return resolveCompletedAt(evs, wls, task, now);
+}
+
 export function getTimelineData(board, project, opts = {}) {
   const from = opts.from ? Date.parse(opts.from) : null;
   const to = opts.to ? Date.parse(opts.to) : null;
@@ -564,7 +614,6 @@ export function getTimelineData(board, project, opts = {}) {
   // opts.asOf) so tests can assert future-completionDate clamping
   // deterministically instead of racing the real clock.
   const now = opts.asOf ? new Date(opts.asOf) : new Date();
-  const nowMs = now.getTime();
 
   const tasks = board.listTasks(project, {});
   const events = readEvents(board, project);
@@ -605,32 +654,7 @@ export function getTimelineData(board, project, opts = {}) {
     // also doubles as the read-side repair for already-stored future
     // completionDates: whichever event/work-log timestamp exists wins over a
     // bogus date, with no rewrite of the markdown needed.
-    let completedAt = null, completedSource = null;
-    const done = evs.filter((e) => e.field === "status" && e.to === "Done");
-    if (done.length) { completedAt = done[done.length - 1].ts; completedSource = "status_event"; }
-    else if (t.status === "Done" && wls.length) {
-      const last = wls[wls.length - 1];
-      const ts = `${last.date}T${last.time}`;
-      if (!Number.isNaN(Date.parse(ts))) { completedAt = ts; completedSource = "work_log"; }
-    }
-    if (!completedAt && t.completionDate) {
-      completedAt = `${t.completionDate}T23:59:59`;
-      completedSource = "completion_date";
-    }
-
-    // Belt-and-braces clamp: whatever we landed on, a Done ticket's end can
-    // never be later than "now" — this is what actually stops a bar from
-    // drawing past the now-line even if some other bug reintroduces a
-    // future-dated completionDate or event.
-    let completedClamped = false;
-    if (t.status === "Done" && completedAt) {
-      const parsed = Date.parse(completedAt);
-      if (!Number.isNaN(parsed) && parsed > nowMs) {
-        completedAt = now.toISOString();
-        completedSource = completedSource ? `${completedSource}_clamped` : "clamped";
-        completedClamped = true;
-      }
-    }
+    const { completedAt, completedSource, completedClamped } = resolveCompletedAt(evs, wls, t, now);
 
     let tokens = 0, additions = 0, deletions = 0, cost = 0;
     const dayMap = {};

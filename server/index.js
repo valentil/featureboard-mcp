@@ -30,7 +30,7 @@ import { notifySlack, notifyTicketEvent } from "./slack.js";
 import { registerEmail } from "./registration.js";
 import { addDecision, listDecisions, decisionsForTicket } from "./decisions.js";
 import { writeHandoff } from "./handoffs.js";
-import { getTicketHistory, agentMonitorV2, appendEvent, getTimelineData, appendHeartbeat } from "./events.js";
+import { getTicketHistory, agentMonitorV2, appendEvent, getTimelineData, appendHeartbeat, completedAtForTask } from "./events.js";
 import { getPricing, rollupCost } from "./pricing.js";
 import { addKbDoc, listKbDocs, getKbDoc, searchKb } from "./kb.js";
 import {
@@ -435,9 +435,22 @@ server.registerTool(
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
   tryTool(({ project, ticket }) => {
-    const t = getBoard().getTask(project, ticket);
+    const board = getBoard();
+    const t = board.getTask(project, ticket);
     if (!t) throw new Error(`Task ${ticket} not found in "${project}".`);
-    return fullView(t);
+    const view = fullView(t);
+    // FBMCPF-164: expose the EXACT completion moment, derived from the Done
+    // audit event / work log (never stored in the markdown, which keeps
+    // [Completed] date-only). Lets a caller show precise done-time without a
+    // full get_timeline_data pass. Omitted for tickets that aren't finished.
+    if (t.status === "Done") {
+      const { completedAt, completedSource } = completedAtForTask(board, project, t);
+      if (completedAt) {
+        view.completedAt = completedAt;
+        view.completedAtSource = completedSource;
+      }
+    }
+    return view;
   })
 );
 
