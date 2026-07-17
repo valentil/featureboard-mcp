@@ -30,9 +30,13 @@
     "mcp__FeatureBoard__set_usage_type",
     "mcp__FeatureBoard__daily_plan",
     "mcp__FeatureBoard__append_scratchpad",
-    "mcp__FeatureBoard__plan_budget"
+    "mcp__FeatureBoard__plan_budget",
+    "mcp__FeatureBoard__get_ticket_history",
+    "mcp__FeatureBoard__get_timeline_data"
   ],
   "mcpServerNames": [
+    "FeatureBoard",
+    "FeatureBoard",
     "FeatureBoard",
     "FeatureBoard",
     "FeatureBoard",
@@ -113,6 +117,8 @@
     display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
   }
   .banner.stop { background: #fdecec; border-color: #f2b8b4; color: #8a231c; }
+  .banner.warn { background: #fff4e0; border-color: #f0d28a; color: #7a5310; }
+  .banner ul { margin: 4px 0 0; padding-left: 18px; }
 
   .board { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding: 16px; }
   .board.four { grid-template-columns: repeat(4, 1fr); }
@@ -155,6 +161,9 @@
   .chip.cap.over { background: #fde8e8; color: #b3261e; }
   html[data-theme="dark"] .chip.cap { background: #263329; color: #a7d3b0; }
   html[data-theme="dark"] .chip.cap.over { background: #3a2e2a; color: #e88f7a; }
+  /* FBMCPF-159: intake orchestration guard — open ticket with no model:/cap: label */
+  .chip.unlabeled { background: #fde8e8; color: #b3261e; font-weight: 600; }
+  html[data-theme="dark"] .chip.unlabeled { background: #3a2e2a; color: #e88f7a; }
   /* budget panel (FBMCPF-126) */
   .bpBarTrack { background: #eef0f5; border-radius: 6px; height: 8px; overflow: hidden; margin: 4px 0 8px; }
   .bpBarFill { display: block; height: 100%; background: #1a7d47; border-radius: 6px; }
@@ -185,6 +194,17 @@
   .card:hover .sprintBtn { opacity: 1; }
   .card .sprintBtn:hover { background: #fdeee6; color: #b3591e; }
   html[data-theme="dark"] .card .sprintBtn:hover { background: #3a2e26; color: #e0a58a; }
+  /* FBMCPF-142: per-ticket audit-timeline button, top-left (right side is taken by del/split/sprint/review) */
+  .card .histBtn { position: absolute; top: 6px; left: 6px; border: 0; background: transparent; color: #b7bcc9; font-size: 12px; line-height: 1; padding: 2px 5px; border-radius: 6px; cursor: pointer; opacity: 0; }
+  .card:hover .histBtn { opacity: 1; }
+  .card .histBtn:hover { background: #eef0f5; color: #384bcc; }
+  html[data-theme="dark"] .card .histBtn:hover { background: #2f2937; color: #c3a7e0; }
+  .histRow { display: flex; gap: 8px; align-items: baseline; padding: 5px 0; border-bottom: 1px solid #eceef3; font-size: 12px; }
+  .histRow:last-child { border-bottom: none; }
+  .histRow .histTs { color: #9aa0b0; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .histRow .histBody { flex: 1; }
+  html[data-theme="dark"] .histRow { border-bottom-color: #3a382f; }
+  html[data-theme="dark"] .histRow .histTs { color: #8a8776; }
   .card .approve, .card .reject { position: absolute; top: 6px; border: 0; background: transparent; color: #b7bcc9; font-size: 13px; line-height: 1; padding: 2px 5px; border-radius: 6px; cursor: pointer; opacity: 0; }
   .card .approve { right: 66px; }
   .card .reject { right: 90px; }
@@ -299,6 +319,7 @@
 </header>
 
 <div id="banner"></div>
+<div id="stallBanner"></div>
 <div class="subbar">
   <span class="lbl">Done shows:</span>
   <div class="seg" id="rangeSeg">
@@ -320,6 +341,8 @@
   <button class="ghost" id="linksBtn" title="Linked issues & epics">🔗 Links</button>
   <button class="ghost" id="testsBtn" title="Test runs & regressions">🧪 Tests</button>
   <button class="ghost" id="analyticsBtn" title="Velocity, health & recent work">📊 Analytics</button>
+  <button class="ghost" id="timelineBtn" title="Piano-roll ticket timeline (worked spans, zoom/pan, datastream overlays)">🎹 Timeline</button>
+  <button class="ghost" id="reportsBtn" title="Sprint close-out reports (marketing / sales / technical / executive)">📄 Reports</button>
   <button class="ghost" id="prioBtn" title="Auto-prioritize Todo by due date">⚡ Prioritize</button>
   <button class="ghost" id="notesBtn" title="Project scratchpad">📝 Notes</button>
   <button class="ghost" id="settingsBtn" title="Board settings">⚙ Settings</button>
@@ -343,7 +366,7 @@ let state = {
   board: store.get("board", null), type: store.get("type", "all"),
   range: store.get("range", "week"), refDate: store.get("refDate", today()),
   product: store.get("product", ""), sprint: store.get("sprint", ""),
-  license: null, canWrite: true, tasks: [], workLog: [], config: null,
+  license: null, canWrite: true, tasks: [], workLog: [], config: null, monitor: null,
 };
 const expanded = {}; // column -> show-all toggle
 
@@ -430,25 +453,55 @@ function renderLicense() {
   }
 }
 
+// stall banner (FBMCPF-145): surfaces get_agent_monitor's stalledTickets —
+// In Progress tickets with no event/work-log activity within the threshold
+// (default 30min). Pairs with churn mode: a stall mid-churn usually means
+// the agent is stuck or has gone quiet. Own container (#stallBanner) so it
+// never fights with the license banner's innerHTML reset in renderLicense().
+function renderStallBanner(monitor) {
+  const box = $("#stallBanner");
+  if (!box) return;
+  const stalled = monitor && Array.isArray(monitor.stalledTickets) ? monitor.stalledTickets : [];
+  if (!stalled.length) { box.innerHTML = ""; return; }
+  const items = stalled.map((s) =>
+    '<li><b>' + esc(s.ticket) + '</b>' + (s.title ? ' — ' + esc(s.title) : "") +
+    (s.ageMinutes != null ? ' <span style="opacity:.75">(idle ' + fmtMinutes(s.ageMinutes) + ')</span>' : ' <span style="opacity:.75">(no activity yet)</span>') +
+    '</li>'
+  ).join("");
+  box.innerHTML = '<div class="banner warn">⚠️ <div><b>' + stalled.length + ' stalled ticket' + (stalled.length === 1 ? "" : "s") +
+    '</b> — In Progress with no activity in ' + (monitor.stallMinutes != null ? fmtMinutes(monitor.stallMinutes) : "30m") + '.' +
+    '<ul>' + items + '</ul></div></div>';
+}
+
+function fmtMinutes(m) {
+  if (m == null) return "";
+  if (m < 60) return Math.round(m) + "m";
+  const h = Math.floor(m / 60), rem = Math.round(m % 60);
+  return h + "h" + (rem ? " " + rem + "m" : "");
+}
+
 let _refreshing = false;
 async function refresh(silent) {
   if (!state.board || _refreshing) return;
   _refreshing = true;
   if (!silent) $("#content").innerHTML = '<div class="loading">Loading ' + state.board + '…</div>';
   try {
-    const [tasks, metrics, health, cfg, wl] = await Promise.all([
+    const [tasks, metrics, health, cfg, wl, monitor] = await Promise.all([
       loadTasks(state.board, state.type),
       call("get_metrics", { project: state.board }).catch(() => null),
       call("get_health", { project: state.board }).catch(() => null),
       call("get_project_config", { project: state.board }).catch(() => null),
       call("get_work_log", { project: state.board, limit: 500 }).catch(() => null),
+      call("get_agent_monitor", { project: state.board }).catch(() => null),
     ]);
     state.tasks = tasks;
     state.workLog = (wl && wl.entries) || [];
     state.config = cfg;
+    state.monitor = monitor;
     applyBranding(cfg);
     renderMetrics(metrics);
     renderHealth(health);
+    renderStallBanner(monitor);
     populateProducts(tasks);
     populateSprints(tasks);
     renderBoard(state.tasks);
@@ -460,6 +513,13 @@ function fmtTokens(n) {
   if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
   if (n >= 1e3) return (n / 1e3).toFixed(0) + "k";
   return String(n);
+}
+// FBMCPF-157: compact $ formatting for the metrics panel's cost line.
+function fmtCost(n) {
+  n = n || 0;
+  if (n >= 1000) return "$" + (n / 1000).toFixed(1) + "k";
+  if (n >= 1) return "$" + n.toFixed(2);
+  return "$" + n.toFixed(3);
 }
 function renderHealth(h) {
   const el = $("#healthBadge");
@@ -915,6 +975,17 @@ function renderMetrics(m) {
     html += '<span title="from the work log">⚡ <b>' + fmtTokens(m.velocity.tokensLast7Days) + '</b> 7d · <b>' +
       fmtTokens(m.velocity.totals.tokens) + '</b> total</span>';
   }
+  // FBMCPF-157: $ cost line + compact per-model breakdown. Pricing is
+  // project-config-overridable (see set_project_config "pricing"); defaults
+  // are current Anthropic API rates and safe even when stale.
+  if (m.velocity && m.velocity.byModel && Object.keys(m.velocity.byModel).length) {
+    const byM = Object.keys(m.velocity.byModel)
+      .sort((a, b) => (m.velocity.byModel[b].cost || 0) - (m.velocity.byModel[a].cost || 0))
+      .map((k) => esc(k) + ' ' + fmtCost(m.velocity.byModel[k].cost))
+      .join(' · ');
+    html += '<span title="cost by model, from configurable pricing (see project config)">💲 <b>' +
+      fmtCost(m.velocity.totalCost) + '</b> total <span style="opacity:.7">(' + byM + ')</span></span>';
+  }
   $("#metrics").innerHTML = html;
 }
 
@@ -1042,6 +1113,12 @@ function cardHTML(t, opts) {
   (t.labels || []).forEach((l) => { const m = String(l).match(MDL_RE); if (m) _m = m[1]; const e2 = String(l).match(EFF_RE); if (e2) _e = e2[1].toLowerCase(); });
   if (_m) meta.push('<span class="chip model" title="Planned model">\ud83e\udd16 ' + esc(_m) + '</span>');
   if (_e) meta.push('<span class="chip eff-' + _e + '" title="Effort level">' + _e + '</span>');
+  // FBMCPF-159: intake orchestration guard — flag open tickets that reached the
+  // board with no model: and no cap: label (should be rare now that intake fills
+  // them in; catches tickets created before this guard, or via a raw markdown edit).
+  if (!_m && cap == null && t.status !== "Done") {
+    meta.push('<span class="chip unlabeled" title="No model:/cap: label — missing a sub-model orchestration decision">\u26a0 unlabeled</span>');
+  }
   (t.labels || []).forEach((l) => { if (SPRINT_RE.test(String(l)) || CAP_RE.test(String(l)) || MDL_RE.test(String(l)) || EFF_RE.test(String(l))) return; meta.push('<span class="chip">' + esc(l) + '</span>'); });
   const canW = state.canWrite;
   const dragAttrs = canW
@@ -1056,11 +1133,100 @@ function cardHTML(t, opts) {
     ? '<button class="approve" title="Approve → Done" onclick="approveCard(event,\'' + t.ticket + '\')">✓</button>' +
       '<button class="reject" title="Reject → In Progress" onclick="rejectCard(event,\'' + t.ticket + '\')">↩</button>'
     : "";
+  // FBMCPF-142: read-only audit-timeline button — visible regardless of write access.
+  const histBtn = '<button class="histBtn" title="History" onclick="openHistory(event,\'' + t.ticket + '\')">🕘</button>';
   const next = opts.upNext ? '<span class="upnext">UP NEXT</span>' : "";
-  return '<div class="card" data-ticket="' + t.ticket + '" data-col="' + opts.col + '"' + dragAttrs + '>' + del + split + sprintBtn + reviewBtns +
+  return '<div class="card" data-ticket="' + t.ticket + '" data-col="' + opts.col + '"' + dragAttrs + '>' + del + split + sprintBtn + reviewBtns + histBtn +
     '<div class="top"><span class="tk ' + t.type + '">' + esc(t.ticket) + '</span>' + next + '</div>' +
     '<div class="title">' + esc(t.title) + '</div>' +
     (meta.length ? '<div class="meta">' + meta.join("") + '</div>' : "") + '</div>';
+}
+
+/* ---------- ticket history / audit timeline (FBMCPF-142) ---------- */
+function histFieldLabel(f) {
+  return { status: "Status", priority: "Priority", labels: "Labels", sprint: "Sprint", dueDate: "Due date", review_comment: "Review comment", review_comment_resolved: "Review resolved" }[f] || f;
+}
+function histValue(v) {
+  if (v == null || v === "") return "—";
+  if (Array.isArray(v)) return v.length ? v.map(esc).join(", ") : "—";
+  return esc(String(v));
+}
+function histRowHTML(h) {
+  const ts = h.ts ? String(h.ts).replace("T", " ").slice(0, 16) : "";
+  let body;
+  if (h.kind === "event") {
+    body = '<b>' + esc(histFieldLabel(h.field)) + '</b>: ' + histValue(h.from) + ' → ' + histValue(h.to) +
+      (h.source ? ' <span class="hint">(' + esc(h.source) + ')</span>' : '');
+  } else {
+    const bits = [];
+    if (h.additions != null || h.deletions != null) bits.push('+' + (h.additions || 0) + '/-' + (h.deletions || 0));
+    if (h.tokens != null) bits.push(fmtTokens(h.tokens) + ' tokens');
+    if (h.model) bits.push(esc(h.model));
+    body = '📝 ' + esc(h.summary || "work logged") + (bits.length ? ' <span class="hint">(' + bits.join(" · ") + ')</span>' : '');
+  }
+  return '<div class="histRow"><span class="histTs">' + esc(ts) + '</span><span class="histBody">' + body + '</span></div>';
+}
+function rcRowHTML(c) {
+  const loc = [c.file ? esc(c.file) : null, c.line != null ? "L" + esc(String(c.line)) : null].filter(Boolean).join(":");
+  const who = c.author ? esc(c.author) : "—";
+  const meta = [who, loc].filter(Boolean).join(" · ");
+  const badge = c.resolved
+    ? '<span class="hint" style="color:#2e7d32">✓ resolved</span>'
+    : '<span class="hint" style="color:#c62828">● open</span>';
+  const btn = (!c.resolved && state.canWrite)
+    ? ' <button class="ghost" style="padding:1px 6px;font-size:11px" onclick="resolveComment(\'' + esc(c.id) + '\',\'' + esc(c.ticket) + '\')">Resolve</button>'
+    : '';
+  return '<div class="histRow"><span class="histTs">' + esc(c.id) + '</span><span class="histBody">' +
+    esc(c.comment) + ' <span class="hint">(' + meta + ')</span> ' + badge + btn + '</span></div>';
+}
+async function loadReviewComments(ticket) {
+  const el = document.getElementById("rcBody");
+  if (!el) return;
+  try {
+    const res = await call("list_review_comments", { project: state.board, ticket });
+    if (!el) return;
+    if (!res.comments || !res.comments.length) {
+      el.innerHTML = '<span class="hint">No review comments for ' + esc(ticket) + '.</span>';
+      return;
+    }
+    el.innerHTML = res.comments.map(rcRowHTML).join("");
+  } catch (err) {
+    el.innerHTML = '<span class="hint">' + esc(String(err.message).slice(0, 140)) + ' — list_review_comments needs the 0.4.0+ server.</span>';
+  }
+}
+async function resolveComment(id, ticket) {
+  try {
+    await call("resolve_review_comment", { project: state.board, id });
+    loadReviewComments(ticket);
+    refresh(true);
+  } catch (err) { toast(String(err.message).slice(0, 120)); }
+}
+async function openHistory(e, ticket) {
+  if (e) e.stopPropagation();
+  showModal(
+    '<h3>🕘 History — ' + esc(ticket) + '</h3>' +
+    '<div style="max-height:55vh;overflow:auto">' +
+    '<div style="font-size:12px;font-weight:600;color:#59617a;margin:0 0 4px">💬 Review comments</div>' +
+    '<div id="rcBody"><span class="hint">Loading…</span></div>' +
+    '<div style="font-size:12px;font-weight:600;color:#59617a;margin:12px 0 4px">Timeline</div>' +
+    '<div id="histBody"><span class="hint">Loading…</span></div>' +
+    '</div>' +
+    '<div class="actions"><button class="primary" onclick="closeModal()">Close</button></div>'
+  );
+  loadReviewComments(ticket);
+  try {
+    const res = await call("get_ticket_history", { project: state.board, ticket });
+    const el = document.getElementById("histBody");
+    if (!el) return;
+    if (!res.history || !res.history.length) {
+      el.innerHTML = '<span class="hint">No recorded events or work-log entries for ' + esc(ticket) + ' yet.</span>';
+      return;
+    }
+    el.innerHTML = res.history.map(histRowHTML).join("");
+  } catch (err) {
+    const el = document.getElementById("histBody");
+    if (el) el.innerHTML = '<span class="hint">' + esc(String(err.message).slice(0, 160)) + ' — get_ticket_history needs the 0.4.0+ server (repack + restart Claude Desktop).</span>';
+  }
 }
 
 /* ---------- drag and drop ---------- */
@@ -1419,6 +1585,602 @@ function anBuildTl(tasks){ const el=document.getElementById("anTl"); if(!el)retu
 function anBuildEff(rows){ const el=document.getElementById("anEff"); if(!el)return; if(!rows.length){el.parentElement.innerHTML='<div class="l" style="text-align:center;padding:40px 0">No logged effort yet.</div>';return;} const p=anPal(); anCharts.eff=new Chart(el,{type:"bar",data:{labels:rows.map(r=>r.ticket),datasets:[{label:"Additions",data:rows.map(r=>r.add),backgroundColor:p.green,borderRadius:4,stack:"s"},{label:"Deletions",data:rows.map(r=>r.del),backgroundColor:p.red,borderRadius:4,stack:"s"}]},options:{indexAxis:"y",responsive:true,maintainAspectRatio:false,scales:{x:{stacked:true,grid:{color:p.grid},ticks:{color:p.tick}},y:{stacked:true,grid:{display:false},ticks:{color:p.label,font:{weight:"600"}}}},plugins:{legend:{labels:{color:p.label,boxWidth:12,font:{size:11}}},tooltip:{callbacks:{afterTitle:items=>anTITLES[items[0].label]?anShort(anTITLES[items[0].label],50):""}}}}}); }
 function anRenderWorkLog(filter){ const box=document.getElementById("anFeed"); if(!box)return; const rows=filter?anWL.filter(e=>e.ticket===filter):anWL; if(!rows.length){box.innerHTML='<div class="l" style="padding:16px 2px">No work-log entries.</div>';return;} let html="",last=null; rows.forEach(e=>{ if(e.date!==last){html+='<div class="dh">'+esc(e.date)+'</div>';last=e.date;} const ttl=anTITLES[e.ticket]?'<span style="opacity:.7">'+esc(anShort(anTITLES[e.ticket],60))+'</span> ':""; const churn=(e.additions!=null||e.deletions!=null)?'<span class="pos">+'+(e.additions||0)+'</span> <span class="neg">−'+(e.deletions||0)+'</span>':""; html+='<div class="ev"><div class="tick">'+esc(e.ticket||"—")+'</div><div>'+ttl+esc(anShort(e.text||e.summary||"",170))+'</div><div style="text-align:right;font-size:11px">'+churn+'<br><span style="opacity:.5">'+esc(e.model||"")+'</span></div></div>'; }); box.innerHTML=html; }
 
+/* ---------- 🎹 Timeline (FBMCPF-158): Ableton-piano-roll ticket timeline ----------
+   Tickets render as clips on horizontal lanes (a DAW "track" per group). Time
+   runs left→right with a sticky ruler + optional datastream strip. Controls
+   mirror a piano roll: wheel-zoom centred on the pointer, shift+wheel /
+   grab-drag to pan, zoom buttons, adaptive tick granularity, selectable lane
+   grouping, and a single datastream overlay (tokens / cost / add+del). Draws on
+   two canvases (sticky ruler+stream, scrolling lanes) so it stays smooth for a
+   few hundred tickets. Data comes from get_timeline_data in one call; if the
+   server predates that tool we fall back to plotting list_tasks by date. */
+let tl = null;
+
+function tlStyle() {
+  if (document.getElementById("tlStyleTag")) return;
+  const s = document.createElement("style"); s.id = "tlStyleTag";
+  s.textContent =
+    '#tlOverlay{position:fixed;inset:0;z-index:60;display:flex;flex-direction:column;background:#faf9f5;color:#262624}' +
+    'html[data-theme="dark"] #tlOverlay{background:#1f1e1c;color:#f2f0e9}' +
+    '#tlOverlay .tlHead{display:flex;align-items:center;gap:12px;padding:10px 16px;background:#faf9f5;border-bottom:1px solid #e5e2da;flex-wrap:wrap}' +
+    'html[data-theme="dark"] #tlOverlay .tlHead{background:#262624;border-color:#37352f}' +
+    '#tlOverlay h1{font-size:15px;margin:0;white-space:nowrap}' +
+    '#tlOverlay .tlCtl{display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex:1}' +
+    '#tlOverlay .tlCtl label{font-size:11px;color:#6b6862;display:inline-flex;align-items:center;gap:5px;text-transform:uppercase;letter-spacing:.03em}' +
+    'html[data-theme="dark"] #tlOverlay .tlCtl label{color:#a8a49a}' +
+    '#tlOverlay .tlCtl select{font-size:12px;padding:4px 6px}' +
+    '#tlOverlay .tlZoom{display:inline-flex;gap:4px}' +
+    '#tlOverlay .tlZoom button{padding:4px 9px;font-weight:700;line-height:1}' +
+    '#tlOverlay .tlBody{flex:1;position:relative;overflow-y:auto;overflow-x:hidden;background:#f3f1ea}' +
+    'html[data-theme="dark"] #tlOverlay .tlBody{background:#1b1a18}' +
+    '#tlTop{position:sticky;top:0;z-index:3;font-size:0;line-height:0}' +
+    '#tlRuler{display:block;width:100%}' +
+    '#tlCanvas{display:block;width:100%;cursor:grab}' +
+    '#tlCanvas.grabbing{cursor:grabbing}' +
+    '#tlCanvas.pointing{cursor:pointer}' +
+    '.tlCard{position:fixed;z-index:70;background:#fff;color:#262624;border:1px solid #e5e2da;border-radius:10px;padding:10px 12px;font-size:12px;box-shadow:0 8px 28px rgba(0,0,0,.18);max-width:340px}' +
+    'html[data-theme="dark"] .tlCard{background:#2b2a27;color:#f2f0e9;border-color:#3d3b35;box-shadow:0 8px 28px rgba(0,0,0,.5)}' +
+    '.tlHover{pointer-events:none;max-width:280px}' +
+    '.tlPin{pointer-events:auto;width:320px;max-height:70vh;overflow:auto}' +
+    '.tlCard .tlTtl{font-weight:700;margin-bottom:3px;font-size:12.5px}' +
+    '.tlCard .tlSub{color:#6b6862;font-size:11px}' +
+    'html[data-theme="dark"] .tlCard .tlSub{color:#a8a49a}' +
+    '.tlCard .tlDot{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px;vertical-align:middle}' +
+    '.tlPin .tlPinHd{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}' +
+    '.tlPin .tlX{cursor:pointer;border:0;background:transparent;font-size:14px;color:#8a867c;padding:0 2px}' +
+    '.tlPin .tlKv{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;margin:8px 0;font-size:11.5px}' +
+    '.tlPin .tlKv .k{color:#6b6862}' +
+    'html[data-theme="dark"] .tlPin .tlKv .k{color:#a8a49a}' +
+    '.tlPin .tlFields{display:flex;gap:10px;flex-wrap:wrap;margin:6px 0;padding:6px 0;border-top:1px solid #eee;border-bottom:1px solid #eee}' +
+    'html[data-theme="dark"] .tlPin .tlFields{border-color:#37352f}' +
+    '.tlPin .tlFields label{font-size:11px;display:inline-flex;align-items:center;gap:4px;cursor:pointer}' +
+    '.tlPin .tlSec{margin-top:8px}' +
+    '.tlPin .tlSecT{font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:#8a867c;margin:0 0 3px}' +
+    '.tlPin .histRow{display:flex;gap:8px;padding:3px 0;border-top:1px solid #f0eee7;font-size:11px}' +
+    'html[data-theme="dark"] .tlPin .histRow{border-color:#302f2b}' +
+    '.tlPin .histTs{color:#8a867c;white-space:nowrap;font-variant-numeric:tabular-nums}' +
+    '.tlEmpty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#8a867c;font-size:13px}';
+  document.head.appendChild(s);
+}
+
+function tlOnResize() { if (tl) tlDraw(); }
+
+function closeTimeline() {
+  window.removeEventListener("resize", tlOnResize);
+  window.removeEventListener("mousemove", tlDragMove);
+  window.removeEventListener("mouseup", tlDragEnd);
+  const o = document.getElementById("tlOverlay"); if (o) o.remove();
+  tl = null;
+}
+
+async function openTimeline() {
+  tlStyle(); closeTimeline();
+  const o = document.createElement("div"); o.id = "tlOverlay";
+  o.innerHTML =
+    '<div class="tlHead">' +
+      '<h1>🎹 ' + esc(state.board) + ' — Timeline</h1>' +
+      '<div class="tlCtl">' +
+        '<label>Lanes <select id="tlGroup">' +
+          '<option value="product">Product</option><option value="model">Model</option>' +
+          '<option value="type">Type</option><option value="sprint">Sprint</option>' +
+          '<option value="status">Status</option></select></label>' +
+        '<label>Zoom <select id="tlGran">' +
+          '<option value="hour">Hour</option><option value="day" selected>Day</option>' +
+          '<option value="week">Week</option><option value="sprint">Sprint</option></select></label>' +
+        '<label>Overlay <select id="tlStream">' +
+          '<option value="none">None</option><option value="tokens">Tokens</option>' +
+          '<option value="cost">Cost</option><option value="churn">Add/Del</option></select></label>' +
+        '<label>Color <select id="tlColor">' +
+          '<option value="status">Status</option><option value="model">Model</option></select></label>' +
+        '<span class="tlZoom"><button class="ghost" id="tlZoomOut" title="Zoom out (wheel down)">−</button>' +
+        '<button class="ghost" id="tlZoomIn" title="Zoom in (wheel up)">+</button>' +
+        '<button class="ghost" id="tlFit" title="Fit everything">⤢ Fit</button></span>' +
+      '</div>' +
+      '<button class="ghost" onclick="closeTimeline()">✕ Close</button>' +
+    '</div>' +
+    '<div class="tlBody" id="tlBody">' +
+      '<div id="tlTop"><canvas id="tlRuler"></canvas></div>' +
+      '<canvas id="tlCanvas"></canvas>' +
+      '<div id="tlEmpty" class="tlEmpty" style="display:none">No dated tickets to plot yet.</div>' +
+      '<div id="tlHover" class="tlCard tlHover" style="display:none"></div>' +
+      '<div id="tlPin" class="tlCard tlPin" style="display:none"></div>' +
+    '</div>';
+  document.body.appendChild(o);
+  try {
+    const data = await call("get_timeline_data", { project: state.board });
+    tlInit(data);
+  } catch (err) {
+    try {
+      const all = await call("list_tasks", { project: state.board, limit: 500, compact: true });
+      const tasks = (all && all.tasks) || (Array.isArray(all) ? all : []);
+      tlInit({ project: state.board, spans: tasks.map(tlSpanFromTask), byDate: [], _fallback: true });
+    } catch (e2) {
+      const el = document.getElementById("tlBody");
+      if (el) el.innerHTML = '<div class="err" style="padding:24px">Couldn\'t load timeline: ' + esc(err && err.message || String(err)) + '</div>';
+    }
+  }
+}
+
+// Fallback span when the server has no get_timeline_data yet: date-only block.
+function tlSpanFromTask(t) {
+  const created = t.created || t.createdDate || null;
+  const completed = t.completed || t.completionDate || null;
+  return {
+    ticket: t.ticket || t.ticketNumber || "", title: t.title || "(untitled)",
+    type: t.type || (/B-\d+$/.test(t.ticket || "") ? "bug" : "feature"),
+    status: t.status || "Todo", product: t.product || null,
+    sprint: (t.labels || []).map(String).map(l => (l.match(/^sprint:(.+)$/i) || [])[1]).filter(Boolean)[0] || null,
+    model: (t.labels || []).map(String).map(l => (l.match(/^model:(.+)$/i) || [])[1]).filter(Boolean)[0] || null,
+    created, startedAt: null, completedAt: completed ? completed + "T23:59:59" : null,
+    lastActivity: null, tokens: 0, additions: 0, deletions: 0, cost: 0, days: [],
+  };
+}
+
+function tlInit(data) {
+  const spans = (data.spans || []).map(tlPrep).filter(Boolean);
+  tl = {
+    raw: data, spans, byDate: data.byDate || [],
+    group: "product", gran: "day", stream: "none", color: "status",
+    viewStart: 0, pxPerMs: 1,
+    gutterW: 148, rulerH: 30, streamH: 48, clipH: 18, clipGap: 4, lanePad: 8,
+    rects: [], lanes: [], pinned: null, pinSpan: null, hist: {},
+    dragging: false, moved: false, dx0: 0, dy0: 0, vs0: 0,
+  };
+  const bind = (id, key, after) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener("change", (e) => { tl[key] = e.target.value; if (after) after(); tlDraw(); });
+  };
+  bind("tlGroup", "group"); bind("tlGran", "gran"); bind("tlColor", "color"); bind("tlStream", "stream");
+  document.getElementById("tlZoomIn").addEventListener("click", () => tlZoom(tlMidX(), 1.3));
+  document.getElementById("tlZoomOut").addEventListener("click", () => tlZoom(tlMidX(), 1 / 1.3));
+  document.getElementById("tlFit").addEventListener("click", tlFit);
+  document.getElementById("tlEmpty").style.display = spans.length ? "none" : "flex";
+
+  const cv = document.getElementById("tlCanvas");
+  cv.addEventListener("wheel", tlWheel, { passive: false });
+  document.getElementById("tlRuler").addEventListener("wheel", tlWheel, { passive: false });
+  cv.addEventListener("mousedown", tlDragStart);
+  cv.addEventListener("mousemove", tlHoverMove);
+  cv.addEventListener("mouseleave", () => { const h = document.getElementById("tlHover"); if (h) h.style.display = "none"; });
+  window.addEventListener("mousemove", tlDragMove);
+  window.addEventListener("mouseup", tlDragEnd);
+  window.addEventListener("resize", tlOnResize);
+
+  tlFit();
+}
+
+function tlPrep(s) {
+  const p = (v) => { if (!v) return null; const t = Date.parse(String(v).length === 10 ? v + "T00:00:00" : v); return Number.isNaN(t) ? null : t; };
+  const DAY = 86400000;
+  let s0 = p(s.startedAt) != null ? p(s.startedAt) : p(s.created);
+  let s1 = p(s.completedAt) != null ? p(s.completedAt) : p(s.lastActivity);
+  if (s0 == null && s1 != null) s0 = s1;           // completion-day-only block
+  if (s0 == null) return null;                      // undated ticket → skip
+  if (s1 == null || s1 <= s0) s1 = s0 + DAY;        // min one-day block
+  return Object.assign({}, s, { _s0: s0, _s1: s1 });
+}
+
+function tlMidX() { const cv = document.getElementById("tlCanvas"); return tl.gutterW + (cv.clientWidth - tl.gutterW) / 2; }
+function tlTopH() { return tl.rulerH + (tl.stream !== "none" ? tl.streamH : 0); }
+
+function tlFit() {
+  if (!tl) return;
+  const cv = document.getElementById("tlCanvas");
+  const usable = Math.max(cv.clientWidth - tl.gutterW, 100);
+  if (!tl.spans.length) {
+    const now = Date.now();
+    tl.viewStart = now - 8 * 86400000;
+    tl.pxPerMs = usable / (16 * 86400000);
+    tlDraw(); return;
+  }
+  let lo = Infinity, hi = -Infinity;
+  for (const s of tl.spans) { if (s._s0 < lo) lo = s._s0; if (s._s1 > hi) hi = s._s1; }
+  const pad = Math.max((hi - lo) * 0.04, 43200000);
+  lo -= pad; hi += pad;
+  tl.viewStart = lo;
+  tl.pxPerMs = usable / (hi - lo);
+  tlDraw();
+}
+
+function tlZoom(centerX, factor) {
+  if (!tl) return;
+  const tAt = (centerX - tl.gutterW) / tl.pxPerMs + tl.viewStart;
+  tl.pxPerMs = Math.max(1e-9, tl.pxPerMs * factor);
+  tl.viewStart = tAt - (centerX - tl.gutterW) / tl.pxPerMs;
+  tlDraw();
+}
+
+function tlWheel(e) {
+  e.preventDefault();
+  const rect = document.getElementById("tlCanvas").getBoundingClientRect();
+  const x = Math.max(e.clientX - rect.left, tl.gutterW);
+  if (e.shiftKey) { tl.viewStart += e.deltaY / tl.pxPerMs; tlDraw(); }
+  else { tlZoom(x, e.deltaY < 0 ? 1.15 : 1 / 1.15); }
+}
+
+function tlDragStart(e) {
+  tl.dragging = true; tl.moved = false;
+  tl.dx0 = e.clientX; tl.dy0 = e.clientY; tl.vs0 = tl.viewStart;
+  document.getElementById("tlCanvas").classList.add("grabbing");
+}
+function tlDragMove(e) {
+  if (!tl || !tl.dragging) return;
+  const dx = e.clientX - tl.dx0, dy = e.clientY - tl.dy0;
+  if (Math.abs(dx) > 3 || Math.abs(dy) > 3) tl.moved = true;
+  tl.viewStart = tl.vs0 - dx / tl.pxPerMs;
+  const body = document.getElementById("tlBody");
+  if (body) { body.scrollTop -= (e.clientY - tl.dy0); tl.dy0 = e.clientY; }
+  tlDraw();
+}
+function tlDragEnd(e) {
+  if (!tl || !tl.dragging) return;
+  tl.dragging = false;
+  const cv = document.getElementById("tlCanvas"); if (cv) cv.classList.remove("grabbing");
+  if (!tl.moved) {
+    const hit = tlHitAt(tl.dx0, tl.dy0);
+    if (hit) tlPinShow(hit, tl.dx0, tl.dy0);
+    else tlPinHide();
+  }
+}
+
+function tlHitAt(clientX, clientY) {
+  const cv = document.getElementById("tlCanvas");
+  const rect = cv.getBoundingClientRect();
+  const x = clientX - rect.left, y = clientY - rect.top;
+  for (let i = tl.rects.length - 1; i >= 0; i--) {
+    const r = tl.rects[i];
+    if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return r.span;
+  }
+  return null;
+}
+
+function tlHoverMove(e) {
+  if (!tl || tl.dragging) return;
+  const cv = document.getElementById("tlCanvas");
+  const hit = tlHitAt(e.clientX, e.clientY);
+  cv.classList.toggle("pointing", !!hit);
+  const box = document.getElementById("tlHover");
+  if (!hit) { box.style.display = "none"; return; }
+  const dark = document.documentElement.getAttribute("data-theme") === "dark";
+  const col = tlClipColor(hit, tlColors(dark));
+  box.innerHTML =
+    '<div class="tlTtl"><span class="tlDot" style="background:' + col + '"></span>' + esc(tlShort(hit.title, 46)) + '</div>' +
+    '<div class="tlSub">' + esc(hit.ticket) + ' · ' + esc(hit.status) +
+    (hit.model ? ' · ' + esc(hit.model) : '') + ' · ' + fmtTokens(hit.tokens || 0) + ' tok</div>';
+  box.style.display = "block";
+  let left = e.clientX + 14, top = e.clientY + 16;
+  const w = box.offsetWidth || 260, h = box.offsetHeight || 48;
+  if (left + w > window.innerWidth - 8) left = e.clientX - w - 14;
+  if (top + h > window.innerHeight - 8) top = e.clientY - h - 14;
+  box.style.left = left + "px"; box.style.top = top + "px";
+}
+
+function tlPinHide() { tl.pinned = null; tl.pinSpan = null; const el = document.getElementById("tlPin"); if (el) el.style.display = "none"; tlDraw(); }
+
+async function tlPinShow(span, clientX, clientY) {
+  tl.pinned = span.ticket; tl.pinSpan = span;
+  const el = document.getElementById("tlPin");
+  el.style.display = "block";
+  el.innerHTML = tlPinBodyHTML(span);
+  const w = 320, h = Math.min(el.offsetHeight || 300, window.innerHeight * 0.7);
+  let left = clientX + 16; if (left + w > window.innerWidth - 8) left = Math.max(8, clientX - w - 16);
+  let top = clientY - 10; if (top + h > window.innerHeight - 8) top = Math.max(8, window.innerHeight - h - 12);
+  el.style.left = left + "px"; el.style.top = top + "px";
+  tlDraw();
+  if (tl.hist[span.ticket] === undefined) {
+    try { const res = await call("get_ticket_history", { project: state.board, ticket: span.ticket }); tl.hist[span.ticket] = (res && res.history) || []; }
+    catch (e) { tl.hist[span.ticket] = null; }
+  }
+  if (tl.pinned === span.ticket) tlRenderPinHist();
+}
+
+function tlPinBodyHTML(s) {
+  const dark = document.documentElement.getAttribute("data-theme") === "dark";
+  const col = tlClipColor(s, tlColors(dark));
+  const kv = [];
+  kv.push(['Status', esc(s.status)]);
+  if (s.product) kv.push(['Product', esc(s.product)]);
+  if (s.sprint) kv.push(['Sprint', esc(s.sprint)]);
+  if (s.model) kv.push(['Model', esc(s.model)]);
+  kv.push(['Worked', esc(tlFmtDay(s._s0)) + ' → ' + esc(tlFmtDay(s._s1))]);
+  return '<div class="tlPinHd"><div class="tlTtl"><span class="tlDot" style="background:' + col + '"></span>' +
+      esc(s.ticket) + ' — ' + esc(tlShort(s.title, 60)) + '</div>' +
+      '<button class="tlX" onclick="tlPinHide()">✕</button></div>' +
+    '<div class="tlKv">' + kv.map(r => '<span class="k">' + r[0] + '</span><span>' + r[1] + '</span>').join('') + '</div>' +
+    '<div class="tlFields">' +
+      '<label><input type="checkbox" id="tlfCost" checked onchange="tlRenderPinHist()"> 💰 Cost</label>' +
+      '<label><input type="checkbox" id="tlfStatus" checked onchange="tlRenderPinHist()"> 🕘 Status</label>' +
+      '<label><input type="checkbox" id="tlfWork" checked onchange="tlRenderPinHist()"> 📝 Work log</label>' +
+    '</div>' +
+    '<div id="tlPinHist"><span class="hint">Loading history…</span></div>';
+}
+
+function tlRenderPinHist() {
+  const box = document.getElementById("tlPinHist"); if (!box || !tl.pinSpan) return;
+  const s = tl.pinSpan, hist = tl.hist[s.ticket];
+  const want = (id) => { const c = document.getElementById(id); return !c || c.checked; };
+  let out = "";
+  if (want("tlfCost")) {
+    out += '<div class="tlSec"><div class="tlSecT">💰 Cost & effort</div>' +
+      '<div class="tlSub">' + fmtCost(s.cost || 0) + ' · ' + fmtTokens(s.tokens || 0) + ' tokens · ' +
+      '<span style="color:#3f9163">+' + (s.additions || 0) + '</span> / <span style="color:#c8503a">−' + (s.deletions || 0) + '</span></div></div>';
+  }
+  if (hist === null) { box.innerHTML = out + '<div class="hint" style="margin-top:8px">History unavailable (needs the 0.4.0+ server).</div>'; return; }
+  if (hist === undefined) { box.innerHTML = out + '<div class="hint" style="margin-top:8px">Loading history…</div>'; return; }
+  if (want("tlfStatus")) {
+    const rows = hist.filter(h => h.kind === "event" && h.field === "status");
+    out += '<div class="tlSec"><div class="tlSecT">🕘 Status history</div>' +
+      (rows.length ? rows.map(histRowHTML).join("") : '<span class="hint">No recorded status changes.</span>') + '</div>';
+  }
+  if (want("tlfWork")) {
+    const rows = hist.filter(h => h.kind === "work_log");
+    out += '<div class="tlSec"><div class="tlSecT">📝 Work log</div>' +
+      (rows.length ? rows.map(histRowHTML).join("") : '<span class="hint">No work-log entries.</span>') + '</div>';
+  }
+  box.innerHTML = out || '<span class="hint">Nothing selected.</span>';
+}
+
+/* ---- drawing ---- */
+function tlColors(dark) {
+  return {
+    grid: dark ? "rgba(255,255,255,.07)" : "rgba(0,0,0,.06)",
+    gridStrong: dark ? "rgba(255,255,255,.14)" : "rgba(0,0,0,.12)",
+    text: dark ? "#c8c3b5" : "#6b6862",
+    faint: dark ? "#7c786e" : "#9a968c",
+    lane: dark ? "rgba(255,255,255,.03)" : "rgba(0,0,0,.02)",
+    laneAlt: dark ? "rgba(255,255,255,.06)" : "rgba(0,0,0,.04)",
+    gutter: dark ? "#232220" : "#efece4",
+    top: dark ? "#232220" : "#f5f3ec",
+    clipText: dark ? "#15140f" : "#1c1a12",
+    today: dark ? "#d97757" : "#d0603a",
+    status: { "Todo": "#8a94b8", "In Progress": "#e0982b", "Review": "#9b6bd2", "Done": "#3f9163", "Blocked": "#c8503a" },
+    model: { "opus": "#9b6bd2", "sonnet": "#4b7fd4", "haiku": "#3f9163", "fable": "#d072a8", "unknown": "#8a867c" },
+    stream: { tokens: dark ? "#d97757" : "#d0603a", cost: dark ? "#5bb37f" : "#3f9163", add: "#3f9163", del: "#c8503a" },
+  };
+}
+function tlModelKey(m) {
+  const s = String(m || "").toLowerCase();
+  if (s.indexOf("opus") >= 0) return "opus";
+  if (s.indexOf("sonnet") >= 0) return "sonnet";
+  if (s.indexOf("haiku") >= 0) return "haiku";
+  if (s.indexOf("fable") >= 0) return "fable";
+  return "unknown";
+}
+function tlClipColor(s, C) {
+  if (tl.color === "model") return C.model[tlModelKey(s.model)] || C.model.unknown;
+  return C.status[s.status] || "#8a867c";
+}
+function tlBuildLanes() {
+  const keyOf = (s) => tl.group === "product" ? (s.product || "Unassigned")
+    : tl.group === "model" ? (tlModelKey(s.model))
+    : tl.group === "type" ? (s.type || "feature")
+    : tl.group === "sprint" ? (s.sprint || "No sprint")
+    : (s.status || "Todo");
+  const map = new Map();
+  for (const s of tl.spans) { const k = keyOf(s); if (!map.has(k)) map.set(k, []); map.get(k).push(s); }
+  const keys = [...map.keys()].sort((a, b) => {
+    const la = /^(unassigned|unknown|no sprint)$/i.test(a), lb = /^(unassigned|unknown|no sprint)$/i.test(b);
+    if (la !== lb) return la ? 1 : -1;
+    return String(a).localeCompare(String(b));
+  });
+  return keys.map((k) => {
+    const items = map.get(k).slice().sort((a, b) => a._s0 - b._s0);
+    const rowEnds = [];
+    for (const s of items) {
+      let r = 0; for (; r < rowEnds.length; r++) if (rowEnds[r] <= s._s0) break;
+      if (r === rowEnds.length) rowEnds.push(s._s1); else rowEnds[r] = s._s1;
+      s._row = r;
+    }
+    return { key: k, items, rows: Math.max(1, rowEnds.length) };
+  });
+}
+function tlRound(ctx, x, y, w, h, r) {
+  r = Math.min(r, h / 2, w / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+}
+function tlDraw() {
+  if (!tl) return;
+  const cv = document.getElementById("tlCanvas"), rl = document.getElementById("tlRuler");
+  if (!cv || !rl) return;
+  const dark = document.documentElement.getAttribute("data-theme") === "dark";
+  const C = tlColors(dark);
+  const dpr = window.devicePixelRatio || 1;
+  const cw = cv.clientWidth || 800;
+  const gutterW = tl.gutterW, topH = tlTopH();
+  const timeToX = (t) => (t - tl.viewStart) * tl.pxPerMs + gutterW;
+
+  const lanes = tlBuildLanes();
+  let y = tl.lanePad;
+  for (const lane of lanes) { lane.y = y; lane.h = lane.rows * (tl.clipH + tl.clipGap) + tl.clipGap; y += lane.h + 1; }
+  const contentH = Math.max(y + tl.lanePad, 60);
+  const bodyH = document.getElementById("tlBody").clientHeight - topH;
+  const canvasH = Math.max(contentH, bodyH);
+
+  // size ruler canvas
+  rl.style.height = topH + "px";
+  if (rl.width !== Math.round(cw * dpr) || rl.height !== Math.round(topH * dpr)) { rl.width = Math.round(cw * dpr); rl.height = Math.round(topH * dpr); }
+  // size lanes canvas
+  cv.style.height = canvasH + "px";
+  if (cv.width !== Math.round(cw * dpr) || cv.height !== Math.round(canvasH * dpr)) { cv.width = Math.round(cw * dpr); cv.height = Math.round(canvasH * dpr); }
+
+  const lx = cv.getContext("2d"); lx.setTransform(dpr, 0, 0, dpr, 0, 0); lx.clearRect(0, 0, cw, canvasH);
+  const rx = rl.getContext("2d"); rx.setTransform(dpr, 0, 0, dpr, 0, 0); rx.clearRect(0, 0, cw, topH);
+
+  const ticks = tlTicks(cw, timeToX);
+  const now = Date.now();
+
+  // lane backgrounds + labels
+  lx.font = '600 11px -apple-system,Segoe UI,Roboto,sans-serif';
+  lanes.forEach((lane, i) => {
+    lx.fillStyle = i % 2 ? C.laneAlt : C.lane;
+    lx.fillRect(0, lane.y, cw, lane.h);
+  });
+  // vertical grid on lanes
+  lx.strokeStyle = C.grid; lx.lineWidth = 1;
+  for (const t of ticks.list) { const x = timeToX(t); if (x < gutterW) continue; lx.beginPath(); lx.moveTo(x + .5, 0); lx.lineTo(x + .5, canvasH); lx.stroke(); }
+  // today marker
+  const tx = timeToX(now);
+  if (tx >= gutterW && tx <= cw) { lx.strokeStyle = C.today; lx.lineWidth = 1.5; lx.beginPath(); lx.moveTo(tx + .5, 0); lx.lineTo(tx + .5, canvasH); lx.stroke(); }
+
+  // clips
+  tl.rects = [];
+  for (const lane of lanes) {
+    for (const s of lane.items) {
+      let x0 = timeToX(s._s0), x1 = timeToX(s._s1);
+      if (x1 < gutterW || x0 > cw) continue;
+      const cx = Math.max(x0, gutterW), cxe = Math.min(x1, cw);
+      const w = Math.max(cxe - cx, 3);
+      const cy = lane.y + tl.clipGap + s._row * (tl.clipH + tl.clipGap);
+      const col = tlClipColor(s, C);
+      const sel = tl.pinned === s.ticket;
+      lx.fillStyle = col; lx.globalAlpha = s.status === "Done" ? 0.92 : 0.82;
+      tlRound(lx, cx, cy, w, tl.clipH, 4); lx.fill();
+      lx.globalAlpha = 1;
+      if (sel) { lx.lineWidth = 2; lx.strokeStyle = dark ? "#fff" : "#1c2333"; tlRound(lx, cx + 1, cy + 1, w - 2, tl.clipH - 2, 3); lx.stroke(); }
+      if (w > 44) {
+        lx.fillStyle = C.clipText; lx.font = '600 10.5px -apple-system,Segoe UI,Roboto,sans-serif';
+        lx.save(); lx.beginPath(); lx.rect(cx + 4, cy, w - 8, tl.clipH); lx.clip();
+        lx.fillText(s.ticket + (w > 120 ? "  " + tlShort(s.title, 40) : ""), cx + 6, cy + tl.clipH - 5);
+        lx.restore();
+      }
+      tl.rects.push({ x: cx, y: cy, w, h: tl.clipH, span: s });
+    }
+    // lane label in gutter (drawn last so it sits above clips)
+    lx.fillStyle = C.gutter; lx.fillRect(0, lane.y, gutterW - 1, lane.h);
+    lx.fillStyle = C.text; lx.font = '600 11px -apple-system,Segoe UI,Roboto,sans-serif'; lx.textBaseline = "middle";
+    lx.save(); lx.beginPath(); lx.rect(0, lane.y, gutterW - 6, lane.h); lx.clip();
+    lx.fillText(tlShort(String(lane.key), 20), 8, lane.y + lane.h / 2);
+    lx.restore(); lx.textBaseline = "alphabetic";
+  }
+  lx.strokeStyle = C.gridStrong; lx.beginPath(); lx.moveTo(gutterW + .5, 0); lx.lineTo(gutterW + .5, canvasH); lx.stroke();
+
+  /* ---- ruler + datastream on the sticky top canvas ---- */
+  rx.fillStyle = C.top; rx.fillRect(0, 0, cw, topH);
+  rx.strokeStyle = C.grid; rx.lineWidth = 1;
+  rx.fillStyle = C.text; rx.font = '11px -apple-system,Segoe UI,Roboto,sans-serif';
+  for (const t of ticks.list) {
+    const x = timeToX(t); if (x < gutterW - 1) continue;
+    rx.strokeStyle = C.grid; rx.beginPath(); rx.moveTo(x + .5, 0); rx.lineTo(x + .5, tl.rulerH); rx.stroke();
+    rx.fillStyle = C.text; rx.fillText(tlTickLabel(t, ticks.step), x + 4, tl.rulerH - 9);
+  }
+  if (tx >= gutterW && tx <= cw) { rx.strokeStyle = C.today; rx.lineWidth = 1.5; rx.beginPath(); rx.moveTo(tx + .5, 0); rx.lineTo(tx + .5, topH); rx.stroke(); }
+  // gutter corner label
+  rx.fillStyle = C.gutter; rx.fillRect(0, 0, gutterW - 1, topH);
+  rx.fillStyle = C.faint; rx.font = '600 10px -apple-system,Segoe UI,Roboto,sans-serif';
+  rx.fillText("LANES · " + tl.group.toUpperCase(), 8, 13);
+  rx.fillStyle = C.text; rx.font = '11px -apple-system,Segoe UI,Roboto,sans-serif';
+  rx.fillText(new Date(tl.viewStart).getFullYear() + "", 8, tl.rulerH - 9);
+  if (tl.stream !== "none") tlDrawStream(rx, C, cw, timeToX);
+  rx.strokeStyle = C.gridStrong; rx.beginPath(); rx.moveTo(gutterW + .5, 0); rx.lineTo(gutterW + .5, topH); rx.stroke();
+  rx.beginPath(); rx.moveTo(0, topH - .5); rx.lineTo(cw, topH - .5); rx.stroke();
+}
+
+function tlDrawStream(rx, C, cw, timeToX) {
+  const y0 = tl.rulerH, sh = tl.streamH, base = y0 + sh - 4, maxH = sh - 8;
+  const rows = tl.byDate || [];
+  const metric = tl.stream;
+  const val = (d) => metric === "tokens" ? (d.tokens || 0) : metric === "cost" ? (d.cost || 0) : Math.max(d.additions || 0, d.deletions || 0);
+  let max = 0; for (const d of rows) max = Math.max(max, val(d), metric === "churn" ? (d.deletions || 0) : 0);
+  if (max <= 0) {
+    rx.fillStyle = C.faint; rx.font = '10px -apple-system,Segoe UI,Roboto,sans-serif';
+    rx.fillText("no " + metric + " data in range", tl.gutterW + 8, y0 + sh / 2 + 3); return;
+  }
+  const DAY = 86400000;
+  const bw = Math.max(Math.min(DAY * tl.pxPerMs * 0.7, 22), 2);
+  for (const d of rows) {
+    const t = Date.parse(d.date + "T12:00:00"); if (Number.isNaN(t)) continue;
+    const x = timeToX(t); if (x < tl.gutterW - bw || x > cw + bw) continue;
+    if (metric === "churn") {
+      const ha = (d.additions || 0) / max * maxH, hd = (d.deletions || 0) / max * maxH;
+      rx.fillStyle = C.stream.add; rx.fillRect(x - bw / 2, base - ha, bw / 2 - 0.5, ha);
+      rx.fillStyle = C.stream.del; rx.fillRect(x + 0.5, base - hd, bw / 2 - 0.5, hd);
+    } else {
+      const h = val(d) / max * maxH;
+      rx.fillStyle = C.stream[metric] || C.stream.tokens;
+      tlRound(rx, x - bw / 2, base - h, bw, h, 2); rx.fill();
+    }
+  }
+  rx.fillStyle = C.faint; rx.font = '600 9.5px -apple-system,Segoe UI,Roboto,sans-serif';
+  const cap = metric === "cost" ? fmtCost(max) : metric === "tokens" ? fmtTokens(max) : ("±" + max);
+  rx.fillText((metric === "churn" ? "ADD/DEL" : metric.toUpperCase()) + " · max " + cap, tl.gutterW + 6, y0 + 11);
+}
+
+function tlTicks(cw, timeToX) {
+  const unit = { hour: 3600000, day: 86400000, week: 604800000, sprint: 1209600000 }[tl.gran] || 86400000;
+  let step = unit, guard = 0;
+  while (step * tl.pxPerMs < 62 && guard++ < 60) step *= (step < 86400000 ? 2 : step < 604800000 ? 7 : 2);
+  const t0 = (tl.gutterW - tl.gutterW) / tl.pxPerMs + tl.viewStart;
+  const t1 = (cw - tl.gutterW) / tl.pxPerMs + tl.viewStart;
+  const list = [];
+  let start = Math.floor(t0 / step) * step;
+  for (let t = start; t <= t1 + step; t += step) { if (t >= tl.viewStart) list.push(t); if (list.length > 400) break; }
+  return { list, step };
+}
+function tlTickLabel(t, step) {
+  const d = new Date(t);
+  const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  if (step < 86400000) return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+  return MON[d.getMonth()] + " " + d.getDate();
+}
+function tlFmtDay(t) { const d = new Date(t); const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]; return MON[d.getMonth()] + " " + d.getDate(); }
+function tlShort(s, n) { s = String(s || ""); return s.length > n ? s.slice(0, n - 1) + "…" : s; }
+
+/* ---------- sprint close-out reports (FBMCPF-156) ---------- */
+async function openReports() {
+  showModal('<h3>\U0001F4C4 Sprint reports</h3><div id="rpBody" class="hint">Loading…</div><div class="actions"><button class="primary" onclick="closeModal()">Close</button></div>');
+  let list;
+  try { list = await call("get_sprint_report", { project: state.board }); }
+  catch (e) { const el = document.getElementById("rpBody"); if (el) el.innerHTML = '<div class="err">' + esc(e.message || String(e)) + '</div>'; return; }
+  const reports = (list && list.reports) || [];
+  const body = document.getElementById("rpBody");
+  if (!body) return;
+  if (!reports.length) {
+    body.innerHTML = '<div class="hint">No sprint reports yet. Close a sprint from chat (“close sprint …” → close_sprint) to generate marketing / sales / technical / executive close-out reports.</div>';
+    return;
+  }
+  window.__rp = { reports };
+  const opts = reports.map((r, i) => '<option value="' + i + '">' + esc(r.sprint) + (r.metrics ? ' — ' + r.metrics.done + '/' + r.metrics.total + ' done' : '') + '</option>').join("");
+  body.innerHTML = '<label>Sprint</label><select id="rpSprint">' + opts + '</select>' +
+    '<div id="rpTabs" style="margin-top:10px;display:flex;gap:4px;flex-wrap:wrap"></div>' +
+    '<div id="rpView" style="max-height:52vh;overflow:auto;margin-top:8px;padding:4px 2px;line-height:1.5"></div>';
+  document.getElementById("rpSprint").addEventListener("change", (e) => rpLoadSprint(+e.target.value));
+  rpLoadSprint(0);
+}
+function rpLoadSprint(i) {
+  const r = window.__rp.reports[i]; if (!r) return;
+  window.__rp.cur = r;
+  const auds = r.audiences && r.audiences.length ? r.audiences : ["marketing", "sales", "technical", "executive"];
+  document.getElementById("rpTabs").innerHTML = auds.map((a) => '<button class="ghost rpTab" data-a="' + esc(a) + '" onclick="rpShow(\'' + esc(a) + '\')">' + esc(a) + '</button>').join("");
+  rpShow(auds[0]);
+}
+async function rpShow(a) {
+  [...document.querySelectorAll(".rpTab")].forEach((b) => { const on = b.dataset.a === a; b.style.fontWeight = on ? "700" : "400"; b.style.textDecoration = on ? "underline" : "none"; });
+  const view = document.getElementById("rpView"); if (!view) return;
+  view.innerHTML = '<div class="hint">Loading…</div>';
+  try {
+    const res = await call("get_sprint_report", { project: state.board, sprint: window.__rp.cur.sprint, audience: a });
+    view.innerHTML = rpMdLite(res.markdown || "");
+  } catch (e) { view.innerHTML = '<div class="err">' + esc(e.message || String(e)) + '</div>'; }
+}
+function rpInline(t) {
+  return esc(t).replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*([^*]+)\*/g, "<i>$1</i>");
+}
+function rpMdLite(md) {
+  return String(md || "").split(/\r?\n/).map((line) => {
+    if (/^### /.test(line)) return '<h4 style="margin:10px 0 4px">' + rpInline(line.slice(4)) + '</h4>';
+    if (/^## /.test(line)) return '<h3 style="margin:14px 0 6px">' + rpInline(line.slice(3)) + '</h3>';
+    if (/^# /.test(line)) return '<h2 style="margin:4px 0 8px">' + rpInline(line.slice(2)) + '</h2>';
+    if (/^> /.test(line)) return '<blockquote style="margin:6px 0;padding-left:10px;border-left:3px solid #d98b2b;opacity:.9">' + rpInline(line.slice(2)) + '</blockquote>';
+    if (/^- /.test(line)) return '<div style="margin-left:14px">• ' + rpInline(line.slice(2)) + '</div>';
+    if (/^---\s*$/.test(line)) return '<hr style="border:0;border-top:1px solid rgba(127,127,127,.25);margin:10px 0">';
+    if (!line.trim()) return '<div style="height:6px"></div>';
+    return '<div>' + rpInline(line) + '</div>';
+  }).join("");
+}
+
 async function openTests() {
   showModal('<h3>🧪 Testing</h3><div id="tsBody" class="hint">Loading…</div><div class="actions"><button class="primary" onclick="closeModal()">Close</button></div>');
   try {
@@ -1560,12 +2322,35 @@ function openOnboarding() {
     '<button class="tier" onclick="pickTier(\'personal\')"><b>Personal / non-commercial</b><span>Free forever. Private, hobby, or personal projects.</span></button>' +
     '<button class="tier" onclick="pickTier(\'public\')"><b>Public / open-source / nonprofit</b><span>Free forever for non-commercial public work.</span></button>' +
     '<button class="tier" onclick="pickTier(\'commercial-trial\')"><b>Commercial — start 24h trial</b><span>Evaluate commercially for 24 hours. Writes freeze after that until licensed.</span></button>' +
-    '<button class="tier" onclick="openActivate()"><b>Commercial — I have a license key</b><span>Enter a key issued after signing a commercial agreement.</span></button>'
+    '<button class="tier" onclick="openActivate()"><b>Commercial — I have a license key</b><span>Enter a key issued after signing a commercial agreement.</span></button>' +
+    '<hr style="margin:14px 0;border:none;border-top:1px solid #d8dce6">' +
+    '<label>Email (optional)</label>' +
+    '<p class="hint" style="margin:2px 0 6px">Get occasional product updates. Optional — nothing is sent unless you click Save; this is the only network call the onboarding screen makes.</p>' +
+    '<div style="display:flex;gap:6px"><input id="obEmail" type="email" placeholder="you@example.com" style="flex:1"><button class="ghost" onclick="submitOnboardingEmail()">Save email</button></div>' +
+    '<div id="obEmailMsg" class="hint" style="margin-top:4px"></div>'
   );
 }
 async function pickTier(type) {
   try { state.license = await call("set_usage_type", { type }); closeModal(); renderLicense(); toast("Usage set: " + type); }
   catch (e) { toast(e.message); }
+}
+// Optional onboarding email: explicit click of "Save email" is the only consent
+// signal — never auto-submitted, never sent as part of pickTier. register_email
+// itself no-ops (no local write, no network call) on an empty/invalid address.
+async function submitOnboardingEmail() {
+  const input = $("#obEmail");
+  const email = ((input && input.value) || "").trim();
+  const msgEl = $("#obEmailMsg");
+  if (!email) { toast("Enter an email first"); return; }
+  try {
+    const res = await call("register_email", { email });
+    if (msgEl) {
+      msgEl.textContent = res.posted ? "Saved — thanks!"
+        : res.stored ? "Saved locally — will retry sending."
+        : (res.reason || "Could not save that email.");
+    }
+    toast(res.stored ? "Email saved" : (res.reason || "Could not save email"));
+  } catch (e) { toast(e.message.slice(0, 140)); }
 }
 function openActivate() {
   showModal(
@@ -1650,6 +2435,8 @@ $("#importBtn").addEventListener("click", openImport);
 $("#linksBtn").addEventListener("click", openLinks);
 $("#testsBtn").addEventListener("click", openTests);
 $("#analyticsBtn").addEventListener("click", openAnalytics);
+$("#timelineBtn").addEventListener("click", openTimeline);
+$("#reportsBtn").addEventListener("click", openReports);
 $("#prioBtn").addEventListener("click", autoPrioritize);
 
 (async function init() {

@@ -10,6 +10,8 @@
  * are exported for unit testing; scanBoardCleanup/pruneBoard take a Board.
  */
 
+import { findUnlabeledTickets } from "./orchestration.js";
+
 const STOPWORDS = new Set(["the", "a", "an", "to", "for", "of", "and", "or", "in", "on", "with", "add", "support"]);
 const PLACEHOLDER_RE = /^(test|todo|tbd|tba|asdf|qwer|xxx+|placeholder|untitled|foo|bar|temp|delete ?me|wip)\b/i;
 
@@ -141,6 +143,10 @@ export function scanBoardCleanup(board, project, { staleDays = 30, similarity = 
   const tasks = board.listTasks(project, {});
   const duplicates = findDuplicateGroups(tasks, { threshold: similarity });
   const stale = findStale(tasks, { staleDays, now });
+  // FBMCPF-159: intake orchestration guard — open tickets missing a model:/cap:
+  // label never got a sub-model orchestration decision at intake. Surfaced here
+  // (read-only, same as duplicates/stale) rather than as a separate tool.
+  const unlabeled = findUnlabeledTickets(tasks);
   const suggestedRemovals = duplicates.flatMap((g) => g.removeCandidates.map((c) => c.ticket));
   return {
     project,
@@ -149,6 +155,8 @@ export function scanBoardCleanup(board, project, { staleDays = 30, similarity = 
     duplicates,
     staleCount: stale.length,
     stale,
+    unlabeledCount: unlabeled.length,
+    unlabeled,
     suggestedRemovals,
     note: suggestedRemovals.length
       ? `Review the groups, then prune_board with the ticket ids to remove (dry run by default; pass confirm:true to delete).`

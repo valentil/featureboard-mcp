@@ -12,6 +12,7 @@
 // board.listTasks/getTask (server/storage.js) — no new persistence, no writes.
 
 import { readWorkLog } from "./metadata.js";
+import { getPricing, costOfEvent } from "./pricing.js";
 
 export const ARM_RE = /^experiment:(board|chat)$/i;
 export const PAIR_RE = /^pair:(.+)$/i;
@@ -61,10 +62,13 @@ function fmtTokens(n) {
 export function evalReport(board, project) {
   const tasks = board.listTasks(project, {});
   const log = readWorkLog(board, project);
+  const pricing = getPricing(board, project);
   const tokensByTicket = new Map();
+  const costByTicket = new Map(); // FBMCPF-157: per-ticket $ cost, summed like tokens
   for (const e of log) {
     if (!e.ticket) continue;
     tokensByTicket.set(e.ticket, (tokensByTicket.get(e.ticket) || 0) + (e.tokens || 0));
+    costByTicket.set(e.ticket, (costByTicket.get(e.ticket) || 0) + costOfEvent(e, pricing));
   }
 
   const bugs = tasks.filter((t) => t.type === "bug");
@@ -99,6 +103,7 @@ export function evalReport(board, project) {
       pair,
       status: t.status,
       tokens: tokensByTicket.get(t.ticketNumber) || 0,
+      cost: Math.round((costByTicket.get(t.ticketNumber) || 0) * 1e4) / 1e4,
       wallDays,
       rework,
     });
@@ -130,6 +135,7 @@ export function evalReport(board, project) {
       totalAdditions: armTrials.reduce((s, tr) => s + (tr.additions || 0), 0),
       totalDeletions: armTrials.reduce((s, tr) => s + (tr.deletions || 0), 0),
       reworkTotal: armTrials.reduce((s, tr) => s + (tr.rework || 0), 0),
+      totalCost: Math.round(armTrials.reduce((s, tr) => s + (tr.cost || 0), 0) * 1e4) / 1e4,
     };
   }
 
@@ -144,7 +150,7 @@ export function evalReport(board, project) {
   const pairs = [];
   for (const [pair, entry] of byPairArm) {
     if (!entry.board || !entry.chat) continue;
-    const mk = (tr) => ({ ticket: tr.ticket, tokens: tr.tokens, wallDays: tr.wallDays, rework: tr.rework });
+    const mk = (tr) => ({ ticket: tr.ticket, tokens: tr.tokens, cost: tr.cost, wallDays: tr.wallDays, rework: tr.rework });
     const boardSide = mk(entry.board);
     const chatSide = mk(entry.chat);
     const tokenRatio = boardSide.tokens && chatSide.tokens ? chatSide.tokens / boardSide.tokens : null;

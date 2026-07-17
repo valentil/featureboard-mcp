@@ -92,7 +92,7 @@ export function assignSprint(board, project, tickets, sprint) {
     const t = board.getTask(project, ticket);
     const labels = (t.labels || []).filter((l) => !SPRINT_LABEL_RE.test(String(l)));
     if (name) labels.push(`sprint:${name}`);
-    const u = board.updateTask(project, ticket, { labels });
+    const u = board.updateTask(project, ticket, { labels }, { source: "assign_sprint" }); // FBMCPF-142
     updated.push({ ticket: u.ticketNumber, labels: u.labels });
   }
   return { sprint: name, updated };

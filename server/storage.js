@@ -18,11 +18,17 @@
 import fs from "node:fs";
 import path from "node:path";
 import { getProjectConfig } from "./metadata.js";
+import { appendEvent } from "./events.js";
 
 const FEATURE_FILE = "featurelist.md";
 const BUG_FILE = "buglist.md";
 const INDEX_DIR = ".featureboard";
 const INDEX_FILE = "index.json";
+
+// FBMCPF-142: local copy of sprints.js' SPRINT_LABEL_RE (duplicated, not
+// imported, to keep this the single low-level storage module with no
+// upward deps on sprints.js/metadata.js beyond getProjectConfig).
+const SPRINT_LABEL_RE = /^sprint:(.+)$/i;
 
 // ---------------------------------------------------------------------------
 // Parsing  (ported from the original js/parser.js, trimmed to the fields we use)
@@ -816,8 +822,13 @@ export class Board {
     return result;
   }
 
-  updateTask(name, ticket, fields) {
-    return this._mutate(name, ticket, (t) => {
+  updateTask(name, ticket, fields, { source = "update_task" } = {}) {
+    // FBMCPF-142: collect audit-trail diffs while mutating, append them only
+    // after _mutate returns successfully (a thrown validation error, e.g. a
+    // blockedBy cycle, must never leave a partial event behind).
+    const changes = [];
+    const result = this._mutate(name, ticket, (t) => {
+      const before = { priority: t.priority, dueDate: t.dueDate, labels: (t.labels || []).slice() };
       if (fields.title != null) t.title = fields.title;
       if (fields.description != null) t.description = fields.description;
       if (fields.dueDate !== undefined) {
@@ -842,11 +853,34 @@ export class Board {
         }
         t.blockedBy = list;
       }
+      if ((t.priority ?? null) !== (before.priority ?? null)) {
+        changes.push({ field: "priority", from: before.priority ?? null, to: t.priority ?? null });
+      }
+      if ((t.dueDate || null) !== (before.dueDate || null)) {
+        changes.push({ field: "dueDate", from: before.dueDate || null, to: t.dueDate || null });
+      }
+      const afterLabels = t.labels || [];
+      if (JSON.stringify(afterLabels) !== JSON.stringify(before.labels)) {
+        const beforeSprint = before.labels.find((l) => SPRINT_LABEL_RE.test(String(l)));
+        const afterSprint = afterLabels.find((l) => SPRINT_LABEL_RE.test(String(l)));
+        const beforeSprintName = beforeSprint ? String(beforeSprint).replace(SPRINT_LABEL_RE, "$1") : null;
+        const afterSprintName = afterSprint ? String(afterSprint).replace(SPRINT_LABEL_RE, "$1") : null;
+        if (beforeSprintName !== afterSprintName) {
+          changes.push({ field: "sprint", from: beforeSprintName, to: afterSprintName });
+        }
+        const beforeOther = before.labels.filter((l) => !SPRINT_LABEL_RE.test(String(l)));
+        const afterOther = afterLabels.filter((l) => !SPRINT_LABEL_RE.test(String(l)));
+        if (JSON.stringify(beforeOther) !== JSON.stringify(afterOther)) {
+          changes.push({ field: "labels", from: beforeOther, to: afterOther });
+        }
+      }
       return t;
     });
+    for (const c of changes) appendEvent(this, name, { ticket, source, ...c });
+    return result;
   }
 
-  setStatus(name, ticket, status, completionSummary, { approve = false } = {}) {
+  setStatus(name, ticket, status, completionSummary, { approve = false, source = "set_status" } = {}) {
     // FBMCPF-134 approval gate: when requireReview is on, a ticket must pass
     // through "Review" before it can be marked Done (unless approve:true).
     let requireReview = false;
@@ -858,10 +892,12 @@ export class Board {
         requireReview = false;
       }
     }
-    return this._mutate(name, ticket, (t) => {
+    let prevStatus = null;
+    const result = this._mutate(name, ticket, (t) => {
       if (requireReview && status === "Done" && t.status !== "Review" && approve !== true) {
         throw new Error('requireReview is on — move the ticket to "Review" first, or pass approve:true to override.');
       }
+      prevStatus = t.status;
       t.status = status;
       if (status === "Done") {
         if (completionSummary) t.completionSummary = completionSummary;
@@ -869,6 +905,11 @@ export class Board {
       }
       return t;
     });
+    // FBMCPF-142: audit-trail event, only once the status actually changed.
+    if (prevStatus !== null && prevStatus !== status) {
+      appendEvent(this, name, { ticket, field: "status", from: prevStatus, to: status, source });
+    }
+    return result;
   }
 
   linkTasks(name, ticket, linkedIssue) {

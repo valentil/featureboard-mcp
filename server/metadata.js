@@ -17,6 +17,9 @@ import path from "node:path";
 import { getRequirements } from "./requirements.js";
 import { decisionsForTicket } from "./decisions.js";
 import { handoffsFor } from "./handoffs.js";
+import { matchKbForTicket } from "./kb.js";
+import { unresolvedReviewComments } from "./reviews.js";
+import { worktreeForTicket } from "./worktrees.js";
 
 const WORK_LOG = "agent_work_log.md";
 const LEGACY_CONFIG = "project_config.json";
@@ -40,7 +43,7 @@ function atomicWrite(p, content) {
 // ---------------------------------------------------------------------------
 
 // FBMCPF-120: "sprints" holds the sprint registry (name/start/end/goal)
-const CONFIG_KEYS = ["products", "codeLocation", "agentModel", "description", "website", "featurePrefix", "bugPrefix", "customPrompt", "brandTitle", "brandSubtitle", "brandWords", "brandVoice", "brandPrimary", "brandAccent", "brandLogo", "brandFont", "imageTool", "sprints", "stage", "gitTargets", "requireReview", "slackWebhook", "slackEvents"];
+const CONFIG_KEYS = ["products", "codeLocation", "agentModel", "description", "website", "featurePrefix", "bugPrefix", "customPrompt", "brandTitle", "brandSubtitle", "brandWords", "brandVoice", "brandPrimary", "brandAccent", "brandLogo", "brandFont", "imageTool", "sprints", "stage", "gitTargets", "worktreeDir", "requireReview", "slackWebhook", "slackEvents", "pricing"];
 
 /** Merged view: managed config overlaid on legacy project_config.json. */
 export function getProjectConfig(board, project) {
@@ -634,6 +637,17 @@ export function getWorkPacket(board, project, ticket) {
     if (decisions.length) packet.decisions = decisions;
     const handoffs = handoffsFor(board, project, task.ticketNumber);
     if (handoffs.length) packet.handoffs = handoffs;
+    // FBMCPF-141: keyword-match kb/ docs against title/description/labels/product;
+    // top few (title + short excerpt + path) only, so packets stay lean.
+    const kbMatches = matchKbForTicket(board, project, task);
+    if (kbMatches.length) packet.kbMatches = kbMatches;
+    // FBMCPF-135: unresolved review comments the next agent must act on.
+    const reviewComments = unresolvedReviewComments(board, project, task.ticketNumber);
+    if (reviewComments.length) packet.reviewComments = reviewComments;
+    // FBMCPF-136: when a git worktree exists for this ticket, surface its path,
+    // branch and merge-back guidance so a parallel sub-agent edits there, not the repo.
+    const wt = worktreeForTicket(board, project, task.ticketNumber);
+    if (wt) packet.worktree = wt;
   } catch {}
   return packet;
 }

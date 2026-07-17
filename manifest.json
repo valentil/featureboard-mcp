@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "featureboard",
   "display_name": "FeatureBoard",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "A local, file-backed feature/bug board for agentic projects. Claude reads and writes your featurelist.md / buglist.md boards directly.",
   "long_description": "FeatureBoard turns your project's markdown task files into a first-class board that Claude can manage. It keeps the same `featurelist.md` / `buglist.md` format used by the original FeatureBoard app, with FBF-/FBB- ticket IDs, statuses (Todo / In Progress / Done), due dates, products, labels, linked issues and completion summaries. Because Claude is now the agent, workflow tools like brainstorm (bulk-add) and decompose fit naturally: Claude generates the ideas, the board persists them. Read-only analytics summarize velocity and open/closed counts.",
   "author": {
@@ -71,6 +71,10 @@
       "description": "Import a backlog from raw text into a board. Accepts a markdown checklist (- [ ] Title: desc), CSV (with a header row: title, description, product, priority, type, due, labels, status), or a JSON array/object ({features:[…], bugs:[…]} or a flat array). Format is auto-detected. Set dryRun to preview the parsed tasks without writing them."
     },
     {
+      "name": "validate_feedback",
+      "description": "Parse unstructured feedback (user notes, review comments, bug reports) into candidate tickets, each with a suggested type (feature/bug), product, and priority from deterministic keyword heuristics only — no model calls. DRY-RUN BY DEFAULT (apply:false, the default): returns the structured candidate list for you to review/edit; creates NOTHING. Always dry-run first. When ready, call again with apply:true to bulk-create the candidates (optionally pass back an edited `candidates` array — e.g. from the dry-run response with corrected type/product/priority/title — instead of re-parsing `feedback`)."
+    },
+    {
       "name": "plan_work",
       "description": "Turn a user request into board items in one step. Optionally creates the project, then adds the features and bugs you list. Use this as the FIRST step when starting a substantive request, then work the tickets one at a time. Returns all created tickets."
     },
@@ -95,8 +99,16 @@
       "description": "Move one or more tickets into a sprint — sets the sprint:<name> label, replacing any existing sprint label. Pass sprint: null to send tickets back to the backlog."
     },
     {
+      "name": "close_sprint",
+      "description": "Close a sprint and generate four audience-specific close-out reports (marketing, sales, technical, executive) from its tickets, work log, and metrics (velocity, tokens, $ cost, ADRs touched, CRM ticket links). Refuses to close while the sprint still has open (non-Done) tickets unless force:true. Writes reports/<sprint>/<audience>.md pads under the project and returns their paths, a metric summary, and a per-audience LLM prompt (packet + brief) for richer draft copy. Posts a Slack summary when the project has Slack configured (never fails the close on a Slack error)."
+    },
+    {
+      "name": "get_sprint_report",
+      "description": "Read the close-out reports written by close_sprint. With no sprint: list sprints that have reports. With a sprint but no audience: the manifest + which audiences exist. With sprint + audience (marketing|sales|technical|executive): that report's markdown."
+    },
+    {
       "name": "graduate_project",
-      "description": "One-command incubator \\u2192 dedicated-repo graduation (lifecycle \"Option C\"). Copies the project's CODE out to targetPath, EXCLUDING pad files (featurelist/buglist/scratchpad/etc) and junk (node_modules, .git, *.log, *.zip, tmp_*, ...), then repoints codeLocation, sets stage=graduated and gitTargets.codeRepo, and records the move in the scratchpad. The pad STAYS in the boards dir \\u2014 it is only read, never modified or deleted \\u2014 and the target repo additionally gets a read-only snapshot mirror of the pad files under .featureboard/. When commit is on and git is available the copied code + mirror are git-init'd (if needed) and committed; git absence/failure is tolerated as a warning. DRY-RUN BY DEFAULT: apply is false unless you pass apply:true, so the first call returns the plan (source, target, files, skipped) without touching the filesystem. CADSolver was the manual prototype."
+      "description": "One-command incubator \\u2192 dedicated-repo graduation (lifecycle \"Option C\"). Copies the project's CODE out to targetPath, EXCLUDING pad files (featurelist/buglist/scratchpad/etc) and junk (node_modules, .git, *.log, *.zip, tmp_*, ...), then repoints codeLocation, sets stage=graduated and gitTargets.codeRepo, and records the move in the scratchpad. The pad STAYS in the boards dir — it is only read, never modified or deleted — and the target repo additionally gets a read-only snapshot mirror of the pad files under .featureboard/. When commit is on and git is available the copied code + mirror are git-init'd (if needed) and committed; git absence/failure is tolerated as a warning. DRY-RUN BY DEFAULT: apply is false unless you pass apply:true, so the first call returns the plan (source, target, files, skipped) without touching the filesystem. CADSolver was the manual prototype."
     },
     {
       "name": "estimate_work",
@@ -112,7 +124,7 @@
     },
     {
       "name": "eval_report",
-      "description": "Compare board-workflow vs chat-workflow trials using label conventions: experiment:board / experiment:chat marks a ticket's arm, and an optional pair:<id> label ties a board trial to its chat counterpart. Returns every labeled trial (tokens from the work log, additions/deletions, wall-clock days, rework = linked bugs within 7 days of completion), per-arm medians/totals, matched pairs with a token ratio, and a one-line summary."
+      "description": "Compare board-workflow vs chat-workflow trials using label conventions: experiment:board / experiment:chat marks a ticket's arm, and an optional pair:<id> label ties a board trial to its chat counterpart. Returns every labeled trial (tokens and $ cost from the work log, additions/deletions, wall-clock days, rework = linked bugs within 7 days of completion), per-arm medians/totals (including totalCost), matched pairs with a token ratio, and a one-line summary."
     },
     {
       "name": "export_tasks",
@@ -147,12 +159,36 @@
       "description": "Write a ticket's handoff note (handoffs/<TICKET>.md): free-form markdown for whatever a successor ticket needs to know. Overwrites any existing note. Surfaces automatically in the work packets of tickets blockedBy this one; read it via get_work_packet."
     },
     {
+      "name": "get_ticket_history",
+      "description": "Full audit timeline for one ticket: recorded field-change events (status moves, priority moves, label/sprint changes, due-date edits — captured automatically by set_status/update_task/assign_sprint) merged in chronological order with that ticket's work-log entries (tokens/additions/deletions per work session). Tolerates tickets with no recorded events yet (pre-FBMCPF-142 tickets still show their work-log history)."
+    },
+    {
+      "name": "get_timeline_data",
+      "description": "Per-ticket worked spans for the board's piano-roll Timeline view, in one read pass. For every ticket returns: created date, startedAt (first status→In Progress audit event, falling back to its earliest work-log entry, then createdDate — startedSource says which), completedAt (completionDate or last status→Done event), lastActivity, status/product/type/sprint/priority/model for lane grouping and colour, cumulative tokens/additions/deletions/cost, and per-day work rollups (days[]) for clip intensity. Also returns a board-wide byDate[] rollup (tokens/additions/deletions/cost per day) for the datastream overlay strip. Optional from/to (ISO date or datetime) keep only spans whose worked window overlaps that range. Read-only."
+    },
+    {
+      "name": "get_ticket_diff",
+      "description": "Capture the code changes made for a ticket: find commits in the project's code repo (codeLocation / gitTargets.codeRepo) whose message mentions the ticket id and return, per commit, a summary (hash/author/date/subject) plus a size-capped unified diff (git show). Read-only — never writes or fetches. `context` sets the unified context-line count; `maxBytes` caps the total diff bytes returned (over-cap diffs are truncated with a notice, later commits omitted). Returns a warning (not an error) when the project has no codeLocation, the path is not a git repo, or no commits mention the ticket."
+    },
+    {
+      "name": "add_review_comment",
+      "description": "Attach a PR-style review comment to a ticket (optionally anchored to a file and line). Unresolved review comments surface in the ticket's next work packet (get_work_packet.reviewComments) so the next agent acts on the feedback, and — when the ticket is in Review — a comment sends it back into next_task's queue. Also recorded on the ticket's audit history."
+    },
+    {
+      "name": "list_review_comments",
+      "description": "List review comments for a project, optionally scoped to one ticket, with their resolved state. Set includeResolved:false to see only open feedback."
+    },
+    {
+      "name": "resolve_review_comment",
+      "description": "Mark a review comment resolved by its id (RC-<n>). Idempotent. Once every comment on a ticket is resolved it stops surfacing in the work packet and (if in Review) leaves next_task's queue."
+    },
+    {
       "name": "repair_duplicate_ids",
       "description": "Find ticket ids that appear more than once on a board (legacy data can carry collisions like FBF-491 twice), and optionally renumber the later occurrences to fresh ids. Dry-run by default; pass apply:true to write. Note: updates to a duplicated id are refused until the board is repaired."
     },
     {
       "name": "set_status",
-      "description": "Move a task between Todo / In Progress / Review / Done. Review sits between In Progress and Done when requireReview is on; approve:true overrides the gate. When moving to Done you can also record structured completion metadata (model, tokens, additions, deletions) — these are written to the work log and roll up into velocity/metrics."
+      "description": "Move a task between Todo / In Progress / Review / Done. Review sits between In Progress and Done when requireReview is on; approve:true overrides the gate. When moving to Done you can also record structured completion metadata (model, tokens, additions, deletions) — these are written to the work log and roll up into velocity/metrics. For graduated projects, moving to Done also refreshes the pad snapshot in <codeRepo>/.featureboard/ (best-effort; a mirror failure never blocks the status change)."
     },
     {
       "name": "decompose_feature",
@@ -176,7 +212,7 @@
     },
     {
       "name": "scan_board_cleanup",
-      "description": "Read-only deep-clean scan: finds likely-duplicate tickets (grouped by title similarity, each group nominating a keeper + removal candidates) and stale/placeholder tickets (old Todo items, placeholder titles). Returns a suggested removal set to feed prune_board. Never deletes."
+      "description": "Read-only deep-clean scan: finds likely-duplicate tickets (grouped by title similarity, each group nominating a keeper + removal candidates), stale/placeholder tickets (old Todo items, placeholder titles), and open tickets missing a model:/cap: label (FBMCPF-159 intake orchestration guard — nothing should sit in the queue without a sub-model orchestration decision). Returns a suggested removal set to feed prune_board. Never deletes."
     },
     {
       "name": "scan_test_cleanup",
@@ -200,7 +236,7 @@
     },
     {
       "name": "get_metrics",
-      "description": "Read-only snapshot: feature/bug counts by status, completions by date, and velocity from the work log (tokens, additions/deletions, active days, recent tokens)."
+      "description": "Read-only snapshot: feature/bug counts by status, completions by date, and velocity from the work log (tokens, additions/deletions, active days, recent tokens, and $ cost by model — see project config \"pricing\" to override the default Anthropic API rates)."
     },
     {
       "name": "predict_due_dates",
@@ -208,7 +244,7 @@
     },
     {
       "name": "get_project_config",
-      "description": "Read a board's settings: products, code location, agent model, prefixes, website, description. Merges MCP-managed config over the legacy project_config.json."
+      "description": "Read a board's settings: products, code location, agent model, prefixes, website, description, pricing overrides. Merges MCP-managed config over the legacy project_config.json."
     },
     {
       "name": "set_project_config",
@@ -243,6 +279,22 @@
       "description": "Append a line or block to a board's scratchpad.md, preserving existing notes. Mention a ticket id (e.g. FBF-12) to have it surface in that ticket's work packet."
     },
     {
+      "name": "add_kb_doc",
+      "description": "Write a markdown doc into a board's kb/ folder (a per-project knowledge base beyond the scratchpad): title + markdown body, stored as kb/<slugified-title>.md. Calling again with the SAME title updates that doc in place; a different title that slugifies to the same filename gets a numeric suffix instead of clobbering the original. Docs are keyword-matched into work packets automatically via get_work_packet."
+    },
+    {
+      "name": "list_kb_docs",
+      "description": "List a board's kb/ docs: slug, title, updatedAt, size, and a short excerpt of each (not the full body — use get_kb_doc for that)."
+    },
+    {
+      "name": "get_kb_doc",
+      "description": "Read one kb doc's full markdown content by slug (or title — it gets slugified). Returns null-ish (not found) when no such doc exists."
+    },
+    {
+      "name": "search_kb",
+      "description": "Keyword search across a board's kb doc titles + content, ranked (title hits weighted above content hits). Returns matches with a short excerpt around the first hit and the doc's path. This is the same matcher get_work_packet uses to inject relevant docs into a ticket's packet (kbMatches)."
+    },
+    {
       "name": "drift_start",
       "description": "Begin a drift-evaluation run over a board's Done tickets. mode 'sample' evaluates a seeded random subset (fast statistical estimate); mode 'full' evaluates every Done ticket. Returns a runId + the tickets to score. Then, for each ticket, compare its scope/description/DoD + work log against the actual code it touched (use get_work_packet and the project's codeLocation) and call drift_record with a 0–100 fidelity score; finish with drift_report. Use the evaluate_drift prompt to run the whole loop."
     },
@@ -268,7 +320,7 @@
     },
     {
       "name": "get_agent_monitor",
-      "description": "Snapshot of the board's currently-running work: every In Progress ticket with its latest work-log activity, cumulative additions/deletions/tokens, idle time since last activity, and a stalled flag (In Progress but no recent progress). Sorted most-recently-active first. Use it to see what's underway and catch stuck tickets."
+      "description": "Live snapshot of the board's currently-running work: every In Progress ticket with elapsed time since it went In Progress (from the ticket_events.jsonl audit log, falling back to its earliest work-log entry or createdDate when there's no recorded status event), its last event (most recent audit event or work-log entry, whichever is newer) with age, token spend so far vs its cap:<tokens> label and the resulting spend ratio, and a stalled flag (no event/work-log activity within stallMinutes, default 30). Also reports costSoFar and capCost in dollars (via project-config-overridable pricing; capCost is null when no model can be inferred for the ticket). Sorted most-recently-active first, with a top-level summary (count, stalledCount, totalSpend, totalCap, totalCostSoFar, totalCapCost, stalledTickets). Pairs with churn mode: a stalled ticket mid-churn usually means the agent is stuck or has gone quiet. Use it to see what's underway and catch stuck tickets."
     },
     {
       "name": "get_health",
@@ -321,6 +373,22 @@
     {
       "name": "coverage_by_product",
       "description": "Roll up, per product, how many of its tickets have at least one recorded test run vs none, so testing gaps are visible on the board. Includes an overall rollup and the untested tickets per product."
+    },
+    {
+      "name": "generate_multi_model_tests",
+      "description": "For a bug/ticket, fan one generation prompt out across model tiers (default fable, opus, sonnet) — each surfaces different failure concepts. Returns the SAME prompt once per tier plus a per-tier storage path (test/<ticket>.<model>.test.js) and instruction. Read-only: run each tier yourself, then submit results to save_generated_test. Builds on suggest_test_stub / generate_test (FBMCPF-102)."
+    },
+    {
+      "name": "save_generated_test",
+      "description": "Ingest the model-generated test variants for a ticket (submit them as variants: [{model, content}]). Tags each with its model, dedupes identical/near-identical assertions across variants (whitespace + variable names normalized; a fully-duplicate test block is dropped and noted), and returns the runnable files to write (test/<ticket>.<model>.test.js) plus a queryable manifest (test/<ticket>.variants.json). Read-only: it returns file contents for you to write."
+    },
+    {
+      "name": "list_test_variants",
+      "description": "List the per-model test variants present for a ticket (test/<ticket>.<model>.test.js) and which model tiers cover it. Reads the project's test/ dir under its code location; feeds the multi-model eval (FBMCPF-148)."
+    },
+    {
+      "name": "eval_model_matrix",
+      "description": "FBMCPF-148 — run a ticket's per-model test variants (test/<ticket>.<model>.test.js, from generate_multi_model_tests / save_generated_test) against seeded regressions to see which tier's tests actually catch bugs. Seeds deterministic textual mutations (a built-in set, or caller-supplied find/replace patch specs) into a COPY of targetFile inside a fresh temp dir — the repo is never touched — runs each model's variant file with node --test before and after, and reports per-model defects caught, unique-catch rate (defects only that tier's tests caught), an overlap matrix, and cost per caught defect (tokensByModel × pricing.js rates). Omit targetFile to just run the baseline pass/fail matrix (no seeded mutations). Writes nothing to the repo unless writeEvidence:true, which appends the formatted readout to docs/EVIDENCE.md under codeLocation — mode is required so a demo run can never be silently mistaken for real defect data."
     },
     {
       "name": "get_regressions",
@@ -676,7 +744,19 @@
     },
     {
       "name": "commit_feature",
-      "description": "If git integration is enabled for the project, commit (and optionally push) the current changes in the project's code repo with a message like 'FBMCPF-##: title' — mirroring the original OpenClaw git flow. No-ops with a reason when disabled. Runs on this machine using its git credentials."
+      "description": "If git integration is enabled for the project, commit (and optionally push) the current changes in the project's code repo with a message like 'FBMCPF-##: title' — mirroring the original OpenClaw git flow. For graduated projects, also refreshes a read-only snapshot of the pad (featurelist.md, buglist.md, scratchpad.md, agent_work_log.md, config) into <codeRepo>/.featureboard/ and includes it in the same commit — the central pad stays authoritative, this is a one-way mirror. No-ops with a reason when disabled. Runs on this machine using its git credentials."
+    },
+    {
+      "name": "create_worktree",
+      "description": "Create (or reuse) an isolated git worktree for a ticket so several tickets can be worked in PARALLEL - each sub-agent edits its own checked-out directory on branch ticket/<ticket>, sharing one .git object store, never the shared repo working tree. Created at <worktreeDir>/<ticket>. IMPORTANT SYNC CAVEAT: worktrees are placed OUTSIDE the code repo by default (sibling directory <codeLocation>-worktrees/), configurable via the project config key worktreeDir - under Cowork, a worktree created INSIDE a synced repo mount can corrupt git internals or fail to sync, so this tool REFUSES a worktreeDir inside the repo and never auto-creates worktrees in the repo itself. Reuses an existing worktree at the path; creates branch ticket/<ticket> off baseRef (or current HEAD) when absent. Returns the worktree path, branch, and merge-back guidance. Errors clearly when the project has no codeLocation, the path is not a git repo, git is too old (< 2.5), or a non-worktree directory squats the path."
+    },
+    {
+      "name": "list_worktrees",
+      "description": "List the git worktrees for a project's code repo (git worktree list). Each entry carries its path, branch, HEAD, whether it's the main repo working tree (isMain), and the derived ticket id. Also returns the resolved worktreeDir where per-ticket worktrees live (OUTSIDE the repo by default; see the sync caveat on create_worktree). Read-only."
+    },
+    {
+      "name": "cleanup_worktree",
+      "description": "Remove a ticket's git worktree once its branch has been merged back (git worktree remove + prune). REFUSES when the worktree has uncommitted changes unless force:true. No-ops with a message when no worktree is registered for the ticket, and never force-deletes a path git doesn't recognise as a worktree. Leaves the ticket/<ticket> branch intact (merge it back first with the merge-back guidance)."
     },
     {
       "name": "license_status",
@@ -693,6 +773,10 @@
     {
       "name": "request_commercial_license",
       "description": "Start the commercial licensing process. Records the request locally (for the licensor's CRM) and returns the licensing URL and email to complete a signed agreement. After the licensor issues a key, use activate_license."
+    },
+    {
+      "name": "register_email",
+      "description": "Store an email address the user explicitly typed and submitted on the tier-picker onboarding screen (the 'Save email' action — separate from picking a usage tier), then POST it once to the featureboard.ai registrations listener. This is deliberate outbound egress: the board is otherwise local-only, and this is the only call it makes without a user-configured destination (contrast notify_slack, which requires a webhook the user pastes in). There is no usage telemetry — only this email, and only after explicit submit. Never call this speculatively (e.g. on every onboarding render, or with an unconfirmed/autofilled value); omit or pass an empty string to skip. No-ops (no local write, no network call) when email is empty or malformed. Safe to call again later — once posted, it will not re-POST."
     }
   ],
   "prompts": [

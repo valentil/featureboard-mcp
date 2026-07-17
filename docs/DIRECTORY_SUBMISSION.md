@@ -36,12 +36,22 @@ See `docs/TOOLS.md` for the generated access badge per tool.
 ## 3. Privacy & data handling
 
 - [ ] Include `docs/compliance/PRIVACY.md` (data stays local; see below).
-- [ ] Confirm no network egress: the server only reads/writes the local boards
-      folder (`FEATUREBOARD_DATA_DIR`). No telemetry, no outbound calls.
-- [ ] `openWorldHint` is `false` on all tools except `request_commercial_license`
-      (which surfaces a mailto/URL only).
+- [ ] Confirm network egress is limited to the deliberate, disclosed exceptions:
+      Slack (`notify_slack`, only when a project sets `slackWebhook`),
+      `request_commercial_license` (writes locally, returns a mailto/URL — no
+      automatic transmission), and `register_email` (the tier-picker onboarding's
+      optional email field — stores locally and POSTs once to the featureboard.ai
+      registrations listener, and only on explicit "Save email" submit). No usage
+      telemetry anywhere. Otherwise the server only reads/writes the local boards
+      folder (`FEATUREBOARD_DATA_DIR`).
+- [ ] `openWorldHint` is `false` on all tools except `notify_slack`,
+      `request_commercial_license`, and `register_email`.
 - [ ] License-request data (`request_commercial_license`) is written locally for
       the licensor's records; document this in the listing.
+- [ ] Onboarding email (`register_email`) is written locally
+      (`.featureboard/registration.json`) and POSTed once to the featureboard.ai
+      registrations listener only after explicit user submit; document this in the
+      listing alongside the license-request exception.
 
 ## 4. Per-tool example calls
 

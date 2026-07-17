@@ -21,6 +21,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { resolveGitTargets } from "./metadata.js";
+import { PAD_FILES } from "./graduate.js";
 
 export const GIT_CONFIG_FILE = "git.config.json";
 
@@ -103,6 +104,112 @@ function defaultExec(args, cwd) {
 }
 
 /**
+ * FBMCPF-135: per-ticket diff capture. Find commits in the project's code repo
+ * whose message mentions the ticket id and return, per commit, a summary
+ * (hash/author/date/subject) plus a size-capped unified diff (`git show`).
+ * Read-only — never writes or fetches. Handles gracefully (returns a `warning`,
+ * never throws): no codeLocation configured, the path is not a git repo, git
+ * log failing, and no matching commits (returns an empty list with a `message`).
+ *
+ * opts: { maxCommits=20, context=3, maxBytes=60000 } — `context` is git's
+ * unified context-line count; `maxBytes` caps the TOTAL emitted diff across all
+ * commits (each over-cap diff is truncated with a notice, later commits omitted).
+ * exec(args, cwd) is injectable for tests (defaults to git via spawnSync).
+ */
+export function getTicketDiff(board, project, ticket, opts = {}, { exec = defaultExec } = {}) {
+  if (!ticket || !String(ticket).trim()) throw new Error("ticket is required");
+  const tk = String(ticket).trim();
+  const maxCommits = Math.max(1, Math.min(Number(opts.maxCommits) || 20, 100));
+  const context = Math.max(0, Math.min(opts.context != null ? Number(opts.context) : 3, 20));
+  const maxBytes = Math.max(1000, Math.min(Number(opts.maxBytes) || 60000, 500000));
+
+  const targets = resolveGitTargets(board, project);
+  const repo = (targets.codeRepo && targets.codeRepo.path) || null;
+  if (!repo) {
+    return { ticket: tk, repo: null, count: 0, commits: [], warning: "no codeLocation configured for this project — set the project's codeLocation (or gitTargets.codeRepo) to the code git repo." };
+  }
+  if (!fs.existsSync(path.join(repo, ".git"))) {
+    return { ticket: tk, repo, count: 0, commits: [], warning: `no git repository at ${repo} (no .git) — cannot capture diffs.` };
+  }
+
+  const log = exec(["log", `--max-count=${maxCommits}`, "--fixed-strings", `--grep=${tk}`, "--format=%H%x00%an%x00%aI%x00%s"], repo);
+  if (log.status !== 0) {
+    return { ticket: tk, repo, count: 0, commits: [], warning: `git log failed: ${(log.stderr || "").trim() || "unknown error"}` };
+  }
+  const rows = (log.stdout || "").split(/\r?\n/).map((l) => l.trimEnd()).filter(Boolean);
+  if (!rows.length) {
+    return { ticket: tk, repo, count: 0, commits: [], message: `no commits mention ${tk} in ${repo}.` };
+  }
+
+  let totalBytes = 0;
+  let truncated = false;
+  const commits = [];
+  for (const row of rows) {
+    const [hash, author, date, subject] = row.split("\u0000");
+    let diff = "";
+    let diffTruncated = false;
+    if (truncated) {
+      diff = "… [diff omitted — total diff byte cap reached; raise maxBytes to see it]";
+      diffTruncated = true;
+    } else {
+      const show = exec(["show", `--unified=${context}`, "--format=", hash], repo);
+      if (show.status === 0) {
+        diff = show.stdout || "";
+        const remaining = maxBytes - totalBytes;
+        if (diff.length > remaining) {
+          const kept = Math.max(0, remaining);
+          const dropped = diff.length - kept;
+          diff = diff.slice(0, kept) + `\n… [diff truncated — ${dropped} more bytes; raise maxBytes to see the rest]`;
+          diffTruncated = true;
+          truncated = true;
+          totalBytes += kept;
+        } else {
+          totalBytes += diff.length;
+        }
+      } else {
+        diff = `[git show failed: ${(show.stderr || "").trim() || "unknown error"}]`;
+      }
+    }
+    commits.push({ hash, shortHash: (hash || "").slice(0, 8), author: author || null, date: date || null, subject: subject || null, diff, diffTruncated });
+  }
+
+  return { ticket: tk, repo, context, maxBytes, maxCommits, count: commits.length, truncated, commits };
+}
+
+/**
+ * FBMCPF-151: for graduated projects, refresh a read-only snapshot mirror of the
+ * board's pad files (+ config) into <codeRepo>/.featureboard/ so the code repo
+ * carries the board's own context alongside the code. One-way: the boards dir (the
+ * source of truth) is only ever read here, never written. Tolerant of missing pad
+ * files and of the mirror itself failing — callers should surface `warning` without
+ * treating it as fatal; this function never throws.
+ */
+export function mirrorGraduatedPad(board, project, targets) {
+  if (!targets || targets.stage !== "graduated") {
+    return { skipped: true, reason: "project stage is not graduated" };
+  }
+  const codePath = targets.codeRepo && targets.codeRepo.path;
+  if (!codePath) {
+    return { skipped: true, reason: "no code repo path configured" };
+  }
+  const mirrored = [];
+  try {
+    const padDir = board.projectDir(project);
+    const mirrorDir = path.join(codePath, ".featureboard");
+    for (const name of PAD_FILES) {
+      const src = path.join(padDir, name);
+      if (!fs.existsSync(src)) continue;
+      fs.mkdirSync(mirrorDir, { recursive: true });
+      fs.cpSync(src, path.join(mirrorDir, name));
+      mirrored.push(path.join(".featureboard", name));
+    }
+    return { mirrored };
+  } catch (e) {
+    return { mirrored, warning: `pad mirror failed: ${e.message}` };
+  }
+}
+
+/**
  * Run the commit (and optional push) for a ticket in the repo at `cwd`. No-ops with
  * a clear reason when git integration is disabled for the project. Stops at the
  * first failing step and reports it. `exec(args, cwd)` is injectable for testing.
@@ -118,6 +225,13 @@ export function commitFeature(board, project, opts = {}, { exec = defaultExec, c
   const targets = resolveGitTargets(board, project);
   const codeCwd = (targets.codeRepo && targets.codeRepo.path) || cwd;
   if (!codeCwd) throw new Error("no code repo path — set the project's codeLocation in project config");
+
+  // FBMCPF-151: for graduated projects, refresh the .featureboard/ pad mirror in the
+  // code repo BEFORE staging, so the snapshot rides along in the same "add ." /
+  // commit as the code change. Never blocks the close-out: failures come back as a
+  // warning on `out`, not a throw.
+  const padMirror = mirrorGraduatedPad(board, project, targets);
+
   const plan = buildCommitPlan(config, opts);
   const results = [];
   for (const step of plan.steps) {
@@ -128,6 +242,11 @@ export function commitFeature(board, project, opts = {}, { exec = defaultExec, c
     }
   }
   const out = { committed: true, message: plan.message, pushed: plan.push, codeRepo: codeCwd, results };
+
+  if (!padMirror.skipped) {
+    out.padMirror = padMirror;
+    if (padMirror.warning) out.warning = padMirror.warning;
+  }
 
   // FBMCPF-149: if the projectpad lives in its OWN git repo (distinct from the code
   // repo), also stage/commit the board's markdown files there. Best-effort: any
@@ -152,10 +271,14 @@ export function commitFeature(board, project, opts = {}, { exec = defaultExec, c
           if (r.status !== 0) { ok = false; break; }
         }
         out.padCommit = { committed: ok, path: padPath, message: padMsg, results: padResults };
-        if (!ok) out.warning = `projectpad commit in ${padPath} did not complete cleanly (see padCommit.results)`;
+        if (!ok) {
+          const w = `projectpad commit in ${padPath} did not complete cleanly (see padCommit.results)`;
+          out.warning = out.warning ? `${out.warning}; ${w}` : w;
+        }
       }
     } catch (e) {
-      out.warning = `projectpad commit failed: ${e.message}`;
+      const w = `projectpad commit failed: ${e.message}`;
+      out.warning = out.warning ? `${out.warning}; ${w}` : w;
     }
   }
   return out;

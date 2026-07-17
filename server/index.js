@@ -17,15 +17,22 @@ import * as license from "./license.js";
 import * as meta from "./metadata.js";
 import { predictDueDates } from "./predictive.js";
 import { createSprint, listSprints, assignSprint, sprintOfTask } from "./sprints.js";
+import { buildReportPacket, closeSprint, getSprintReport, AUDIENCES } from "./reports.js";
 import { graduateProject } from "./graduate.js";
 import { estimateWork, planBudget, suggestModel, dailyPlan } from "./budget.js";
 import { computeWaves } from "./planchain.js";
 import { evalReport } from "./eval.js";
 import { exportBoard, parsePmImport } from "./pmbridge.js";
 import { setRequirements, getRequirements, checkAcceptance } from "./requirements.js";
+import { parseFeedback, createFeedbackTickets } from "./feedback.js";
+import { withOrchestrationLabels, findUnlabeledTickets } from "./orchestration.js";
 import { notifySlack, notifyTicketEvent } from "./slack.js";
+import { registerEmail } from "./registration.js";
 import { addDecision, listDecisions, decisionsForTicket } from "./decisions.js";
 import { writeHandoff } from "./handoffs.js";
+import { getTicketHistory, agentMonitorV2, appendEvent, getTimelineData } from "./events.js";
+import { getPricing, rollupCost } from "./pricing.js";
+import { addKbDoc, listKbDocs, getKbDoc, searchKb } from "./kb.js";
 import {
   listMedia, saveMedia, getMedia, revertMedia,
   tagMedia, annotateMedia, removeAnnotation, searchMedia,
@@ -36,7 +43,8 @@ import { startDriftRun, recordDriftScore, driftReport, applyDriftRemediation } f
 import { scanBoardCleanup, pruneBoard, scanTestFiles } from "./cleanup.js";
 import { listCodeTree, readCodeFile, codeFileMap } from "./explorer.js";
 import { saveTestPage, listTestPages, getTestPage, removeTestPage } from "./testpages.js";
-import { groupBySuite, coverageByProduct } from "./testing.js";
+import { groupBySuite, coverageByProduct, generateMultiModelTests, saveGeneratedTests, listVariants } from "./testing.js";
+import { runVariantMatrix, formatEvidenceSection, appendEvidence } from "./modeleval.js";
 import { draftShare, listShares, removeShare, platformLimit } from "./social.js";
 import {
   addCompany, listCompanies, getCompany, setCompanyProducts, addContact, updateContact, removeContact,
@@ -56,7 +64,9 @@ import {
   listSiteTemplates, applySiteTemplate,
   renderSite, siteRoot, saveAsset, listAssets, setSiteAnalytics, addRawPage,
 } from "./website.js";
-import { getGitConfig, setGitConfig, commitFeature } from "./git.js";
+import { getGitConfig, setGitConfig, commitFeature, mirrorGraduatedPad, getTicketDiff } from "./git.js";
+import { createWorktree, listWorktrees, cleanupWorktree, mergeBackGuidance } from "./worktrees.js";
+import { addReviewComment, listReviewComments, resolveReviewComment, ticketsWithUnresolvedReviews } from "./reviews.js";
 import { scaffoldSite } from "./sitegen.js";
 import { setAnalyticsConfig, autoConfigureAnalytics, getSiteTraffic } from "./analytics.js";
 import { suggestPackaging, savePackagingConfig, getPackagingConfig, validatePackaging } from "./packaging.js";
@@ -109,9 +119,10 @@ const INSTRUCTIONS = `FeatureBoard is your task board for the user's projects. T
 When the user gives you a substantive, multi-step request (build X, fix these bugs, ship a feature):
 1. Pick or create the board. Call list_projects; if nothing fits, create_project.
 2. Break the request down onto the board. Use plan_work once to create the project (if needed) plus the initial features and bugs in a single step. Features are units of new work (FBF-###); bugs are defects (FBB-###).
-3. Step 0: check the packet's gitTargets — code commits and projectpad commits can go to DIFFERENT repos; never assume. Work one ticket at a time. Call next_task to pull the next open item (it honours manual priority). set_status <ticket> "In Progress" BEFORE you start. Call get_work_packet to assemble a focused brief (scope, linked issue, code location, custom prompt, definition of done) and read the files it points to rather than dumping them. For a substantial or code ticket, dispatch it to a fresh sub-agent with that packet so it works in isolated context; do trivial tickets inline. Pick the sub-agent\u2019s model from the ticket\u2019s model: label (or the packet\u2019s suggestedModel): sonnet/haiku tickets may run as PARALLEL sub-agents; opus/fable tickets run SEQUENTIALLY with orchestrator review between. Match rigor to the effort: label \u2014 low: minimal exploration, obvious change, verify, stop; medium: normal loop with tests; high: read adjacent code, protect invariants and back-compat, add tests, self-review the diff. Sub-agents NEVER write the board \u2014 the orchestrator alone sets status, logs work, and commits. Only you (the orchestrator) write to the board. When finished, set_status "Done" with a one-line completionSummary AND log_work with additions/deletions (and model) so progress is recorded. If git is configured for the project, commit the change per ticket (commit_feature, message referencing the ticket id) before pulling the next. Then pull the next. (The process_next prompt runs this loop for you.)
+3. Step 0: check the packet's gitTargets — code commits and projectpad commits can go to DIFFERENT repos; never assume. Work one ticket at a time. Call next_task to pull the next open item (it honours manual priority). set_status <ticket> "In Progress" BEFORE you start. Call get_work_packet to assemble a focused brief (scope, linked issue, code location, custom prompt, definition of done) and read the files it points to rather than dumping them. For a substantial or code ticket, dispatch it to a fresh sub-agent with that packet so it works in isolated context; do trivial tickets inline. Pick the sub-agent\u2019s model from the ticket\u2019s model: label (or the packet\u2019s suggestedModel): sonnet/haiku tickets may run as PARALLEL sub-agents; opus/fable tickets run SEQUENTIALLY with orchestrator review between. Match rigor to the effort: label — low: minimal exploration, obvious change, verify, stop; medium: normal loop with tests; high: read adjacent code, protect invariants and back-compat, add tests, self-review the diff. Sub-agents NEVER write the board — the orchestrator alone sets status, logs work, and commits. Only you (the orchestrator) write to the board. When finished, set_status "Done" with a one-line completionSummary AND log_work with additions/deletions (and model) so progress is recorded. If git is configured for the project, commit the change per ticket (commit_feature, message referencing the ticket id) before pulling the next. Then pull the next. (The process_next prompt runs this loop for you.)
 4. Log new issues as you find them with log_bug, and split anything too big with decompose_feature.
 5. When the user asks how things are going, use get_metrics and list_tasks rather than guessing.
+6. Parallel dispatch (Cline-Kanban parity): when several ready tickets touch DISJOINT areas of the code, you may create an isolated git worktree per ticket (create_worktree) and dispatch one sub-agent per worktree in parallel - each sub-agent edits its own checked-out directory on branch ticket/<id>, never the shared repo working tree; the ticket packet's worktree block carries the path + branch + merge-back steps. Worktrees live OUTSIDE the repo (sibling <codeLocation>-worktrees/, configurable via the worktreeDir project config key) because under Cowork a worktree inside a synced repo mount can corrupt git internals. Board writes stay orchestrator-only. Merge branches back SERIALLY (one at a time): checkout the base branch, merge/rebase ticket/<id>, run tests, commit per ticket, then cleanup_worktree.
 
 Keep the board honest: a ticket should be In Progress only while you are actively working it, and Done only when it is genuinely finished. The board is scaffolding around the real work — it does not replace writing the code, running the tests, etc. Do not create boards or tickets for trivial one-shot chores that don't benefit from tracking.
 
@@ -132,11 +143,12 @@ const CORE_TOOLS = new Set([
   "get_board",
   "list_projects", "create_project", "get_project_config", "set_project_config",
   "add_product", "remove_product", "plan_work", "add_feature", "add_features_bulk",
+  "validate_feedback",
   "decompose_feature", "log_bug", "list_tasks", "get_task", "get_metrics",
   "get_health", "get_work_log", "get_scratchpad", "set_scratchpad", "next_task",
   "set_status", "get_work_packet", "log_work", "update_task", "delete_task",
   "link_tasks", "license_status", "activate_license", "request_commercial_license",
-  "set_usage_type",
+  "set_usage_type", "register_email",
   // used by the board UI artifact (keep the panels working in core mode)
   "import_tasks", "get_regressions", "get_test_runs", "append_scratchpad",
   // sprints (FBMCPF-120)
@@ -148,7 +160,12 @@ const CORE_TOOLS = new Set([
   // eval + PM bridge + requirements (FBMCPF-128/143/138)
   "eval_report", "export_tasks", "set_requirements", "get_requirements", "check_acceptance",
   // decisions + handoffs (FBMCPF-139/144)
-  "add_decision", "list_decisions", "set_handoff",
+  "add_decision", "list_decisions", "set_handoff", "get_ticket_history",
+  "get_timeline_data",
+  // per-ticket diff + review comments (FBMCPF-135)
+  "get_ticket_diff", "add_review_comment", "list_review_comments", "resolve_review_comment",
+  // knowledge base (FBMCPF-141)
+  "add_kb_doc", "list_kb_docs", "search_kb", "get_kb_doc",
 ]);
 const TOOLSET = (process.env.FEATUREBOARD_TOOLS || "all").toLowerCase();
 const CORE_ONLY = TOOLSET === "core"
@@ -406,7 +423,7 @@ server.registerTool(
     inputSchema: addFields,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
-  writeTool(({ project, ...f }) => getBoard().addTask(project, "feature", f))
+  writeTool(({ project, ...f }) => getBoard().addTask(project, "feature", withOrchestrationLabels("feature", f)))
 );
 
 server.registerTool(
@@ -417,7 +434,7 @@ server.registerTool(
     inputSchema: addFields,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
-  writeTool(({ project, ...f }) => getBoard().addTask(project, "bug", f))
+  writeTool(({ project, ...f }) => getBoard().addTask(project, "bug", withOrchestrationLabels("bug", f)))
 );
 
 server.registerTool(
@@ -448,7 +465,7 @@ server.registerTool(
   },
   writeTool(({ project, features }) => {
     const board = getBoard();
-    const created = features.map((f) => board.addTask(project, "feature", f));
+    const created = features.map((f) => board.addTask(project, "feature", withOrchestrationLabels("feature", f)));
     return { created };
   })
 );
@@ -476,13 +493,70 @@ server.registerTool(
     if (dryRun) return { project, dryRun: true, parsed: parsed.length, tasks: parsed };
     const created = parsed.map((t) => {
       const { type, status, ...fields } = t;
-      const task = board.addTask(project, type === "bug" ? "bug" : defaultType || "feature", fields);
+      const resolvedType = type === "bug" ? "bug" : defaultType || "feature";
+      const task = board.addTask(project, resolvedType, withOrchestrationLabels(resolvedType, fields));
       if (status && status !== "Todo") {
         try { return board.setStatus(project, task.ticketNumber, status); } catch { return task; }
       }
       return task;
     });
     return { project, imported: created.length, created };
+  })
+);
+
+// FBMCPF-140: validate_feedback — raw feedback (user notes, review comments, bug
+// reports) -> candidate tickets via deterministic keyword heuristics (no model
+// calls in the server). Dry-run by default; apply:true bulk-creates via the same
+// board.addTask() path as add_features_bulk/plan_work.
+server.registerTool(
+  "validate_feedback",
+  {
+    title: "Validate feedback (raw text -> candidate tickets)",
+    description:
+      "Parse unstructured feedback (user notes, review comments, bug reports) into candidate tickets, each with a suggested type (feature/bug), product, and priority from deterministic keyword heuristics only — no model calls. DRY-RUN BY DEFAULT (apply:false, the default): returns the structured candidate list for you to review/edit; creates NOTHING. Always dry-run first. When ready, call again with apply:true to bulk-create the candidates (optionally pass back an edited `candidates` array — e.g. from the dry-run response with corrected type/product/priority/title — instead of re-parsing `feedback`).",
+    inputSchema: {
+      project: z.string(),
+      feedback: z.string().optional().describe("Raw freeform feedback text to parse (bullets, numbered items, or paragraphs). Required for a dry-run, and for apply mode unless `candidates` is supplied."),
+      apply: z.boolean().optional().default(false).describe("false (default) = dry-run preview only, nothing created. true = bulk-create the candidates."),
+      candidates: z
+        .array(
+          z.object({
+            title: z.string(),
+            description: z.string().optional(),
+            type: z.enum(["feature", "bug"]).optional(),
+            product: z.string().optional(),
+            priority: z.coerce.number().int().optional(),
+            labels: z.array(z.string()).optional(),
+          })
+        )
+        .optional()
+        .describe("Edited candidate list to create instead of re-parsing `feedback` (apply mode only) — typically the dry-run's `candidates` array with corrections."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  writeTool(({ project, feedback, apply, candidates }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+
+    if (!apply) {
+      if (!feedback || !feedback.trim()) throw new Error("`feedback` text is required for a dry-run preview.");
+      const cfg = meta.getProjectConfig(board, project);
+      const parsed = parseFeedback(feedback, cfg.products);
+      return {
+        project,
+        mode: "dry-run",
+        parsedCount: parsed.length,
+        candidates: parsed,
+        note: "Nothing was created. Review/edit the candidates, then call again with apply:true (optionally passing this candidates array back, edited) to bulk-create.",
+      };
+    }
+
+    const toCreate = Array.isArray(candidates) && candidates.length
+      ? candidates
+      : parseFeedback(feedback || "", meta.getProjectConfig(board, project).products);
+    if (!toCreate.length) throw new Error("No candidates to create — provide `feedback` text or a `candidates` array.");
+    const created = createFeedbackTickets(board, project, toCreate);
+    return { project, mode: "apply", created: created.length, tickets: created };
   })
 );
 
@@ -541,8 +615,8 @@ server.registerTool(
       board.createProject(project, projectDescription);
       created_project = true;
     }
-    const createdFeatures = features.map((f) => board.addTask(project, "feature", f));
-    const createdBugs = bugs.map((b) => board.addTask(project, "bug", b));
+    const createdFeatures = features.map((f) => board.addTask(project, "feature", withOrchestrationLabels("feature", f)));
+    const createdBugs = bugs.map((b) => board.addTask(project, "bug", withOrchestrationLabels("bug", b)));
     // FBMCPF-137: wire dependsOn edges over the COMBINED created list (features
     // first, then bugs, in input order), then compute execution waves. A bad or
     // cycle-closing edge is skipped with a per-item warning, never failing the call.
@@ -558,11 +632,11 @@ server.registerTool(
       const blockers = [];
       for (const d of deps) {
         if (!Number.isInteger(d) || d < 0 || d >= tickets.length) {
-          warnings.push(`${ticket}: dependsOn index ${d} is out of range (0..${tickets.length - 1}) \u2014 skipped.`);
+          warnings.push(`${ticket}: dependsOn index ${d} is out of range (0..${tickets.length - 1}) — skipped.`);
           continue;
         }
         if (d === i) {
-          warnings.push(`${ticket}: cannot depend on itself \u2014 skipped.`);
+          warnings.push(`${ticket}: cannot depend on itself — skipped.`);
           continue;
         }
         const b = tickets[d];
@@ -573,7 +647,7 @@ server.registerTool(
         board.updateTask(project, ticket, { blockedBy: blockers });
         edges.push({ ticket, blockedBy: blockers });
       } catch (e) {
-        warnings.push(`${ticket}: dependency edge rejected (${e.message}) \u2014 left unblocked.`);
+        warnings.push(`${ticket}: dependency edge rejected (${e.message}) — left unblocked.`);
       }
     }
     const executionPlan = { waves: computeWaves(tickets, edges), edges };
@@ -598,11 +672,18 @@ server.registerTool(
     const board = getBoard();
     const openAll = board.listTasks(project, { type }).filter((t) => t.status !== "Done");
     if (!openAll.length) return { next: null, remaining: 0 };
+    // FBMCPF-135: tickets sitting in Review are awaiting the reviewer, not the next
+    // agent — skip them, UNLESS they carry unresolved review comments, which means
+    // the reviewer sent feedback back for the agent to act on (FBMCPF-134 gate).
+    let reviewBacklog = new Set();
+    try { reviewBacklog = ticketsWithUnresolvedReviews(board, project); } catch {}
+    const awaitingReview = (t) => t.status === "Review" && !reviewBacklog.has(t.ticketNumber);
     // FBMCPF-133: blocked tickets stay in the queue but are not served.
-    const open = openAll.filter((t) => !isBlocked(board, project, t));
-    const blockedSkipped = openAll.length - open.length;
+    const open = openAll.filter((t) => !isBlocked(board, project, t) && !awaitingReview(t));
+    const blockedSkipped = openAll.filter((t) => isBlocked(board, project, t)).length;
+    const reviewSkipped = openAll.filter((t) => !isBlocked(board, project, t) && awaitingReview(t)).length;
     if (!open.length) {
-      return { next: null, remaining: openAll.length, ...(blockedSkipped ? { blockedSkipped } : {}) };
+      return { next: null, remaining: openAll.length, ...(blockedSkipped ? { blockedSkipped } : {}), ...(reviewSkipped ? { reviewSkipped } : {}) };
     }
     const rank = (t) => (t.status === "In Progress" ? 0 : 1);
     const prio = (t) => (t.priority != null ? t.priority : Infinity);
@@ -612,6 +693,7 @@ server.registerTool(
     const sm = suggestModel(open[0]); // FBMCPF-125: model tiering hint
     const res = { next: fullView(open[0]), remaining: openAll.length, suggestedModel: sm.model, modelBasis: sm.basis };
     if (blockedSkipped) res.blockedSkipped = blockedSkipped;
+    if (reviewSkipped) res.reviewSkipped = reviewSkipped;
     return res;
   })
 );
@@ -701,6 +783,50 @@ server.registerTool(
   writeTool(({ project, tickets, sprint }) => assignSprint(getBoard(), project, tickets, sprint))
 );
 
+// sprint close-out reports (FBMCPF-156) --------------------------------------
+server.registerTool(
+  "close_sprint",
+  {
+    title: "Close sprint & generate reports",
+    description:
+      "Close a sprint and generate four audience-specific close-out reports (marketing, sales, technical, executive) from its tickets, work log, and metrics (velocity, tokens, $ cost, ADRs touched, CRM ticket links). " +
+      "Refuses to close while the sprint still has open (non-Done) tickets unless force:true. Writes reports/<sprint>/<audience>.md pads under the project and returns their paths, a metric summary, and a per-audience LLM prompt (packet + brief) for richer draft copy. " +
+      "Posts a Slack summary when the project has Slack configured (never fails the close on a Slack error).",
+    inputSchema: {
+      project: z.string(),
+      sprint: z.string().describe("Sprint name (its sprint:<name> label)."),
+      force: z.boolean().optional().describe("Close even if some tickets are still open (they are reported as carryover)."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  writeTool(async ({ project, sprint, force }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    const notify = (text) => notifySlack(board, project, { text, event: "summary" });
+    return closeSprint(board, project, sprint, { force: !!force, notify });
+  })
+);
+
+server.registerTool(
+  "get_sprint_report",
+  {
+    title: "Read sprint reports",
+    description:
+      "Read the close-out reports written by close_sprint. With no sprint: list sprints that have reports. With a sprint but no audience: the manifest + which audiences exist. With sprint + audience (marketing|sales|technical|executive): that report's markdown.",
+    inputSchema: {
+      project: z.string(),
+      sprint: z.string().optional().describe("Sprint name; omit to list all sprints with reports."),
+      audience: z.enum(["marketing", "sales", "technical", "executive"]).optional().describe("Which audience's report to read."),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project, sprint, audience }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return getSprintReport(board, project, { sprint, audience });
+  })
+);
+
 // graduation (FBMCPF-150) ---------------------------------------------------
 server.registerTool(
   "graduate_project",
@@ -710,8 +836,8 @@ server.registerTool(
       "One-command incubator \u2192 dedicated-repo graduation (lifecycle \"Option C\"). Copies the project's " +
       "CODE out to targetPath, EXCLUDING pad files (featurelist/buglist/scratchpad/etc) and junk " +
       "(node_modules, .git, *.log, *.zip, tmp_*, ...), then repoints codeLocation, sets stage=graduated and " +
-      "gitTargets.codeRepo, and records the move in the scratchpad. The pad STAYS in the boards dir \u2014 it is " +
-      "only read, never modified or deleted \u2014 and the target repo additionally gets a read-only snapshot " +
+      "gitTargets.codeRepo, and records the move in the scratchpad. The pad STAYS in the boards dir — it is " +
+      "only read, never modified or deleted — and the target repo additionally gets a read-only snapshot " +
       "mirror of the pad files under .featureboard/. When commit is on and git is available the copied code + " +
       "mirror are git-init'd (if needed) and committed; git absence/failure is tolerated as a warning. " +
       "DRY-RUN BY DEFAULT: apply is false unless you pass apply:true, so the first call returns the plan " +
@@ -775,7 +901,7 @@ server.registerTool(
       "Returns dispatch groups: sonnet/haiku tickets safe to run as parallel sub-agents, opus/fable sequential. Pair with the daily_plan prompt to execute.",
     inputSchema: {
       project: z.string(),
-      budgetTokens: z.number().int().positive().optional().default(650000).describe("Today's logged-token budget (default 650k; ~weekly 25M effective \u00f7 5 days \u00f7 \u00d78 orchestration multiplier)."),
+      budgetTokens: z.number().int().positive().optional().default(650000).describe("Today's logged-token budget (default 650k; ~weekly 25M effective \u00f7 5 days \u00f7 ×8 orchestration multiplier)."),
       sprint: z.string().optional().describe("Limit to one sprint."),
       apply: z.boolean().optional().default(false).describe("Write model:/effort: labels to the planned tickets."),
     },
@@ -789,7 +915,7 @@ server.registerTool(
   {
     title: "Eval report",
     description:
-      "Compare board-workflow vs chat-workflow trials using label conventions: experiment:board / experiment:chat marks a ticket's arm, and an optional pair:<id> label ties a board trial to its chat counterpart. Returns every labeled trial (tokens from the work log, additions/deletions, wall-clock days, rework = linked bugs within 7 days of completion), per-arm medians/totals, matched pairs with a token ratio, and a one-line summary.",
+      "Compare board-workflow vs chat-workflow trials using label conventions: experiment:board / experiment:chat marks a ticket's arm, and an optional pair:<id> label ties a board trial to its chat counterpart. Returns every labeled trial (tokens and $ cost from the work log, additions/deletions, wall-clock days, rework = linked bugs within 7 days of completion), per-arm medians/totals (including totalCost), matched pairs with a token ratio, and a one-line summary.",
     inputSchema: { project: z.string() },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
@@ -929,6 +1055,133 @@ server.registerTool(
   writeTool(({ project, ticket, note }) => writeHandoff(getBoard(), project, ticket, note))
 );
 
+// audit timeline (FBMCPF-142) ------------------------------------------------
+server.registerTool(
+  "get_ticket_history",
+  {
+    title: "Get ticket history",
+    description:
+      "Full audit timeline for one ticket: recorded field-change events (status moves, priority moves, label/sprint changes, due-date edits — captured automatically by set_status/update_task/assign_sprint) merged in chronological order with that ticket's work-log entries (tokens/additions/deletions per work session). Tolerates tickets with no recorded events yet (pre-FBMCPF-142 tickets still show their work-log history).",
+    inputSchema: {
+      project: z.string(),
+      ticket: z.string(),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project, ticket }) => getTicketHistory(getBoard(), project, ticket))
+);
+
+// piano-roll timeline data (FBMCPF-158) --------------------------------------
+server.registerTool(
+  "get_timeline_data",
+  {
+    title: "Get timeline data (piano-roll)",
+    description:
+      "Per-ticket worked spans for the board's piano-roll Timeline view, in one read pass. For every ticket returns: created date, startedAt (first status→In Progress audit event, falling back to its earliest work-log entry, then createdDate — startedSource says which), completedAt (completionDate or last status→Done event), lastActivity, status/product/type/sprint/priority/model for lane grouping and colour, cumulative tokens/additions/deletions/cost, and per-day work rollups (days[]) for clip intensity. Also returns a board-wide byDate[] rollup (tokens/additions/deletions/cost per day) for the datastream overlay strip. Optional from/to (ISO date or datetime) keep only spans whose worked window overlaps that range. Read-only.",
+    inputSchema: {
+      project: z.string(),
+      from: z.string().optional().describe("ISO date/datetime lower bound; only spans overlapping [from,to] are returned."),
+      to: z.string().optional().describe("ISO date/datetime upper bound; only spans overlapping [from,to] are returned."),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project, from, to }) => getTimelineData(getBoard(), project, { from, to }))
+);
+
+// per-ticket diff capture + PR-style review comments (FBMCPF-135) ------------
+server.registerTool(
+  "get_ticket_diff",
+  {
+    title: "Get ticket diff",
+    description:
+      "Capture the code changes made for a ticket: find commits in the project's code repo (codeLocation / gitTargets.codeRepo) whose message mentions the ticket id and return, per commit, a summary (hash/author/date/subject) plus a size-capped unified diff (git show). Read-only — never writes or fetches. `context` sets the unified context-line count; `maxBytes` caps the total diff bytes returned (over-cap diffs are truncated with a notice, later commits omitted). Returns a warning (not an error) when the project has no codeLocation, the path is not a git repo, or no commits mention the ticket.",
+    inputSchema: {
+      project: z.string(),
+      ticket: z.string(),
+      maxCommits: z.coerce.number().int().min(1).max(100).optional().describe("Max commits to inspect (default 20)."),
+      context: z.coerce.number().int().min(0).max(20).optional().describe("Unified diff context lines (default 3)."),
+      maxBytes: z.coerce.number().int().min(1000).max(500000).optional().describe("Total diff byte cap across commits (default 60000)."),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project, ticket, maxCommits, context, maxBytes }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return getTicketDiff(board, project, ticket, { maxCommits, context, maxBytes });
+  })
+);
+
+server.registerTool(
+  "add_review_comment",
+  {
+    title: "Add review comment",
+    description:
+      "Attach a PR-style review comment to a ticket (optionally anchored to a file and line). Unresolved review comments surface in the ticket's next work packet (get_work_packet.reviewComments) so the next agent acts on the feedback, and — when the ticket is in Review — a comment sends it back into next_task's queue. Also recorded on the ticket's audit history.",
+    inputSchema: {
+      project: z.string(),
+      ticket: z.string(),
+      comment: z.string().describe("The review feedback."),
+      author: z.string().optional().describe("Who left the comment."),
+      file: z.string().optional().describe("File the comment refers to."),
+      line: z.coerce.number().int().optional().describe("Line number the comment refers to."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  writeTool(({ project, ticket, comment, author, file, line }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    const rec = addReviewComment(board, project, ticket, { comment, author, file, line });
+    try {
+      appendEvent(board, project, { ticket, field: "review_comment", from: null, to: `${rec.id}: ${rec.comment.slice(0, 80)}`, source: "add_review_comment" });
+    } catch {}
+    return rec;
+  })
+);
+
+server.registerTool(
+  "list_review_comments",
+  {
+    title: "List review comments",
+    description:
+      "List review comments for a project, optionally scoped to one ticket, with their resolved state. Set includeResolved:false to see only open feedback.",
+    inputSchema: {
+      project: z.string(),
+      ticket: z.string().optional().describe("Scope to one ticket (omit for the whole project)."),
+      includeResolved: z.boolean().optional().describe("Include resolved comments (default true)."),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project, ticket, includeResolved }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    const comments = listReviewComments(board, project, ticket || null, { includeResolved: includeResolved !== false });
+    return { project, ticket: ticket || null, count: comments.length, unresolved: comments.filter((c) => !c.resolved).length, comments };
+  })
+);
+
+server.registerTool(
+  "resolve_review_comment",
+  {
+    title: "Resolve review comment",
+    description:
+      "Mark a review comment resolved by its id (RC-<n>). Idempotent. Once every comment on a ticket is resolved it stops surfacing in the work packet and (if in Review) leaves next_task's queue.",
+    inputSchema: {
+      project: z.string(),
+      id: z.string().describe("The review comment id, e.g. RC-3."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  writeTool(({ project, id }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    const rec = resolveReviewComment(board, project, id);
+    try {
+      appendEvent(board, project, { ticket: rec.ticket, field: "review_comment_resolved", from: rec.id, to: "resolved", source: "resolve_review_comment" });
+    } catch {}
+    return rec;
+  })
+);
+
 // duplicate-id repair (FBMCPB-11) --------------------------------------------
 server.registerTool(
   "repair_duplicate_ids",
@@ -957,7 +1210,7 @@ server.registerTool(
   {
     title: "Set status",
     description:
-      "Move a task between Todo / In Progress / Review / Done. Review sits between In Progress and Done when requireReview is on; approve:true overrides the gate. When moving to Done you can also record structured completion metadata (model, tokens, additions, deletions) — these are written to the work log and roll up into velocity/metrics.",
+      "Move a task between Todo / In Progress / Review / Done. Review sits between In Progress and Done when requireReview is on; approve:true overrides the gate. When moving to Done you can also record structured completion metadata (model, tokens, additions, deletions) — these are written to the work log and roll up into velocity/metrics. For graduated projects, moving to Done also refreshes the pad snapshot in <codeRepo>/.featureboard/ (best-effort; a mirror failure never blocks the status change).",
     inputSchema: {
       project: z.string(),
       ticket: z.string(),
@@ -994,10 +1247,27 @@ server.registerTool(
       });
       result.metrics = meta.ticketMetrics(board, project, ticket);
     }
+    // FBMCPF-151: for graduated projects, refresh the .featureboard/ pad mirror in
+    // the code repo on close-out too (not just commit_feature), so the snapshot
+    // stays fresh even if commit_feature is never called for this ticket. Never
+    // blocks Done: a mirror failure comes back as a warning, not a thrown error.
+    if (status === "Done") {
+      try {
+        const targets = meta.resolveGitTargets(board, project);
+        const padMirror = mirrorGraduatedPad(board, project, targets);
+        if (!padMirror.skipped) {
+          result.padMirror = padMirror;
+          if (padMirror.warning) result.warning = padMirror.warning;
+        }
+      } catch (e) {
+        result.warning = `pad mirror failed: ${e.message}`;
+      }
+    }
     // Close-out discipline: a Done ticket should always carry a summary.
     if (status === "Done" && !completionSummary) {
-      result.warning =
+      const w =
         "Closed without a completionSummary — pass one so the board records what was done. Also consider log_work with additions/deletions.";
+      result.warning = result.warning ? `${result.warning}; ${w}` : w;
     }
     return result;
   })
@@ -1123,7 +1393,7 @@ server.registerTool(
   {
     title: "Scan board for cleanup",
     description:
-      "Read-only deep-clean scan: finds likely-duplicate tickets (grouped by title similarity, each group nominating a keeper + removal candidates) and stale/placeholder tickets (old Todo items, placeholder titles). Returns a suggested removal set to feed prune_board. Never deletes.",
+      "Read-only deep-clean scan: finds likely-duplicate tickets (grouped by title similarity, each group nominating a keeper + removal candidates), stale/placeholder tickets (old Todo items, placeholder titles), and open tickets missing a model:/cap: label (FBMCPF-159 intake orchestration guard — nothing should sit in the queue without a sub-model orchestration decision). Returns a suggested removal set to feed prune_board. Never deletes.",
     inputSchema: {
       project: z.string(),
       staleDays: z.coerce.number().int().optional().default(30).describe("Age (days) at which an open Todo counts as stale."),
@@ -1247,19 +1517,30 @@ server.registerTool(
   {
     title: "Get metrics",
     description:
-      "Read-only snapshot: feature/bug counts by status, completions by date, and velocity from the work log (tokens, additions/deletions, active days, recent tokens).",
+      "Read-only snapshot: feature/bug counts by status, completions by date, and velocity from the work log (tokens, additions/deletions, active days, recent tokens, and $ cost by model — see project config \"pricing\" to override the default Anthropic API rates).",
     inputSchema: { project: z.string() },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
   tryTool(({ project }) => {
     const board = getBoard();
     const base = board.getMetrics(project);
-    const v = meta.velocity(meta.readWorkLog(board, project));
+    const entries = meta.readWorkLog(board, project);
+    const v = meta.velocity(entries);
     const sp = listSprints(board, project);
+    // FBMCPF-157: cost rollup by model, using project-config-overridable pricing.
+    const pricing = getPricing(board, project);
+    const costRollup = rollupCost(entries, pricing);
     return {
       ...base,
       ...(sp.sprints.length ? { sprints: sp.sprints, backlogOpen: sp.backlogOpen } : {}),
-      velocity: { totals: v.totals, tokensLast7Days: v.tokensLast7Days, tokensLast30Days: v.tokensLast30Days, tokensByDate: v.byDate },
+      velocity: {
+        totals: { ...v.totals, cost: costRollup.totalCost },
+        tokensLast7Days: v.tokensLast7Days,
+        tokensLast30Days: v.tokensLast30Days,
+        tokensByDate: v.byDate,
+        byModel: costRollup.byModel,
+        totalCost: costRollup.totalCost,
+      },
     };
   })
 );
@@ -1288,7 +1569,7 @@ server.registerTool(
   {
     title: "Get project config",
     description:
-      "Read a board's settings: products, code location, agent model, prefixes, website, description. Merges MCP-managed config over the legacy project_config.json.",
+      "Read a board's settings: products, code location, agent model, prefixes, website, description, pricing overrides. Merges MCP-managed config over the legacy project_config.json.",
     inputSchema: { project: z.string() },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
@@ -1322,6 +1603,16 @@ server.registerTool(
         codeRepo: z.object({ path: z.string().optional(), remote: z.string().optional(), branch: z.string().optional() }).optional(),
         padRepo: z.object({ path: z.string().optional(), remote: z.string().optional(), branch: z.string().optional() }).optional(),
       }).optional().describe("Explicit commit destinations: code and projectpad can live in different repos (FBMCPF-149)."),
+      pricing: z.record(
+        z.string(),
+        z.object({
+          inputPerMTok: z.number().optional(),
+          outputPerMTok: z.number().optional(),
+          blendedPerMTok: z.number().optional(),
+        })
+      ).optional().describe(
+        "FBMCPF-157: per-model $/MTok overrides merged over the built-in defaults (server/pricing.js DEFAULT_PRICING, sourced from current Anthropic API pricing). Keyed by model tier (\"fable\" | \"opus\" | \"sonnet\" | \"haiku\" | \"default\"); only the fields you provide change, the rest keep their default. blendedPerMTok is used as a fallback rate for work-log entries that only logged a single total token count (no input/output split)."
+      ),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
@@ -1453,6 +1744,63 @@ server.registerTool(
   },
   writeTool(({ project, text }) => meta.appendScratchpad(getBoard(), project, text))
 );
+
+/* ---------- project knowledge base (FBMCPF-141) ---------- */
+
+server.registerTool(
+  "add_kb_doc",
+  {
+    title: "Add/update a kb doc",
+    description:
+      "Write a markdown doc into a board's kb/ folder (a per-project knowledge base beyond the scratchpad): title + markdown body, stored as kb/<slugified-title>.md. Calling again with the SAME title updates that doc in place; a different title that slugifies to the same filename gets a numeric suffix instead of clobbering the original. Docs are keyword-matched into work packets automatically via get_work_packet.",
+    inputSchema: {
+      project: z.string(),
+      title: z.string().describe("Doc title; slugified to the filename."),
+      content: z.string().describe("Markdown body."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  writeTool(({ project, title, content }) => addKbDoc(getBoard(), project, title, content))
+);
+
+server.registerTool(
+  "list_kb_docs",
+  {
+    title: "List kb docs",
+    description: "List a board's kb/ docs: slug, title, updatedAt, size, and a short excerpt of each (not the full body — use get_kb_doc for that).",
+    inputSchema: { project: z.string() },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project }) => ({ docs: listKbDocs(getBoard(), project) }))
+);
+
+server.registerTool(
+  "get_kb_doc",
+  {
+    title: "Get a kb doc",
+    description: "Read one kb doc's full markdown content by slug (or title — it gets slugified). Returns null-ish (not found) when no such doc exists.",
+    inputSchema: { project: z.string(), slug: z.string().describe("Doc slug or title.") },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project, slug }) => getKbDoc(getBoard(), project, slug))
+);
+
+server.registerTool(
+  "search_kb",
+  {
+    title: "Search kb docs",
+    description:
+      "Keyword search across a board's kb doc titles + content, ranked (title hits weighted above content hits). Returns matches with a short excerpt around the first hit and the doc's path. This is the same matcher get_work_packet uses to inject relevant docs into a ticket's packet (kbMatches).",
+    inputSchema: {
+      project: z.string(),
+      query: z.string().describe("Keywords to search for."),
+      limit: z.coerce.number().int().optional().default(10).describe("Max results to return."),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project, query, limit }) => ({ results: searchKb(getBoard(), project, query, { limit }) }))
+);
+
 
 /* ---------- agentic drift evaluation (FBMCPF-108) ---------- */
 server.registerTool(
@@ -1619,19 +1967,26 @@ server.registerTool(
 server.registerTool(
   "get_agent_monitor",
   {
-    title: "Agent monitor (currently-running work)",
+    title: "Agent monitor v2 (live sessions, stalls, spend)",
     description:
-      "Snapshot of the board's currently-running work: every In Progress ticket with its latest work-log activity, " +
-      "cumulative additions/deletions/tokens, idle time since last activity, and a stalled flag (In Progress but no " +
-      "recent progress). Sorted most-recently-active first. Use it to see what's underway and catch stuck tickets.",
+      "Live snapshot of the board's currently-running work: every In Progress ticket with elapsed time since it went " +
+      "In Progress (from the ticket_events.jsonl audit log, falling back to its earliest work-log entry or createdDate " +
+      "when there's no recorded status event), its last event (most recent audit event or work-log entry, whichever is " +
+      "newer) with age, token spend so far vs its cap:<tokens> label and the resulting spend ratio, and a stalled flag " +
+      "(no event/work-log activity within stallMinutes, default 30). Also reports costSoFar and capCost in dollars " +
+      "(via project-config-overridable pricing; capCost is null when no model can be inferred for the ticket). Sorted " +
+      "most-recently-active first, with a top-level summary (count, stalledCount, totalSpend, totalCap, totalCostSoFar, " +
+      "totalCapCost, stalledTickets). Pairs with churn mode: a stalled ticket mid-churn usually means the agent is stuck " +
+      "or has gone quiet. Use it to see what's underway and catch stuck tickets.",
     inputSchema: {
       project: z.string(),
-      stallHours: z.number().min(0).optional().default(24).describe("Idle hours after which an In Progress ticket is flagged stalled."),
-      asOf: z.string().optional().describe("Reference time (ISO) to measure idle against; defaults to now."),
+      stallMinutes: z.number().min(0).optional().describe("Inactivity minutes after which an In Progress ticket is flagged stalled. Defaults to 30."),
+      stallHours: z.number().min(0).optional().describe("Deprecated alias for stallMinutes (converted to minutes); ignored if stallMinutes is given."),
+      asOf: z.string().optional().describe("Reference time (ISO) to measure elapsed/idle against; defaults to now."),
     },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
-  tryTool(({ project, stallHours, asOf }) => meta.agentMonitor(getBoard(), project, { stallHours, asOf }))
+  tryTool(({ project, stallMinutes, stallHours, asOf }) => agentMonitorV2(getBoard(), project, { stallMinutes, stallHours, asOf }))
 );
 
 server.registerTool(
@@ -1866,6 +2221,124 @@ server.registerTool(
     const board = getBoard();
     if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
     return { project, ...coverageByProduct(board.listTasks(project, {}), meta.readTestRuns(board, project)) };
+  })
+);
+
+// multi-model test generation (FBMCPF-147) -----------------------------------
+
+server.registerTool(
+  "generate_multi_model_tests",
+  {
+    title: "Generate multi-model test variants",
+    description:
+      "For a bug/ticket, fan one generation prompt out across model tiers (default fable, opus, sonnet) — each surfaces different failure concepts. Returns the SAME prompt once per tier plus a per-tier storage path (test/<ticket>.<model>.test.js) and instruction. Read-only: run each tier yourself, then submit results to save_generated_test. Builds on suggest_test_stub / generate_test (FBMCPF-102).",
+    inputSchema: {
+      project: z.string(),
+      ticket: z.string().describe("Bug/ticket to generate variants for; seeds the prompt from its title/description."),
+      prompt: z.string().optional().describe("Override the generation prompt (else derived from the ticket)."),
+      module: z.string().optional().describe("Import specifier for the module under test, e.g. ../server/crm.js."),
+      models: z.array(z.string()).optional().describe("Model tiers to fan across; defaults to [fable, opus, sonnet]."),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project, ticket, prompt, module, models }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    const t = board.getTask(project, ticket);
+    if (!t) throw new Error(`Ticket ${ticket} not found in "${project}".`);
+    const cfg = meta.getProjectConfig(board, project);
+    let promptText = prompt;
+    if (!promptText) promptText = [t.title, t.description].filter(Boolean).join(". ");
+    if (!promptText) throw new Error("provide a prompt or a ticket with title/description");
+    return generateMultiModelTests({
+      prompt: promptText, ticket: t.ticketNumber, title: t.title, module, codeLocation: cfg.codeLocation, models,
+    });
+  })
+);
+
+server.registerTool(
+  "save_generated_test",
+  {
+    title: "Save generated test variants",
+    description:
+      "Ingest the model-generated test variants for a ticket (submit them as variants: [{model, content}]). Tags each with its model, dedupes identical/near-identical assertions across variants (whitespace + variable names normalized; a fully-duplicate test block is dropped and noted), and returns the runnable files to write (test/<ticket>.<model>.test.js) plus a queryable manifest (test/<ticket>.variants.json). Read-only: it returns file contents for you to write.",
+    inputSchema: {
+      project: z.string(),
+      ticket: z.string(),
+      variants: z.array(z.object({
+        model: z.string().describe("Model tier this variant came from (fable/opus/sonnet/...)."),
+        content: z.string().describe("The generated node:test file content."),
+        path: z.string().optional(),
+      })).min(1).describe("One entry per model variant."),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project, ticket, variants }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    const cfg = meta.getProjectConfig(board, project);
+    return saveGeneratedTests({ ticket, project, codeLocation: cfg.codeLocation, variants });
+  })
+);
+
+server.registerTool(
+  "list_test_variants",
+  {
+    title: "List multi-model test variants",
+    description:
+      "List the per-model test variants present for a ticket (test/<ticket>.<model>.test.js) and which model tiers cover it. Reads the project's test/ dir under its code location; feeds the multi-model eval (FBMCPF-148).",
+    inputSchema: { project: z.string(), ticket: z.string() },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project, ticket }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    const cfg = meta.getProjectConfig(board, project);
+    const base = cfg.codeLocation ? String(cfg.codeLocation).replace(/[\\/]+$/, "") : ".";
+    const dir = nodePath.join(base, "test");
+    let files = [];
+    try { if (existsSync(dir)) files = readdirSync(dir); } catch { files = []; }
+    return listVariants(files, ticket);
+  })
+);
+
+server.registerTool(
+  "eval_model_matrix",
+  {
+    title: "Eval: model up/downgrade effectiveness at test time",
+    description:
+      "FBMCPF-148 — run a ticket's per-model test variants (test/<ticket>.<model>.test.js, from generate_multi_model_tests / save_generated_test) against seeded regressions to see which tier's tests actually catch bugs. Seeds deterministic textual mutations (a built-in set, or caller-supplied find/replace patch specs) into a COPY of targetFile inside a fresh temp dir — the repo is never touched — runs each model's variant file with node --test before and after, and reports per-model defects caught, unique-catch rate (defects only that tier's tests caught), an overlap matrix, and cost per caught defect (tokensByModel × pricing.js rates). Omit targetFile to just run the baseline pass/fail matrix (no seeded mutations). Writes nothing to the repo unless writeEvidence:true, which appends the formatted readout to docs/EVIDENCE.md under codeLocation — mode is required so a demo run can never be silently mistaken for real defect data.",
+    inputSchema: {
+      project: z.string(),
+      ticket: z.string().describe("Ticket whose test/<ticket>.<model>.test.js variants to run."),
+      targetFile: z.string().optional().describe("Path (relative to codeLocation) of the source module the variants exercise, e.g. server/pricing.js. Required to run seeded mutations; omit to run the baseline matrix only."),
+      mutations: z.array(z.object({
+        id: z.string().optional(),
+        description: z.string().optional(),
+        find: z.string().describe("Literal substring (or regex source, if regex:true) to replace the first occurrence of."),
+        replace: z.string(),
+        regex: z.boolean().optional(),
+        flags: z.string().optional(),
+      })).optional().describe("Custom seeded-regression patch specs; defaults to a built-in deterministic mutation set (flip ===, flip &&/||, negate boolean return, off-by-one literal, flip </>)."),
+      tokensByModel: z.record(z.number()).optional().describe("Generation token counts per model tier, e.g. {sonnet: 12000, opus: 40000}, used for cost-per-caught-defect."),
+      mode: z.enum(["real", "harness-validation"]).describe("Label the readout honestly: 'real' for actual ticket variants against real seeded defects, 'harness-validation' for a demo fixture proving the harness works end-to-end."),
+      writeEvidence: z.boolean().optional().default(false).describe("Append the formatted readout to docs/EVIDENCE.md under codeLocation."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+  },
+  tryTool(({ project, ticket, targetFile, mutations, tokensByModel, mode, writeEvidence }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    const cfg = meta.getProjectConfig(board, project);
+    const dir = cfg.codeLocation ? String(cfg.codeLocation).replace(/[\\/]+$/, "") : ".";
+    const pricing = getPricing(board, project);
+    const result = runVariantMatrix(dir, ticket, { targetFile, mutations, tokensByModel, pricing, mode });
+    if (writeEvidence) {
+      const evidencePath = nodePath.join(dir, "docs", "EVIDENCE.md");
+      appendEvidence(evidencePath, formatEvidenceSection(result));
+      result.evidenceAppended = evidencePath;
+    }
+    return result;
   })
 );
 
@@ -2855,7 +3328,7 @@ server.registerTool(
   writeTool(({ project, company, title, description }) => {
     const board = getBoard();
     if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
-    return reportCompanyBug(board, project, company, { title, description }, { logBug: (f) => board.addTask(project, "bug", f) });
+    return reportCompanyBug(board, project, company, { title, description }, { logBug: (f) => board.addTask(project, "bug", withOrchestrationLabels("bug", f)) });
   })
 );
 
@@ -3692,7 +4165,7 @@ server.registerTool(
   {
     title: "Commit a finished feature",
     description:
-      "If git integration is enabled for the project, commit (and optionally push) the current changes in the project's code repo with a message like 'FBMCPF-##: title' — mirroring the original OpenClaw git flow. No-ops with a reason when disabled. Runs on this machine using its git credentials.",
+      "If git integration is enabled for the project, commit (and optionally push) the current changes in the project's code repo with a message like 'FBMCPF-##: title' — mirroring the original OpenClaw git flow. For graduated projects, also refreshes a read-only snapshot of the pad (featurelist.md, buglist.md, scratchpad.md, agent_work_log.md, config) into <codeRepo>/.featureboard/ and includes it in the same commit — the central pad stays authoritative, this is a one-way mirror. No-ops with a reason when disabled. Runs on this machine using its git credentials.",
     inputSchema: {
       project: z.string(),
       ticket: z.string().optional(),
@@ -3707,6 +4180,65 @@ server.registerTool(
     if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
     const cwd = meta.getProjectConfig(board, project).codeLocation;
     return commitFeature(board, project, { ticket, title, message, push }, { cwd });
+  })
+);
+
+// parallel-dispatch git worktrees (FBMCPF-136) ------------------------------
+server.registerTool(
+  "create_worktree",
+  {
+    title: "Create a git worktree for a ticket",
+    description:
+      "Create (or reuse) an isolated git worktree for a ticket so several tickets can be worked in PARALLEL - each sub-agent edits its own checked-out directory on branch ticket/<ticket>, sharing one .git object store, never the shared repo working tree. Created at <worktreeDir>/<ticket>. IMPORTANT SYNC CAVEAT: worktrees are placed OUTSIDE the code repo by default (sibling directory <codeLocation>-worktrees/), configurable via the project config key worktreeDir - under Cowork, a worktree created INSIDE a synced repo mount can corrupt git internals or fail to sync, so this tool REFUSES a worktreeDir inside the repo and never auto-creates worktrees in the repo itself. Reuses an existing worktree at the path; creates branch ticket/<ticket> off baseRef (or current HEAD) when absent. Returns the worktree path, branch, and merge-back guidance. Errors clearly when the project has no codeLocation, the path is not a git repo, git is too old (< 2.5), or a non-worktree directory squats the path.",
+    inputSchema: {
+      project: z.string(),
+      ticket: z.string(),
+      baseRef: z.string().optional().describe("Branch/ref to base the new ticket branch on (default: repo HEAD)."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  writeTool(({ project, ticket, baseRef }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return createWorktree(board, project, ticket, { baseRef });
+  })
+);
+
+server.registerTool(
+  "list_worktrees",
+  {
+    title: "List a project's git worktrees",
+    description:
+      "List the git worktrees for a project's code repo (git worktree list). Each entry carries its path, branch, HEAD, whether it's the main repo working tree (isMain), and the derived ticket id. Also returns the resolved worktreeDir where per-ticket worktrees live (OUTSIDE the repo by default; see the sync caveat on create_worktree). Read-only.",
+    inputSchema: {
+      project: z.string(),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return listWorktrees(board, project);
+  })
+);
+
+server.registerTool(
+  "cleanup_worktree",
+  {
+    title: "Remove a ticket's git worktree",
+    description:
+      "Remove a ticket's git worktree once its branch has been merged back (git worktree remove + prune). REFUSES when the worktree has uncommitted changes unless force:true. No-ops with a message when no worktree is registered for the ticket, and never force-deletes a path git doesn't recognise as a worktree. Leaves the ticket/<ticket> branch intact (merge it back first with the merge-back guidance).",
+    inputSchema: {
+      project: z.string(),
+      ticket: z.string(),
+      force: z.boolean().optional().describe("Remove even if the worktree has uncommitted changes."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+  },
+  writeTool(({ project, ticket, force }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return cleanupWorktree(board, project, ticket, { force });
   })
 );
 
@@ -3791,6 +4323,20 @@ server.registerTool(
   })
 );
 
+server.registerTool(
+  "register_email",
+  {
+    title: "Register onboarding email (optional)",
+    description:
+      "Store an email address the user explicitly typed and submitted on the tier-picker onboarding screen (the 'Save email' action — separate from picking a usage tier), then POST it once to the featureboard.ai registrations listener. This is deliberate outbound egress: the board is otherwise local-only, and this is the only call it makes without a user-configured destination (contrast notify_slack, which requires a webhook the user pastes in). There is no usage telemetry — only this email, and only after explicit submit. Never call this speculatively (e.g. on every onboarding render, or with an unconfirmed/autofilled value); omit or pass an empty string to skip. No-ops (no local write, no network call) when email is empty or malformed. Safe to call again later — once posted, it will not re-POST.",
+    inputSchema: {
+      email: z.string().describe("Email address the user explicitly typed and submitted. Omit/empty to skip registration."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  tryTool(({ email }) => registerEmail(DATA_DIR, email))
+);
+
 // prompts -------------------------------------------------------------------
 
 // A one-click "turn this chat into a project". Claude already has the whole
@@ -3854,7 +4400,7 @@ server.registerPrompt(
             "1. Call next_task to get the top open ticket (honours priority). If none, tell me the queue is clear and stop.\n" +
             "2. set_status the ticket to \"In Progress\".\n" +
             "3. Call get_work_packet for it. Read the files it points to at the code location — do not dump whole files into context.\n" +
-            "4. Do the work. If it's a substantial or code ticket, dispatch it to a fresh sub-agent with the packet so it gets isolated context \u2014 at the model from the ticket's model: label (sonnet/haiku may run in parallel; opus/fable sequentially with review), with rigor matched to its effort: label. Do trivial tickets inline. Only you (the orchestrator) write to the board.\n" +
+            "4. Do the work. If it's a substantial or code ticket, dispatch it to a fresh sub-agent with the packet so it gets isolated context — at the model from the ticket's model: label (sonnet/haiku may run in parallel; opus/fable sequentially with review), with rigor matched to its effort: label. Do trivial tickets inline. Only you (the orchestrator) write to the board.\n" +
             "5. Verify the change — run it or its tests where relevant.\n" +
             "6. set_status Done with a one-line completionSummary, and log_work with additions/deletions (and the model used).\n" +
             "7. If git is configured for the project, commit the change now — one commit per ticket, message referencing the ticket id (commit_feature or git commit).\n" +
@@ -4127,10 +4673,10 @@ server.registerPrompt(
             `Run the daily plan${project ? ` for project "${project}"` : ""}.\n\n` +
             "1. Call daily_plan" + (budget ? ` with budgetTokens ${budget}` : "") + " (apply: false) and show me the plan: ticket, model, effort, estimate, and the dispatch groups. Pause for my go-ahead if anything looks off; otherwise continue.\n" +
             "2. Call daily_plan again with apply: true to stamp model:/effort: labels onto the tickets.\n" +
-            "3. Dispatch: for every ticket in dispatch.parallel (sonnet/haiku), set_status In Progress, get_work_packet, and start a sub-agent at that model with the packet as its brief \u2014 these can run in parallel. Work dispatch.sequential tickets (opus/fable) one at a time: sub-agent or inline, with a review between tickets.\n" +
+            "3. Dispatch: for every ticket in dispatch.parallel (sonnet/haiku), set_status In Progress, get_work_packet, and start a sub-agent at that model with the packet as its brief — these can run in parallel. When parallel tickets touch DISJOINT code areas, give each its own isolated git worktree (create_worktree) so agents don't edit the shared repo at once, then merge branches back SERIALLY and cleanup_worktree. Work dispatch.sequential tickets (opus/fable) one at a time: sub-agent or inline, with a review between tickets.\n" +
             "4. Effort mapping for each sub-agent brief: low \u2192 minimal exploration, make the obvious change, verify, stop; medium \u2192 normal loop with tests; high \u2192 read adjacent code first, consider invariants and back-compat, add tests, self-review the diff before finishing.\n" +
             "5. Only you (the orchestrator) write to the board. As each sub-agent finishes: verify its work, set_status Done with a completionSummary, log_work with tokens/additions/deletions and the model used, and commit per ticket (commit_feature) when git is configured.\n" +
-            "6. Respect cap:<tokens> labels \u2014 wrap up and requeue any ticket about to exceed its cap.\n" +
+            "6. Respect cap:<tokens> labels — wrap up and requeue any ticket about to exceed its cap.\n" +
             "7. When the plan is exhausted or the budget is spent, post a day summary to the scratchpad and report to me.",
         },
       },
@@ -4143,7 +4689,7 @@ server.registerPrompt(
   {
     title: "Turn one goal into a chained, parallelizable plan",
     description:
-      "Decompose a single goal into 3\u201312 dependency-aware tickets, create them with plan_work in one call, then read back the execution waves \u2014 what can run in parallel and what must wait \u2014 and offer to start the first wave.",
+      "Decompose a single goal into 3\u201312 dependency-aware tickets, create them with plan_work in one call, then read back the execution waves — what can run in parallel and what must wait — and offer to start the first wave.",
     argsSchema: {
       project: z.string().optional().describe("Board to plan onto. If omitted, ask or infer."),
       goal: z.string().optional().describe("The goal to decompose. If omitted, ask me for it."),
@@ -4159,9 +4705,9 @@ server.registerPrompt(
             `Plan a goal into a chained set of tickets${project ? ` on project "${project}"` : ""}.\n\n` +
             (goal ? `Goal: ${goal}\n\n` : "1. Ask me for the goal if it isn\u2019t clear yet.\n\n") +
             "Steps:\n" +
-            "1. Restate the goal in one line, then decompose it into 3\u201312 concrete tickets (features for new work, bugs for defects). Give each a short title, a description with the real detail, a product, and a priority. Identify which steps depend on which \u2014 a step that needs another\u2019s output must wait for it.\n" +
+            "1. Restate the goal in one line, then decompose it into 3\u201312 concrete tickets (features for new work, bugs for defects). Give each a short title, a description with the real detail, a product, and a priority. Identify which steps depend on which — a step that needs another\u2019s output must wait for it.\n" +
             "2. Call plan_work ONCE with the full features/bugs list. Set each item\u2019s dependsOn to the indices of its prerequisites in the COMBINED created list (features first, then bugs, in the order you list them). Add a cap:<tokens> label per item sized to its expected scope (e.g. cap:60k for a normal ticket, cap:200k for a big one) so the day plan can budget it.\n" +
-            "3. Read the returned executionPlan and report the waves: wave 1 is everything that can start now in PARALLEL, each later wave lists what unblocks once the previous wave is done. Call out the edges (X blocked by Y) and surface any warnings (an out-of-range or cycle-closing dependency is skipped, not fatal \u2014 fix and note it).\n" +
+            "3. Read the returned executionPlan and report the waves: wave 1 is everything that can start now in PARALLEL, each later wave lists what unblocks once the previous wave is done. Call out the edges (X blocked by Y) and surface any warnings (an out-of-range or cycle-closing dependency is skipped, not fatal — fix and note it).\n" +
             "4. Offer to start wave 1 now via the daily-plan dispatch flow: run daily_plan to stamp model:/effort: labels, then dispatch a sub-agent per ticket at its model/effort tier (sonnet/haiku in parallel, opus/fable sequentially). Only advance to the next wave once its blockers are Done. Wait for my go-ahead before dispatching.\n",
         },
       },

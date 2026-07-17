@@ -1,6 +1,6 @@
 {
   "name": "featureboard-mcp",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "FeatureBoard as a local MCP server: a markdown-backed feature/bug board Claude can manage.",
   "author": "Lewis Valentine",
   "license": "SEE LICENSE IN LICENSE.md",
@@ -9,7 +9,7 @@
   "scripts": {
     "start": "node server/index.js",
     "test": "node --test",
-    "check": "node --check server/index.js && node --check server/storage.js && node --check server/metadata.js && node --check server/license.js && node --check server/predictive.js && node --check server/media.js && node --check server/social.js && node --check server/crm.js && node --check server/leads.js && node --check server/portal.js && node --check server/contracts.js && node --check server/mail.js && node --check server/campaigns.js && node --check server/website.js && node --check server/git.js && node --check server/graduate.js && node --check server/analytics.js && node --check server/bookings.js && node --check server/packaging.js && node --check server/sitegen.js && node --check server/testpages.js && node --check server/testing.js && node --check server/sprints.js && node --check server/eval.js && node --check server/pmbridge.js && node --check server/requirements.js && node --check server/slack.js && node --check server/decisions.js && node --check server/handoffs.js",
+    "check": "node --check server/index.js && node --check server/storage.js && node --check server/metadata.js && node --check server/license.js && node --check server/predictive.js && node --check server/media.js && node --check server/social.js && node --check server/crm.js && node --check server/leads.js && node --check server/portal.js && node --check server/contracts.js && node --check server/mail.js && node --check server/campaigns.js && node --check server/website.js && node --check server/git.js && node --check server/graduate.js && node --check server/analytics.js && node --check server/bookings.js && node --check server/packaging.js && node --check server/sitegen.js && node --check server/testpages.js && node --check server/testing.js && node --check server/sprints.js && node --check server/eval.js && node --check server/modeleval.js && node --check server/pmbridge.js && node --check server/requirements.js && node --check server/slack.js && node --check server/decisions.js && node --check server/handoffs.js && node --check server/events.js && node --check server/kb.js && node --check server/registration.js && node --check server/feedback.js && node --check server/pricing.js && node --check server/orchestration.js && node --check server/reports.js && node --check server/reviews.js && node --check server/worktrees.js",
     "docs": "node scripts/gen-docs.mjs",
     "nightly": "node scripts/run-nightly-tests.mjs",
     "smoke": "node scripts/mcp-smoke.mjs",
