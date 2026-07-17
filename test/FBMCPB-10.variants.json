@@ -1,0 +1,202 @@
+{
+  "ticket": "FBMCPB-10",
+  "project": "FeatureBoardMCP",
+  "generatedAt": "2026-07-17T06:12:01.240Z",
+  "models": [
+    "fable",
+    "opus",
+    "sonnet",
+    "haiku"
+  ],
+  "variants": [
+    {
+      "model": "fable",
+      "path": "/sessions/sharp-great-mccarthy/mnt/featureboard-mcp/test/FBMCPB-10.fable.test.js",
+      "skipped": false,
+      "keptTests": [
+        "normalizeDueDate: null, undefined and empty string all clear without overflow",
+        "normalizeDueDate: valid YYYY-MM-DD passes through exactly, whitespace trimmed",
+        "normalizeDueDate: prose and near-miss formats become overflow verbatim (trimmed)",
+        "normalizeDueDate: non-string input is String()-coerced, numbers reject to overflow",
+        "DUE_DATE_RE is anchored — embedded dates inside prose do not match",
+        "addTask: junk dueDate is remapped into description and dueDate is null",
+        "addTask: junk dueDate appends to an existing description, space-joined, order preserved",
+        "addTask: valid dueDate is stored and survives a re-read from markdown",
+        "addTask: bugs get the same junk remap as features",
+        "updateTask: junk dueDate throws Invalid dueDate and leaves the task untouched on disk",
+        "updateTask: null clears the dueDate; omitting dueDate leaves it unchanged",
+        "updateTask: a valid replacement dueDate is accepted",
+        "import (JSON): junk due folds into description, valid dueDate kept, due/dueDate both honored",
+        "import (CSV): junk due remaps; every imported dueDate is absent or canonical + sortable"
+      ],
+      "droppedTests": []
+    },
+    {
+      "model": "opus",
+      "path": "/sessions/sharp-great-mccarthy/mnt/featureboard-mcp/test/FBMCPB-10.opus.test.js",
+      "skipped": false,
+      "keptTests": [
+        "normalizeDueDate: null/undefined/empty clear the field with no overflow",
+        "normalizeDueDate: a valid YYYY-MM-DD passes through unchanged, no overflow",
+        "normalizeDueDate: surrounding whitespace is trimmed off a valid date",
+        "normalizeDueDate: junk is rejected as a date and preserved verbatim in overflow",
+        "normalizeDueDate: format validation is strict on digit counts and anchoring",
+        "DUE_DATE_RE only matches a bare, fully-zero-padded YYYY-MM-DD",
+        "normalizeDueDate: validation is structural (format), not calendrical",
+        "addTask: a valid dueDate is stored and serialized with a Due: token",
+        "addTask: junk dueDate is remapped to description; no dueDate stored",
+        "addTask: junk dueDate appends to an EXISTING description, preserving both",
+        "addTask: the due field only affects dueDate, not other fields",
+        "updateTask: a valid dueDate change persists to disk",
+        "updateTask: dueDate:null clears the field",
+        "updateTask: junk dueDate THROWS and mutates nothing on disk (reject, not remap)",
+        "updateTask: omitting dueDate leaves the existing value untouched",
+        "parseImport JSON: legacy due prose is remapped to description; valid dueDate kept",
+        "parseImport JSON: junk due appends to an existing description (data preservation)",
+        "parseImport CSV: junk in a due column is remapped; a valid due column is kept",
+        "parseImport: no imported task ever carries a non-date dueDate (sort/filter integrity)"
+      ],
+      "droppedTests": [
+        "updateTask: dueDate empty-string clears the field (distinct from junk)"
+      ]
+    },
+    {
+      "model": "sonnet",
+      "path": "/sessions/sharp-great-mccarthy/mnt/featureboard-mcp/test/FBMCPB-10.sonnet.test.js",
+      "skipped": false,
+      "keptTests": [
+        "normalizeDueDate accepts a well-formed YYYY-MM-DD string",
+        "normalizeDueDate treats null and empty string as an explicit clear, no overflow",
+        "normalizeDueDate flags prose as overflow and does not set dueDate",
+        "normalizeDueDate trims surrounding whitespace before validating",
+        "normalizeDueDate rejects date-time and slash-formatted strings as overflow",
+        "normalizeDueDate only validates shape, not calendar correctness",
+        "normalizeDueDate coerces non-string values via String()",
+        "addTask stores a valid dueDate and leaves description untouched",
+        "addTask remaps a prose dueDate into description and clears dueDate",
+        "addTask uses junk due text as the description when none was provided",
+        "addTask leaves dueDate null when it is omitted entirely",
+        "updateTask accepts a valid replacement dueDate",
+        "updateTask rejects a prose dueDate with a descriptive error and writes nothing",
+        "parseImport (csv) remaps a junk due column into the description",
+        "parseImport (csv) keeps a valid duedate column as dueDate untouched",
+        "parseImport (json) remaps a junk dueDate field into description for tasks array",
+        "parseImport (json) keeps a valid dueDate field for a bare object payload",
+        "end-to-end: importing a legacy CSV row through addTask never leaves a junk dueDate on disk",
+        "end-to-end: importing a legacy CSV row with a valid due date preserves it through addTask"
+      ],
+      "droppedTests": [
+        "updateTask clears dueDate when explicitly set to null"
+      ]
+    },
+    {
+      "model": "haiku",
+      "path": "/sessions/sharp-great-mccarthy/mnt/featureboard-mcp/test/FBMCPB-10.haiku.test.js",
+      "skipped": false,
+      "keptTests": [
+        "normalizeDueDate handles null input",
+        "normalizeDueDate handles whitespace string as overflow",
+        "normalizeDueDate rejects prose description as junk",
+        "normalizeDueDate rejects US date format",
+        "normalizeDueDate rejects DD-MM-YYYY format",
+        "normalizeDueDate rejects partial date",
+        "DUE_DATE_RE matches valid YYYY-MM-DD",
+        "DUE_DATE_RE rejects non-matching formats",
+        "addTask stores valid dueDate without modification",
+        "addTask moves junk dueDate to description",
+        "addTask with junk dueDate and empty description creates description from junk",
+        "updateTask accepts valid dueDate",
+        "parseMarkdown preserves junk dueDate as-is from markdown",
+        "parseMarkdown extracts valid YYYY-MM-DD from due field",
+        "addTask appends junk dueDate to existing description",
+        "valid dueDate values can be sorted chronologically",
+        "junk dueDate does not remain in task.dueDate after normalization",
+        "addTask with multiple fields including junk dueDate preserves other fields",
+        "normalizeDueDate rejects dates without dashes",
+        "addTask with bug type moves junk dueDate to description",
+        "board with mixed valid/invalid dueDate values handles both correctly"
+      ],
+      "droppedTests": [
+        "normalizeDueDate accepts valid YYYY-MM-DD format",
+        "normalizeDueDate handles undefined input",
+        "normalizeDueDate handles empty string",
+        "normalizeDueDate trims whitespace around valid date",
+        "addTask handles null dueDate",
+        "updateTask rejects junk dueDate with error (FBMCPB-10 strict validation)",
+        "updateTask can clear dueDate by setting null",
+        "addTask handles very long prose in junk dueDate"
+      ]
+    }
+  ],
+  "dedupe": {
+    "keptTests": 73,
+    "droppedTests": 10,
+    "sharedAssertions": [
+      {
+        "model": "opus",
+        "test": "updateTask: dueDate empty-string clears the field (distinct from junk)",
+        "assertion": "assert.equal(V.V(V,t.V).V,null);"
+      },
+      {
+        "model": "sonnet",
+        "test": "updateTask clears dueDate when explicitly set to null",
+        "assertion": "assert.equal(V.V,null);"
+      },
+      {
+        "model": "sonnet",
+        "test": "updateTask clears dueDate when explicitly set to null",
+        "assertion": "assert.equal(V.V,null);"
+      },
+      {
+        "model": "haiku",
+        "test": "normalizeDueDate accepts valid YYYY-MM-DD format",
+        "assertion": "assert.deepEqual(V,{V:\"2026-07-16\"});"
+      },
+      {
+        "model": "haiku",
+        "test": "normalizeDueDate handles undefined input",
+        "assertion": "assert.deepEqual(V,{V:null});"
+      },
+      {
+        "model": "haiku",
+        "test": "normalizeDueDate handles empty string",
+        "assertion": "assert.deepEqual(V,{V:null});"
+      },
+      {
+        "model": "haiku",
+        "test": "normalizeDueDate trims whitespace around valid date",
+        "assertion": "assert.deepEqual(V,{V:\"2026-07-16\"});"
+      },
+      {
+        "model": "haiku",
+        "test": "addTask handles null dueDate",
+        "assertion": "assert.equal(V.V,null);"
+      },
+      {
+        "model": "haiku",
+        "test": "addTask handles null dueDate",
+        "assertion": "assert.equal(V.V,\"Test description\");"
+      },
+      {
+        "model": "haiku",
+        "test": "updateTask rejects junk dueDate with error (FBMCPB-10 strict validation)",
+        "assertion": "assert.throws("
+      },
+      {
+        "model": "haiku",
+        "test": "updateTask can clear dueDate by setting null",
+        "assertion": "assert.equal(V.V,null);"
+      },
+      {
+        "model": "haiku",
+        "test": "addTask handles very long prose in junk dueDate",
+        "assertion": "assert.equal(V.V,null);"
+      },
+      {
+        "model": "haiku",
+        "test": "addTask handles very long prose in junk dueDate",
+        "assertion": "assert.equal(V.V,V);"
+      }
+    ]
+  }
+}

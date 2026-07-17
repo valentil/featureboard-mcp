@@ -170,6 +170,13 @@ _Fixture note: DEMO-1 and `server/discount.js` are a synthetic demo module creat
 
 # 2026-07-17 update: chat arm completed (agent-run variant)
 
+> **SUPERSEDED (later same day):** the board-arm token comparison below mixes
+> measurement bases (measured chat tokens vs work-log-recorded board tokens). The
+> experiment was re-run with BOTH arms as measured sub-agents — see
+> **docs/EVAL-BOARD-VS-CHAT.md** for the authoritative apples-to-apples readout
+> (packet median 77.5k vs chat 83.2k tokens; chat 1.76x churn). The human-in-the-loop
+> arm was dropped from the design entirely.
+
 ## Protocol change, stated plainly
 
 FBMCPF-129 originally specified a **human** redoing each task in a plain chat. Lewis
@@ -251,3 +258,27 @@ additions / 86 deletions, all 10 verified by each trial's own test run.
    deviations, and the chat arm re-solved tasks whose solutions are (except p4)
    plausibly absent from context but not from the model's training-adjacent
    patterns. Directional, not definitive.
+
+## Model eval matrix: FBMCPB-10 (real run)
+
+Generated 2026-07-17T06:16:12.824Z by `eval_model_matrix` (FBMCPF-148, `server/modeleval.js` `runVariantMatrix`), against variant test files `FBMCPB-10.fable.test.js`, `FBMCPB-10.haiku.test.js`, `FBMCPB-10.opus.test.js`, `FBMCPB-10.sonnet.test.js` — seeded mutations applied to a temp COPY of `server/storage.js` (repo untouched).
+
+Baseline (unmutated): fable 0/0 passing, haiku 0/0 passing, opus 0/0 passing, sonnet 0/0 passing.
+
+| Model | Defects caught | Unique catches | Catch rate | Unique catch rate | Tokens | Cost | Cost / caught defect |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| fable | 0/6 | 0 | 0 | 0 | n/a | n/a | n/a |
+| haiku | 0/6 | 0 | 0 | 0 | 49908 | 0.1497 | n/a |
+| opus | 0/6 | 0 | 0 | 0 | 74719 | 1.1208 | n/a |
+| sonnet | 0/6 | 0 | 0 | 0 | 56287 | 0.3377 | n/a |
+
+Overlap matrix (seeded mutations caught by both row and column model; diagonal = that model's total catches):
+
+| | fable | haiku | opus | sonnet |
+| --- | ---: | ---: | ---: | ---: |
+| fable | 0 | 0 | 0 | 0 |
+| haiku | 0 | 0 | 0 | 0 |
+| opus | 0 | 0 | 0 | 0 |
+| sonnet | 0 | 0 | 0 | 0 |
+
+Summary: 6/6 seeded mutations applied; fable caught the most (0/6).
