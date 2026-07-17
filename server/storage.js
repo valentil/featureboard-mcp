@@ -530,6 +530,10 @@ function atomicWrite(filePath, content) {
   const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}`;
   fs.writeFileSync(tmp, content, "utf8");
   fs.renameSync(tmp, filePath);
+  // FBMCPF-162: write-through invalidation for the parsed-markdown cache below —
+  // every board write goes through this one function, so this is airtight for
+  // same-process writes regardless of filesystem mtime resolution.
+  taskParseCache.delete(path.resolve(filePath));
 }
 
 function readFileSafe(filePath) {
@@ -538,6 +542,57 @@ function readFileSafe(filePath) {
   } catch {
     return null;
   }
+}
+
+// ---------------------------------------------------------------------------
+// FBMCPF-162: mtime-keyed parse cache
+//
+// Every board read (listTasks/getTask/getMetrics/...) re-parses the whole
+// featurelist.md/buglist.md from scratch. On a real board that's cheap once,
+// but a single tool call often reads the same file 2-4x (e.g. get_work_packet
+// calls board.getTask() twice — once for the ticket, once for its linked
+// issue — each of which re-parses BOTH files), and a long-running MCP server
+// process serves many tool calls back to back without the file ever
+// changing between them. Caching the parsed task array per absolute file
+// path, keyed by mtimeMs+size, turns repeat reads into an O(1) map lookup.
+//
+// Invalidation is two-layered:
+//   1. Write-through: atomicWrite() (the only writer of these files) deletes
+//      the cache entry for its path the instant it renames the new content
+//      into place — airtight for same-process writes, no dependency on
+//      filesystem mtime granularity.
+//   2. mtime+size check: belt-and-braces for a file changed OUTSIDE this
+//      process (a manual edit, git checkout, another process) — if either
+//      differs from what's cached, we reparse.
+//
+// The cache is per-process (module-level Map), which is safe here because
+// storage.js is the sole writer and the test suite spawns a fresh process
+// per test file under node:test's process-isolation model — no cache is
+// ever shared across processes that could see a stale write.
+// ---------------------------------------------------------------------------
+const taskParseCache = new Map(); // absolute path -> { mtimeMs, size, tasks }
+
+function readTasksCached(filePath, sourceFile) {
+  const abs = path.resolve(filePath);
+  let stat;
+  try {
+    stat = fs.statSync(abs);
+  } catch {
+    taskParseCache.delete(abs);
+    return [];
+  }
+  const cached = taskParseCache.get(abs);
+  if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+    return cached.tasks;
+  }
+  const content = readFileSafe(abs);
+  if (content == null) {
+    taskParseCache.delete(abs);
+    return [];
+  }
+  const tasks = parseMarkdown(content, sourceFile);
+  taskParseCache.set(abs, { mtimeMs: stat.mtimeMs, size: stat.size, tasks });
+  return tasks;
 }
 
 // ---------------------------------------------------------------------------
@@ -726,9 +781,11 @@ export class Board {
 
   _readTasks(name, type) {
     const file = this._fileFor(type);
-    const content = readFileSafe(path.join(this.projectDir(name), file));
-    if (content == null) return [];
-    return parseMarkdown(content, file).map((t) => ({ ...t, type }));
+    const filePath = path.join(this.projectDir(name), file);
+    // .map() below always allocates fresh task objects (adding `type`), so
+    // callers never get a reference into the cached array — mutating a task
+    // returned from listTasks()/getTask() can never corrupt the cache.
+    return readTasksCached(filePath, file).map((t) => ({ ...t, type }));
   }
 
   listTasks(name, { type = "all", status, product, label, search } = {}) {

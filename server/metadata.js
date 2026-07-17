@@ -36,6 +36,10 @@ function atomicWrite(p, content) {
   const tmp = `${p}.tmp-${process.pid}-${Date.now()}`;
   fs.writeFileSync(tmp, content, "utf8");
   fs.renameSync(tmp, p);
+  // FBMCPF-162: write-through invalidation for the work-log parse cache below.
+  // Harmless no-op for paths that were never cached (config/scratchpad/test
+  // log writes also go through this function).
+  workLogCache.delete(path.resolve(p));
 }
 
 // ---------------------------------------------------------------------------
@@ -278,8 +282,32 @@ export function parseWorkLog(content) {
   return entries;
 }
 
+// FBMCPF-162: mtime-keyed cache — readWorkLog() is called several times per
+// tool invocation (get_work_packet, computeHealth, agentMonitor/V2,
+// getTimelineData, ticketMetrics all read + re-parse the whole work log) and
+// often several times per orchestrator session without the file changing in
+// between. Same write-through + mtime/size-defense pattern as the caches in
+// storage.js/events.js (FBMCPF-162); logWork()'s atomicWrite() invalidates
+// this immediately after every append.
+const workLogCache = new Map(); // absolute path -> { mtimeMs, size, entries }
+
 export function readWorkLog(board, project) {
-  return parseWorkLog(readFileSafe(path.join(board.projectDir(project), WORK_LOG)));
+  const p = path.join(board.projectDir(project), WORK_LOG);
+  const abs = path.resolve(p);
+  let stat;
+  try {
+    stat = fs.statSync(abs);
+  } catch {
+    workLogCache.delete(abs);
+    return [];
+  }
+  const cached = workLogCache.get(abs);
+  if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+    return cached.entries;
+  }
+  const entries = parseWorkLog(readFileSafe(abs));
+  workLogCache.set(abs, { mtimeMs: stat.mtimeMs, size: stat.size, entries });
+  return entries;
 }
 
 /** Aggregate velocity from work-log entries. */

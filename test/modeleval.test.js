@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -144,6 +144,37 @@ function buildFixtureProject() {
   return dir;
 }
 
+// FBMCPF-162: runVariantMatrix() spawns a fresh `node --test` child process
+// per variant file, per baseline run AND per applied mutation (12 spawns for
+// this fixture's default mutation set: 3 variants x (1 baseline + 3 applied
+// mutations)). Four tests below all call it with the SAME dir/ticket/opts
+// (targetFile: "server/target.js", mode: "harness-validation" — the cost
+// test additionally supplies tokensByModel/pricing, which only annotate the
+// result with cost fields and don't change caughtBy/mutation outcomes, so
+// it's safe to fold in too). Running that identical call 4x was 48 redundant
+// child-process spawns — pure process-startup overhead paid 4x for zero
+// extra coverage, which was this file's largest chunk of its ~6.7s runtime.
+// Computing it once and sharing the result across those assertion-only
+// tests cuts that to 12 spawns without dropping a single assertion.
+let sharedMutationRun = null;
+function computeSharedMutationRun() {
+  if (sharedMutationRun) return sharedMutationRun;
+  const dir = buildFixtureProject();
+  const targetBefore = fs.readFileSync(path.join(dir, "server", "target.js"), "utf8");
+  const r = runVariantMatrix(dir, "FBX-1", {
+    targetFile: "server/target.js",
+    mode: "harness-validation",
+    tokensByModel: { opus: 40000, sonnet: 12000, haiku: 6000 },
+    pricing: DEFAULT_PRICING,
+  });
+  const targetAfter = fs.readFileSync(path.join(dir, "server", "target.js"), "utf8");
+  sharedMutationRun = { dir, r, targetBefore, targetAfter };
+  return sharedMutationRun;
+}
+after(() => {
+  if (sharedMutationRun) fs.rmSync(sharedMutationRun.dir, { recursive: true, force: true });
+});
+
 test("discoverVariantFiles finds the ticket's per-model test files", () => {
   const dir = buildFixtureProject();
   try {
@@ -173,25 +204,21 @@ test("runVariantMatrix errors when no variant files exist for the ticket", () =>
 });
 
 test("runVariantMatrix: baseline passes for all three variants (fixture sanity)", () => {
-  const dir = buildFixtureProject();
-  try {
-    const r = runVariantMatrix(dir, "FBX-1", { mode: "harness-validation" });
-    assert.deepEqual(r.models.sort(), ["haiku", "opus", "sonnet"]);
-    for (const m of r.models) {
-      assert.equal(r.baseline[m].fail, 0, `${m} baseline should be clean`);
-      assert.equal(r.baseline[m].pass, 1);
-    }
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
+  // baseline is computed the same way regardless of targetFile/mutations
+  // opts, so the shared run's baseline is identical to what a standalone
+  // baseline-only call against the same fixture would produce.
+  const { r } = computeSharedMutationRun();
+  assert.deepEqual(r.models.slice().sort(), ["haiku", "opus", "sonnet"]);
+  for (const m of r.models) {
+    assert.equal(r.baseline[m].fail, 0, `${m} baseline should be clean`);
+    assert.equal(r.baseline[m].pass, 1);
   }
 });
 
 test("runVariantMatrix: seeded mutations, unique-catch rate, and overlap matrix match the fixture design", () => {
-  const dir = buildFixtureProject();
-  try {
-    const r = runVariantMatrix(dir, "FBX-1", { targetFile: "server/target.js", mode: "harness-validation" });
+  const { r } = computeSharedMutationRun();
 
-    // 3 of the 6 builtin mutations have no matching pattern in this fixture
+  // 3 of the 6 builtin mutations have no matching pattern in this fixture
     // (no ===, ==, &&/||) and are reported as skipped, not applied.
     const skipped = r.mutations.filter((m) => !m.applied).map((m) => m.id).sort();
     assert.deepEqual(skipped, ["flip-logical-and-or", "flip-loose-eq", "flip-strict-eq"]);
@@ -237,45 +264,25 @@ test("runVariantMatrix: seeded mutations, unique-catch rate, and overlap matrix 
     assert.equal(r.overlap.opus.haiku, 0);
     assert.equal(r.overlap.opus.sonnet, 0);
     assert.equal(r.overlap.haiku.sonnet, 0);
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
 });
 
 test("runVariantMatrix never mutates the real target file on disk", () => {
-  const dir = buildFixtureProject();
-  try {
-    const before = fs.readFileSync(path.join(dir, "server", "target.js"), "utf8");
-    runVariantMatrix(dir, "FBX-1", { targetFile: "server/target.js", mode: "harness-validation" });
-    const after = fs.readFileSync(path.join(dir, "server", "target.js"), "utf8");
-    assert.equal(after, before, "target.js on disk must be untouched by seeded mutations");
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
+  const { targetBefore, targetAfter } = computeSharedMutationRun();
+  assert.equal(targetAfter, targetBefore, "target.js on disk must be untouched by seeded mutations");
 });
 
 test("runVariantMatrix: cost per caught defect uses pricing.js rates from tokensByModel", () => {
-  const dir = buildFixtureProject();
-  try {
-    const r = runVariantMatrix(dir, "FBX-1", {
-      targetFile: "server/target.js",
-      mode: "harness-validation",
-      tokensByModel: { opus: 40000, sonnet: 12000, haiku: 6000 },
-      pricing: DEFAULT_PRICING,
-    });
-    const byModel = Object.fromEntries(r.perModel.map((p) => [p.model, p]));
-    // opus: 40000 tokens * 15 blended $/MTok / 1e6 = 0.6, 1 defect caught -> 0.6/defect
-    assert.equal(byModel.opus.cost, 0.6);
-    assert.equal(byModel.opus.costPerCaughtDefect, 0.6);
-    // haiku: 6000 * 3 / 1e6 = 0.018, 1 defect caught -> 0.018/defect
-    assert.equal(byModel.haiku.cost, 0.018);
-    assert.equal(byModel.haiku.costPerCaughtDefect, 0.018);
-    // sonnet caught 0 defects -> cost/caught-defect is null even though cost > 0
-    assert.equal(byModel.sonnet.cost, 0.072);
-    assert.equal(byModel.sonnet.costPerCaughtDefect, null);
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
+  const { r } = computeSharedMutationRun();
+  const byModel = Object.fromEntries(r.perModel.map((p) => [p.model, p]));
+  // opus: 40000 tokens * 15 blended $/MTok / 1e6 = 0.6, 1 defect caught -> 0.6/defect
+  assert.equal(byModel.opus.cost, 0.6);
+  assert.equal(byModel.opus.costPerCaughtDefect, 0.6);
+  // haiku: 6000 * 3 / 1e6 = 0.018, 1 defect caught -> 0.018/defect
+  assert.equal(byModel.haiku.cost, 0.018);
+  assert.equal(byModel.haiku.costPerCaughtDefect, 0.018);
+  // sonnet caught 0 defects -> cost/caught-defect is null even though cost > 0
+  assert.equal(byModel.sonnet.cost, 0.072);
+  assert.equal(byModel.sonnet.costPerCaughtDefect, null);
 });
 
 test("runVariantMatrix without targetFile runs baseline only (no seeded mutations)", () => {
@@ -309,22 +316,17 @@ test("runVariantMatrix accepts custom find/replace mutation specs", () => {
 // --- EVIDENCE.md formatting + append gating ---------------------------
 
 test("formatEvidenceSection labels a harness-validation run distinctly from a real run", () => {
-  const dir = buildFixtureProject();
-  try {
-    const r = runVariantMatrix(dir, "FBX-1", { targetFile: "server/target.js", mode: "harness-validation" });
-    const md = formatEvidenceSection(r);
-    assert.match(md, /harness validation — no real defect data/);
-    assert.match(md, /Harness-validation run — not real defect data/);
-    assert.match(md, /\| Model \| Defects caught \|/);
-    assert.match(md, /Overlap matrix/);
+  const { r } = computeSharedMutationRun();
+  const md = formatEvidenceSection(r);
+  assert.match(md, /harness validation — no real defect data/);
+  assert.match(md, /Harness-validation run — not real defect data/);
+  assert.match(md, /\| Model \| Defects caught \|/);
+  assert.match(md, /Overlap matrix/);
 
-    const r2 = { ...r, mode: "real" };
-    const md2 = formatEvidenceSection(r2);
-    assert.match(md2, /\(real run\)/);
-    assert.ok(!/Harness-validation run/.test(md2));
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
+  const r2 = { ...r, mode: "real" };
+  const md2 = formatEvidenceSection(r2);
+  assert.match(md2, /\(real run\)/);
+  assert.ok(!/Harness-validation run/.test(md2));
 });
 
 test("appendEvidence only writes when explicitly called, and appends (doesn't clobber) existing content", () => {

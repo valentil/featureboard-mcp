@@ -31,6 +31,60 @@ import { capOfTask, modelOfTask } from "./budget.js";
 import { getPricing, costOfEvent, normalizeModelName } from "./pricing.js";
 import { sprintOfTask } from "./sprints.js";
 
+// ---------------------------------------------------------------------------
+// FBMCPF-162: mtime-keyed cache for the append-only jsonl logs
+//
+// readEvents()/readHeartbeats() are called several times per tool invocation
+// (agentMonitorV2, getTimelineData, getTicketHistory all read the full log)
+// and re-parse the WHOLE file — every line, every call — even though these
+// logs are append-only and often thousands of lines deep on an active board.
+// Caching per absolute path, keyed by mtimeMs+size, turns a repeat read
+// within the same process into an O(1) lookup. Size is part of the key (not
+// just mtime) because an append always changes the byte count even when two
+// appends land within the same filesystem mtime tick.
+//
+// Invalidation: appendEvent()/appendHeartbeat() delete the cache entry for
+// their path immediately after the append lands (write-through, airtight for
+// same-process writes — this module is the sole writer of both logs); the
+// mtime+size check is defense-in-depth for a file touched by another process.
+// ---------------------------------------------------------------------------
+const jsonlCache = new Map(); // absolute path -> { mtimeMs, size, records }
+
+function readJsonlCached(p, keep) {
+  const abs = path.resolve(p);
+  let stat;
+  try {
+    stat = fs.statSync(abs);
+  } catch {
+    jsonlCache.delete(abs);
+    return [];
+  }
+  const cached = jsonlCache.get(abs);
+  if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+    return cached.records;
+  }
+  let content;
+  try {
+    content = fs.readFileSync(abs, "utf8");
+  } catch {
+    jsonlCache.delete(abs);
+    return [];
+  }
+  const out = [];
+  for (const raw of content.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    try {
+      const rec = JSON.parse(line);
+      if (keep(rec)) out.push(rec);
+    } catch {
+      // skip a corrupted line rather than failing the whole read
+    }
+  }
+  jsonlCache.set(abs, { mtimeMs: stat.mtimeMs, size: stat.size, records: out });
+  return out;
+}
+
 const EVENTS_FILE = "ticket_events.jsonl";
 
 function eventsPath(board, project) {
@@ -55,6 +109,7 @@ export function appendEvent(board, project, event) {
     const p = eventsPath(board, project);
     fs.mkdirSync(path.dirname(p), { recursive: true });
     fs.appendFileSync(p, JSON.stringify(rec) + "\n", "utf8");
+    jsonlCache.delete(path.resolve(p)); // FBMCPF-162: write-through invalidation
   } catch {
     // audit trail is best-effort — never throw out of a task mutation
   }
@@ -63,24 +118,7 @@ export function appendEvent(board, project, event) {
 
 /** Read + parse a project's event log. Tolerates a missing file and malformed lines. */
 export function readEvents(board, project) {
-  let content;
-  try {
-    content = fs.readFileSync(eventsPath(board, project), "utf8");
-  } catch {
-    return [];
-  }
-  const out = [];
-  for (const raw of content.split(/\r?\n/)) {
-    const line = raw.trim();
-    if (!line) continue;
-    try {
-      const e = JSON.parse(line);
-      if (e && e.ticket && e.field) out.push(e);
-    } catch {
-      // skip a corrupted line rather than failing the whole read
-    }
-  }
-  return out;
+  return readJsonlCached(eventsPath(board, project), (e) => e && e.ticket && e.field);
 }
 
 /** Recorded events for one ticket, oldest first (append order == chronological). */
@@ -174,6 +212,7 @@ export function appendHeartbeat(board, project, heartbeat) {
     const p = heartbeatsPath(board, project);
     fs.mkdirSync(path.dirname(p), { recursive: true });
     fs.appendFileSync(p, JSON.stringify(rec) + "\n", "utf8");
+    jsonlCache.delete(path.resolve(p)); // FBMCPF-162: write-through invalidation
   } catch {
     // best-effort — never throw out of a sub-agent's progress ping
   }
@@ -182,24 +221,7 @@ export function appendHeartbeat(board, project, heartbeat) {
 
 /** Read + parse a project's heartbeat log. Tolerates a missing file and malformed lines. */
 export function readHeartbeats(board, project) {
-  let content;
-  try {
-    content = fs.readFileSync(heartbeatsPath(board, project), "utf8");
-  } catch {
-    return [];
-  }
-  const out = [];
-  for (const raw of content.split(/\r?\n/)) {
-    const line = raw.trim();
-    if (!line) continue;
-    try {
-      const h = JSON.parse(line);
-      if (h && h.ticket) out.push(h);
-    } catch {
-      // skip a corrupted line rather than failing the whole read
-    }
-  }
-  return out;
+  return readJsonlCached(heartbeatsPath(board, project), (h) => h && h.ticket);
 }
 
 /** Recorded heartbeats for one ticket, oldest first (append order == chronological). */
@@ -222,20 +244,38 @@ export function heartbeatsForTicket(board, project, ticket) {
 
 const DEFAULT_STALL_MINUTES = 30;
 
-function spendForTicket(work, ticket) {
+// FBMCPF-162: these all used to take the FULL events/work/heartbeats array
+// plus a ticket id and filter it inline — O(tickets * logSize) across
+// agentMonitorV2's per-ticket map. agentMonitorV2 now groups each log by
+// ticket ONCE up front (see groupByTicket below, same approach
+// getTimelineData already used) and passes each ticket's own slice in, so
+// every function below is now a straight scan of just that ticket's
+// entries — no `.ticket === ticket` filtering left in any of them.
+
+/** Group a chronological (append-order) log by its `ticket` field, preserving order within each group. */
+function groupByTicket(list) {
+  const map = new Map();
+  for (const item of list) {
+    if (!item || !item.ticket) continue;
+    let arr = map.get(item.ticket);
+    if (!arr) map.set(item.ticket, (arr = []));
+    arr.push(item);
+  }
+  return map;
+}
+
+function spendForTicket(work) {
   let spend = 0;
   for (const w of work) {
-    if (w.ticket !== ticket) continue;
     spend += w.tokens || (w.inputTokens || 0) + (w.outputTokens || 0) || 0;
   }
   return spend;
 }
 
 /** Dollar cost so far for one ticket: sum of costOfEvent() across its work-log entries. */
-function costForTicket(work, ticket, pricing) {
+function costForTicket(work, pricing) {
   let cost = 0;
   for (const w of work) {
-    if (w.ticket !== ticket) continue;
     cost += costOfEvent(w, pricing);
   }
   return Math.round(cost * 1e4) / 1e4;
@@ -248,15 +288,15 @@ function costForTicket(work, ticket, pricing) {
  * for the ticket that recorded a model. Returns null (capCost stays
  * uncomputable) when neither source gives a hint.
  */
-function inferModelForTicket(work, ticket, task, heartbeats) {
+function inferModelForTicket(work, task, heartbeats) {
   const labeled = modelOfTask(task);
   if (labeled) return normalizeModelName(labeled) || labeled;
-  const withModel = work.filter((w) => w.ticket === ticket && w.model);
+  const withModel = work.filter((w) => w.model);
   if (withModel.length) return normalizeModelName(withModel[withModel.length - 1].model);
   // FBMCPB-15: before a ticket has any work-log entry, a heartbeat's model
   // is the earliest signal available — lets capCost price in as soon as a
   // sub-agent's first heartbeat lands instead of waiting for completion.
-  const withHbModel = (heartbeats || []).filter((h) => h.ticket === ticket && h.model);
+  const withHbModel = (heartbeats || []).filter((h) => h.model);
   if (withHbModel.length) return normalizeModelName(withHbModel[withHbModel.length - 1].model);
   return null;
 }
@@ -271,14 +311,13 @@ function inferModelForTicket(work, ticket, task, heartbeats) {
  * first to the earliest work-log entry for the ticket (a rough proxy for
  * "work began around here"), then to the ticket's createdDate, then null.
  */
-function resolveStartedInProgress(events, work, ticket, task) {
-  const statusEvents = events.filter((e) => e.ticket === ticket && e.field === "status" && e.to === "In Progress");
+function resolveStartedInProgress(events, work, task) {
+  const statusEvents = events.filter((e) => e.field === "status" && e.to === "In Progress");
   if (statusEvents.length) {
     return { startedAt: statusEvents[statusEvents.length - 1].ts, source: "status_event" };
   }
-  const ticketWork = work.filter((w) => w.ticket === ticket);
-  if (ticketWork.length) {
-    const ts = `${ticketWork[0].date}T${ticketWork[0].time}`;
+  if (work.length) {
+    const ts = `${work[0].date}T${work[0].time}`;
     if (!Number.isNaN(Date.parse(ts))) return { startedAt: ts, source: "work_log_fallback" };
   }
   if (task && task.createdDate && !Number.isNaN(Date.parse(task.createdDate))) {
@@ -292,18 +331,14 @@ function resolveStartedInProgress(events, work, ticket, task) {
  * its last work-log entry. Returns null when the ticket has neither (an
  * In Progress ticket that has never been touched).
  */
-function resolveLastEvent(events, work, heartbeats, ticket) {
-  const ticketEvents = events.filter((e) => e.ticket === ticket);
-  const ticketWork = work.filter((w) => w.ticket === ticket);
-  const ticketHeartbeats = (heartbeats || []).filter((h) => h.ticket === ticket);
-
+function resolveLastEvent(events, work, heartbeats) {
   let candidate = null;
-  if (ticketEvents.length) {
-    const e = ticketEvents[ticketEvents.length - 1];
+  if (events.length) {
+    const e = events[events.length - 1];
     candidate = { kind: "event", ts: e.ts, summary: `${e.field}: ${e.from ?? "?"} \u2192 ${e.to ?? "?"}`, model: null };
   }
-  if (ticketWork.length) {
-    const w = ticketWork[ticketWork.length - 1];
+  if (work.length) {
+    const w = work[work.length - 1];
     const ts = `${w.date}T${w.time}`;
     if (!Number.isNaN(Date.parse(ts)) && (!candidate || Date.parse(ts) > Date.parse(candidate.ts))) {
       candidate = { kind: "work_log", ts, summary: w.text || null, model: w.model || null };
@@ -312,8 +347,8 @@ function resolveLastEvent(events, work, heartbeats, ticket) {
   // FBMCPB-15: a heartbeat counts as activity too, so a ticket mid-dispatch
   // that's only pinging heartbeats (no status/work-log event yet) isn't
   // wrongly flagged stalled.
-  if (ticketHeartbeats.length) {
-    const h = ticketHeartbeats[ticketHeartbeats.length - 1];
+  if (heartbeats.length) {
+    const h = heartbeats[heartbeats.length - 1];
     if (!Number.isNaN(Date.parse(h.ts)) && (!candidate || Date.parse(h.ts) > Date.parse(candidate.ts))) {
       candidate = { kind: "heartbeat", ts: h.ts, summary: h.note || null, model: h.model || null };
     }
@@ -328,10 +363,9 @@ function resolveLastEvent(events, work, heartbeats, ticket) {
  * can show "current phase" (the note) separately from "last activity".
  * Null when the ticket has never emitted one.
  */
-function resolveLastHeartbeat(heartbeats, ticket, now) {
-  const ticketHeartbeats = (heartbeats || []).filter((h) => h.ticket === ticket);
-  if (!ticketHeartbeats.length) return null;
-  const h = ticketHeartbeats[ticketHeartbeats.length - 1];
+function resolveLastHeartbeat(heartbeats, now) {
+  if (!heartbeats.length) return null;
+  const h = heartbeats[heartbeats.length - 1];
   if (Number.isNaN(Date.parse(h.ts))) return null;
   const ageMinutes = Math.round(((now - new Date(h.ts)) / 60000) * 10) / 10;
   return {
@@ -363,14 +397,28 @@ export function agentMonitorV2(board, project, opts = {}) {
   const heartbeats = readHeartbeats(board, project);
   const pricing = getPricing(board, project);
 
+  // FBMCPF-162: group each log by ticket ONCE instead of re-filtering the
+  // full events/work/heartbeats array inside every resolve*/*ForTicket call
+  // below — on a busy board (thousands of events/work-log lines, hundreds
+  // of In Progress tickets) that inline filtering was the dominant cost of
+  // this whole function (O(tickets * logSize) instead of O(logSize)).
+  const eventsByTicket = groupByTicket(events);
+  const workByTicket = groupByTicket(work);
+  const heartbeatsByTicket = groupByTicket(heartbeats);
+  const EMPTY = [];
+
   const tickets = inProgress.map((t) => {
     const ticket = t.ticketNumber;
-    const { startedAt, source: startedAtSource } = resolveStartedInProgress(events, work, ticket, t);
+    const ticketEvents = eventsByTicket.get(ticket) || EMPTY;
+    const ticketWork = workByTicket.get(ticket) || EMPTY;
+    const ticketHeartbeats = heartbeatsByTicket.get(ticket) || EMPTY;
+
+    const { startedAt, source: startedAtSource } = resolveStartedInProgress(ticketEvents, ticketWork, t);
     const elapsedMinutes = startedAt && !Number.isNaN(Date.parse(startedAt))
       ? Math.round(((now - new Date(startedAt)) / 60000) * 10) / 10
       : null;
 
-    const last = resolveLastEvent(events, work, heartbeats, ticket);
+    const last = resolveLastEvent(ticketEvents, ticketWork, ticketHeartbeats);
     let lastEvent = null;
     if (last) {
       const ageMinutes = Math.round(((now - new Date(last.ts)) / 60000) * 10) / 10;
@@ -380,9 +428,9 @@ export function agentMonitorV2(board, project, opts = {}) {
     // FBMCPB-15: the ticket's own latest heartbeat (note/model/elapsed/spend
     // as reported by the sub-agent, plus age) — a richer "what's it doing
     // right now" view than lastEvent, which only says activity happened.
-    const lastHeartbeat = resolveLastHeartbeat(heartbeats, ticket, now);
+    const lastHeartbeat = resolveLastHeartbeat(ticketHeartbeats, now);
 
-    const spend = spendForTicket(work, ticket);
+    const spend = spendForTicket(ticketWork);
     const cap = capOfTask(t);
     const spendRatio = cap ? Math.round((spend / cap) * 1000) / 1000 : null;
 
@@ -392,8 +440,8 @@ export function agentMonitorV2(board, project, opts = {}) {
     // model to price the cap label in dollars; null when none can be
     // inferred from a model:* label, the ticket's own work-log history, or
     // (FBMCPB-15) its latest heartbeat.
-    const costSoFar = costForTicket(work, ticket, pricing);
-    const capModel = inferModelForTicket(work, ticket, t, heartbeats);
+    const costSoFar = costForTicket(ticketWork, pricing);
+    const capModel = inferModelForTicket(ticketWork, t, ticketHeartbeats);
     const capCost = cap != null && capModel && pricing[capModel]
       ? Math.round((cap * pricing[capModel].blendedPerMTok / 1e6) * 1e4) / 1e4
       : null;
