@@ -40,7 +40,7 @@
     },
     {
       "name": "get_board",
-      "description": "Return the FeatureBoard board UI as a self-contained HTML document, ready to render as a Cowork artifact. This is THE way to satisfy any natural-language request to see the board — \"open/show the board\", \"show the featureboard\", \"what's on my plate\", \"how are we looking\", \"give me a status\", \"show velocity/analytics\". Do NOT hand-write your own board: take the returned `html`, write it to a file, and pass it to create_artifact (use artifact id \"featureboard-board\"; if a board artifact is already open, reuse it via update_artifact instead of creating a duplicate). List this server's tools in the artifact's mcp_tools so the columns, product filter, and analytics dashboard work."
+      "description": "Return the FeatureBoard board UI as a self-contained HTML document, ready to render as a Cowork artifact. This is THE way to satisfy any natural-language request to see the board — \"open/show the board\", \"show the featureboard\", \"what's on my plate\", \"how are we looking\", \"give me a status\", \"show velocity/analytics\". Do NOT hand-write your own board: take the returned `html`, write it to a file, and pass it to create_artifact (use artifact id \"featureboard-board\"; if a board artifact is already open, reuse it via update_artifact instead of creating a duplicate). Use the `mcp_tools` array in this response VERBATIM as the artifact's mcp_tools (do not hand-pick tools from memory — the board's buttons and analytics dashboard call back into exactly these tools, and any you omit will fail with \"not in this artifact's mcp_tools allowlist\")."
     },
     {
       "name": "create_project",
@@ -100,7 +100,7 @@
     },
     {
       "name": "close_sprint",
-      "description": "Close a sprint and generate four audience-specific close-out reports (marketing, sales, technical, executive) from its tickets, work log, and metrics (velocity, tokens, $ cost, ADRs touched, CRM ticket links). Refuses to close while the sprint still has open (non-Done) tickets unless force:true. Writes reports/<sprint>/<audience>.md pads under the project and returns their paths, a metric summary, and a per-audience LLM prompt (packet + brief) for richer draft copy. Posts a Slack summary when the project has Slack configured (never fails the close on a Slack error)."
+      "description": "Close a sprint and generate four audience-specific close-out reports (marketing, sales, technical, executive) from its tickets, work log, and metrics (velocity, tokens, $ cost, ADRs touched, CRM ticket links). Refuses to close while the sprint still has open (non-Done) tickets unless force:true. Writes reports/<sprint>/<audience>.md pads under the project and returns their paths, a metric summary, and a per-audience LLM prompt (packet + brief) for richer draft copy. Posts a Slack summary when the project has Slack configured (never fails the close on a Slack error). Also handles the sprint's remaining open tickets per rolloverMode (FBMCPF-197): 'review' (default) returns a categorized rollover plan without moving anything; 'auto' retags P0/P1 tickets into nextSprint (or flags them rollover-pending if no nextSprint given), labels P2/P3 tickets rollover-candidate for human review, and drops the sprint label from P4+/unprioritized tickets back to the backlog; 'off' skips rollover handling entirely. The result's existing shape is unchanged — rollover info is added as a `rollover` section."
     },
     {
       "name": "get_sprint_report",
@@ -188,7 +188,7 @@
     },
     {
       "name": "set_status",
-      "description": "Move a task between Todo / In Progress / Review / Done. Review sits between In Progress and Done when requireReview is on; approve:true overrides the gate. When moving to Done you can also record structured completion metadata (model, tokens, additions, deletions) — these are written to the work log and roll up into velocity/metrics. For graduated projects, moving to Done also refreshes the pad snapshot in <codeRepo>/.featureboard/ (best-effort; a mirror failure never blocks the status change)."
+      "description": "Move a task between Todo / In Progress / Review / Done. Review sits between In Progress and Done when requireReview is on; approve:true overrides the gate. When moving to Done you can also record structured completion metadata (model, tokens, additions, deletions) — these are written to the work log and roll up into velocity/metrics. For graduated projects, moving to Done also refreshes the pad snapshot in <codeRepo>/.featureboard/ (best-effort; a mirror failure never blocks the status change). If git is enabled for the project and Done is reached with no commit referencing the ticket (recorded via commit_feature, or found via git log --grep), the response carries uncommitted:true + a commitReminder — or, when requireCommitOnDone is on, the move is refused outright (approve:true overrides)."
     },
     {
       "name": "decompose_feature",
@@ -329,6 +329,10 @@
     {
       "name": "get_health",
       "description": "Composite 0-100 health score with grade and breakdown: bug pressure, feature progress, momentum (recent tokens), and freshness (staleness of open work)."
+    },
+    {
+      "name": "churn_reconcile",
+      "description": "For Done tickets with tagged commits, compare the additions/deletions logged in the work log against the git-actual numstat of their commits. Git-actual comes from recorded commit events (FBMCPF-188) or, failing that, a live git log --grep + numstat cached by hash. Reports per-ticket loggedAdd/loggedDel vs gitAdd/gitDel with a drift ratio (worst first), plus an overall churnAccuracy also surfaced on get_health."
     },
     {
       "name": "get_work_packet",

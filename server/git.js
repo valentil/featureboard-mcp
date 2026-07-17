@@ -20,9 +20,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { resolveGitTargets, logWork, getProjectConfig } from "./metadata.js";
+import { resolveGitTargets, logWork, getProjectConfig, readWorkLog } from "./metadata.js";
 import { PAD_FILES } from "./graduate.js";
-import { appendEvent, recordedCommitsForTicket } from "./events.js";
+import { appendEvent, recordedCommitsForTicket, readEvents } from "./events.js";
 
 // git's well-known empty-tree object — diffing a root commit against this
 // (instead of a nonexistent HEAD^) is the standard way to get its stats.
@@ -585,4 +585,148 @@ export function commitFeature(board, project, opts = {}, { exec = defaultExec, c
     }
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// FBMCPF-191: churn reconciliation — logged (self-reported) vs git-actual churn
+// ---------------------------------------------------------------------------
+
+// A commit hash's numstat is immutable (a given commit's diff never changes),
+// so a plain hash-keyed cache is correct with NO invalidation — simpler than
+// the mtime-keyed caches elsewhere (those guard mutable files). Keyed by
+// repo+hash so two projects pointing at different repos never collide.
+const numstatCache = new Map(); // `${repo}\u0000${hash}` -> { additions, deletions, resolved }
+
+/** git-actual additions/deletions for one commit (first-parent diff; empty-tree
+ *  for a root commit). Cached by repo+hash. Never throws — an unresolved commit
+ *  returns zeros with resolved:false. */
+export function numstatForCommit(exec, repo, hash) {
+  const key = `${repo}\u0000${hash}`;
+  const hit = numstatCache.get(key);
+  if (hit) return hit;
+  let res = { additions: 0, deletions: 0, resolved: false };
+  try {
+    const parent = exec(["rev-parse", "--verify", "-q", `${hash}^`], repo);
+    const range = parent.status === 0 ? `${hash}^..${hash}` : `${EMPTY_TREE_HASH}..${hash}`;
+    const ns = exec(["diff", "--numstat", range], repo);
+    if (ns.status === 0) {
+      let a = 0, d = 0;
+      for (const line of (ns.stdout || "").split(/\r?\n/)) {
+        if (!line.trim()) continue;
+        const [x, y] = line.split("\t");
+        const xn = parseInt(x, 10), yn = parseInt(y, 10);
+        if (!Number.isNaN(xn)) a += xn;
+        if (!Number.isNaN(yn)) d += yn;
+      }
+      res = { additions: a, deletions: d, resolved: true };
+    }
+  } catch {
+    // leave res unresolved
+  }
+  numstatCache.set(key, res);
+  return res;
+}
+
+/**
+ * Reconcile each Done ticket's SELF-REPORTED churn (work-log additions/deletions
+ * the agent logged) against the GIT-ACTUAL churn of the commits tagged to it.
+ * Self-report drifts from reality (agents estimate, or log once then keep
+ * editing), so this exposes per-ticket drift plus an overall churnAccuracy that
+ * feeds get_health.
+ *
+ * Git-actual churn, per ticket: (1) the commit events commit_feature records
+ * (FBMCPF-188) — their additions/deletions came straight from `git diff
+ * --numstat` at commit time, so they ARE git-actual and need no repo; else
+ * (2) when allowGit (default) and the code repo is present, a live
+ * `git log --grep=<ticket>` + numstatForCommit per commit (cached by hash).
+ * Logged churn EXCLUDES commit-enrichment work-log lines (they carry a `hash`
+ * and hold git-actual numbers, not the agent's self-report). Only Done tickets
+ * with at least one tagged commit are reconciled. Read-only; never throws for a
+ * normal board. `driftRatio` = |loggedTotal - gitTotal| / gitTotal per ticket;
+ * `churnAccuracy` = round(100 * max(0, 1 - Σ|drift| / Σ gitTotal)).
+ */
+export function reconcileChurn(board, project, { exec = defaultExec, allowGit = true } = {}) {
+  const doneTasks = board.listTasks(project, {}).filter((t) => t.status === "Done");
+
+  const workByTicket = new Map();
+  for (const w of readWorkLog(board, project)) {
+    if (!w.ticket) continue;
+    let arr = workByTicket.get(w.ticket);
+    if (!arr) workByTicket.set(w.ticket, (arr = []));
+    arr.push(w);
+  }
+  const commitEvByTicket = new Map();
+  for (const e of readEvents(board, project)) {
+    if (e.field !== "commit" || !e.ticket) continue;
+    let arr = commitEvByTicket.get(e.ticket);
+    if (!arr) commitEvByTicket.set(e.ticket, (arr = []));
+    arr.push(e);
+  }
+
+  const targets = resolveGitTargets(board, project);
+  const repo = (targets.codeRepo && targets.codeRepo.path) || null;
+  const repoUsable = !!(repo && fs.existsSync(path.join(repo, ".git")));
+
+  const rows = [];
+  let sumLogged = 0, sumGit = 0, sumAbsDrift = 0;
+
+  for (const t of doneTasks) {
+    const tk = t.ticketNumber;
+
+    let loggedAdd = 0, loggedDel = 0;
+    for (const w of (workByTicket.get(tk) || [])) {
+      if (w.hash) continue; // FBMCPF-188 enrichment line = git-actual, not self-report
+      loggedAdd += w.additions || 0;
+      loggedDel += w.deletions || 0;
+    }
+
+    let gitAdd = 0, gitDel = 0, gitSource = "none", commitCount = 0;
+    const recEvs = commitEvByTicket.get(tk) || [];
+    if (recEvs.length) {
+      gitSource = "recorded";
+      commitCount = new Set(recEvs.map((e) => e.hash || e.shortHash)).size;
+      for (const e of recEvs) { gitAdd += e.additions || 0; gitDel += e.deletions || 0; }
+    } else if (allowGit && repoUsable) {
+      const log = exec(["log", "--fixed-strings", `--grep=${tk}`, "--format=%H"], repo);
+      if (log.status === 0) {
+        const hashes = (log.stdout || "").split(/\r?\n/).map((h) => h.trim()).filter(Boolean);
+        if (hashes.length) {
+          gitSource = "git";
+          commitCount = hashes.length;
+          for (const h of hashes) {
+            const ns = numstatForCommit(exec, repo, h);
+            gitAdd += ns.additions; gitDel += ns.deletions;
+          }
+        }
+      }
+    }
+
+    if (gitSource === "none") continue; // no tagged commits -> nothing to reconcile
+
+    const loggedTotal = loggedAdd + loggedDel;
+    const gitTotal = gitAdd + gitDel;
+    const absDrift = Math.abs(loggedTotal - gitTotal);
+    const driftRatio = gitTotal > 0 ? Math.round((absDrift / gitTotal) * 1000) / 1000 : null;
+
+    sumLogged += loggedTotal; sumGit += gitTotal; sumAbsDrift += absDrift;
+    rows.push({ ticket: tk, title: t.title, commitCount, gitSource, loggedAdd, loggedDel, gitAdd, gitDel, driftRatio });
+  }
+
+  rows.sort((a, b) => (b.driftRatio ?? -1) - (a.driftRatio ?? -1)); // worst drift first
+  const churnAccuracy = sumGit > 0 ? Math.round(100 * Math.max(0, 1 - sumAbsDrift / sumGit)) : null;
+  const driftPct = sumGit > 0 ? Math.round((sumAbsDrift / sumGit) * 100) : null;
+
+  return {
+    project,
+    count: rows.length,
+    tickets: rows,
+    totals: {
+      loggedAdd: rows.reduce((s, r) => s + r.loggedAdd, 0),
+      loggedDel: rows.reduce((s, r) => s + r.loggedDel, 0),
+      gitAdd: rows.reduce((s, r) => s + r.gitAdd, 0),
+      gitDel: rows.reduce((s, r) => s + r.gitDel, 0),
+      driftPct,
+      churnAccuracy,
+    },
+  };
 }

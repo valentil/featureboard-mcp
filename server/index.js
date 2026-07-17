@@ -64,7 +64,7 @@ import {
   listSiteTemplates, applySiteTemplate,
   renderSite, siteRoot, saveAsset, listAssets, setSiteAnalytics, addRawPage,
 } from "./website.js";
-import { getGitConfig, setGitConfig, commitFeature, mirrorGraduatedPad, getTicketDiff, getGlobalConfig, setGlobalConfig, resolveGitMode, evaluateCommitGate } from "./git.js";
+import { getGitConfig, setGitConfig, commitFeature, mirrorGraduatedPad, getTicketDiff, getGlobalConfig, setGlobalConfig, resolveGitMode, evaluateCommitGate, reconcileChurn } from "./git.js";
 import { createWorktree, listWorktrees, cleanupWorktree, mergeBackGuidance } from "./worktrees.js";
 import { addReviewComment, listReviewComments, resolveReviewComment, ticketsWithUnresolvedReviews } from "./reviews.js";
 import { scaffoldSite } from "./sitegen.js";
@@ -2158,7 +2158,31 @@ server.registerTool(
     inputSchema: { project: z.string() },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
-  tryTool(({ project }) => meta.computeHealth(getBoard(), project))
+  tryTool(({ project }) => {
+    const board = getBoard();
+    const health = meta.computeHealth(board, project);
+    // FBMCPF-191: churn accuracy — how closely logged churn matched git-actual
+    // churn across Done tickets. allowGit:false keeps this read cheap (recorded
+    // commit stats only, zero git shell-outs); the churn_reconcile tool does the
+    // deep, live-git view. Never let reconciliation break the health read.
+    try {
+      const churn = reconcileChurn(board, project, { allowGit: false });
+      health.churnAccuracy = churn.totals.churnAccuracy;
+    } catch { /* churn reconciliation is best-effort on the health path */ }
+    return health;
+  })
+);
+
+server.registerTool(
+  "churn_reconcile",
+  {
+    title: "Reconcile logged vs git churn",
+    description:
+      "For Done tickets with tagged commits, compare the additions/deletions logged in the work log against the git-actual numstat of their commits. Git-actual comes from recorded commit events (FBMCPF-188) or, failing that, a live git log --grep + numstat cached by hash. Reports per-ticket loggedAdd/loggedDel vs gitAdd/gitDel with a drift ratio (worst first), plus an overall churnAccuracy also surfaced on get_health.",
+    inputSchema: { project: z.string() },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project }) => reconcileChurn(getBoard(), project))
 );
 
 server.registerTool(
