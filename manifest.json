@@ -793,8 +793,28 @@
   ],
   "prompts": [
     {
+      "name": "evaluate_drift",
+      "description": "Run a full agentic-drift evaluation: sample (or fully check) Done tickets, score how faithfully each was implemented vs its intent, report an aggregate drift rate with confidence, and offer one-click remediation.",
+      "arguments": [
+        "project",
+        "mode",
+        "sampleSize"
+      ],
+      "text": "Run a full agentic-drift evaluation: sample (or fully check) Done tickets, score how faithfully each was implemented vs its intent, report an aggregate drift rate with confidence, and offer one-click remediation."
+    },
+    {
+      "name": "pull_lead_website",
+      "description": "Fetch a lead's website, extract company details, and save them onto the lead via enrich_lead.",
+      "arguments": [
+        "project",
+        "id",
+        "url"
+      ],
+      "text": "Fetch a lead's website, extract company details, and save them onto the lead via enrich_lead."
+    },
+    {
       "name": "project_from_chat",
-      "description": "Turn the current conversation into a FeatureBoard project (features + bugs).",
+      "description": "Analyze the current conversation and create a FeatureBoard project from it — a project name plus features (new work) and bugs (issues raised).",
       "arguments": [
         "name"
       ],
@@ -802,12 +822,123 @@
     },
     {
       "name": "process_next",
-      "description": "Pull the top ticket off the priority queue and work it end-to-end with the work-packet loop.",
+      "description": "Pull the top ticket off the board's priority queue and work it end-to-end with the FeatureBoard work-packet loop.",
       "arguments": [
         "project",
         "continuous"
       ],
       "text": "Work the FeatureBoard queue using the work-packet loop: call next_task for the top open ticket, set it In Progress, call get_work_packet and read the files it points to, do and verify the work (dispatch substantial tickets to a fresh sub-agent), then set_status Done with a completionSummary and log_work. Repeat until the queue is clear if continuous is 'yes'."
+    },
+    {
+      "name": "generate_media",
+      "description": "Generate a shareable web report (or image) for a goal and save it into the project's media/ gallery via save_media.",
+      "arguments": [
+        "project",
+        "goal"
+      ],
+      "text": "Generate a shareable web report (or image) for a goal and save it into the project's media/ gallery via save_media."
+    },
+    {
+      "name": "generate_image",
+      "description": "Produce an actual raster image (via an image-generation tool/connector, if one is available) and save it to the project's media/ gallery as base64 — falling back to a self-contained SVG when no image generator is connected.",
+      "arguments": [
+        "project",
+        "goal",
+        "name",
+        "aspect"
+      ],
+      "text": "Produce an actual raster image (via an image-generation tool/connector, if one is available) and save it to the project's media/ gallery as base64 — falling back to a self-contained SVG when no image generator is connected."
+    },
+    {
+      "name": "generate_variations",
+      "description": "Produce several alternative versions of an asset from one prompt/goal, saved as a group for side-by-side review.",
+      "arguments": [
+        "project",
+        "goal",
+        "count"
+      ],
+      "text": "Produce several alternative versions of an asset from one prompt/goal, saved as a group for side-by-side review."
+    },
+    {
+      "name": "refine_media",
+      "description": "Iterate on an existing gallery asset with a follow-up instruction, saving the result as a new version (its history is preserved).",
+      "arguments": [
+        "project",
+        "name",
+        "instruction"
+      ],
+      "text": "Iterate on an existing gallery asset with a follow-up instruction, saving the result as a new version (its history is preserved)."
+    },
+    {
+      "name": "share_media",
+      "description": "Draft suggested X and LinkedIn copy for a gallery item and save them as reviewable drafts (does not post).",
+      "arguments": [
+        "project",
+        "asset"
+      ],
+      "text": "Draft suggested X and LinkedIn copy for a gallery item and save them as reviewable drafts (does not post)."
+    },
+    {
+      "name": "generate_site",
+      "description": "From a single description, generate a complete site (title, tagline, theme, home sections, and initial sub-pages) and scaffold it in one shot with scaffold_site, instead of building it field-by-field.",
+      "arguments": [
+        "project",
+        "brief"
+      ],
+      "text": "From a single description, generate a complete site (title, tagline, theme, home sections, and initial sub-pages) and scaffold it in one shot with scaffold_site, instead of building it field-by-field."
+    },
+    {
+      "name": "tweak_site",
+      "description": "Apply a plain-English change to the project's website (e.g. 'make the tagline punchier', 'add a pricing section', 'switch to dark mode') and re-render.",
+      "arguments": [
+        "project",
+        "instruction"
+      ],
+      "text": "Apply a plain-English change to the project's website (e.g. 'make the tagline punchier', 'add a pricing section', 'switch to dark mode') and re-render."
+    },
+    {
+      "name": "daily_plan",
+      "description": "Build the day plan (model + effort per ticket), apply it, then start sub-agents on every planned ticket at the right model/effort tier.",
+      "arguments": [
+        "project",
+        "budget"
+      ],
+      "text": "Build the day plan (model + effort per ticket), apply it, then start sub-agents on every planned ticket at the right model/effort tier."
+    },
+    {
+      "name": "plan_goal",
+      "description": "Decompose a single goal into 3–12 dependency-aware tickets, create them with plan_work in one call, then read back the execution waves — what can run in parallel and what must wait — and offer to start the first wave.",
+      "arguments": [
+        "project",
+        "goal"
+      ],
+      "text": "Decompose a single goal into 3–12 dependency-aware tickets, create them with plan_work in one call, then read back the execution waves — what can run in parallel and what must wait — and offer to start the first wave."
+    },
+    {
+      "name": "refine",
+      "description": "Turn a thin ticket into a crisp requirements pad — intent, assumptions, acceptance criteria, open questions — and persist it with set_requirements.",
+      "arguments": [
+        "project",
+        "ticket"
+      ],
+      "text": "Turn a thin ticket into a crisp requirements pad — intent, assumptions, acceptance criteria, open questions — and persist it with set_requirements."
+    },
+    {
+      "name": "run_tests",
+      "description": "Run the project's test suite(s), record each result with log_test_run, then show the consolidated per-suite view.",
+      "arguments": [
+        "project",
+        "suite"
+      ],
+      "text": "Run the project's test suite(s), record each result with log_test_run, then show the consolidated per-suite view."
+    },
+    {
+      "name": "brand",
+      "description": "Establish the project's brand kit once, then apply it consistently across media, website, and campaigns.",
+      "arguments": [
+        "project"
+      ],
+      "text": "Establish the project's brand kit once, then apply it consistently across media, website, and campaigns."
     }
   ],
   "tools_generated": false,

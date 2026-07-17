@@ -57,3 +57,44 @@ try {
 } catch (e) {
   console.warn("Skipped manifest sync:", e.message);
 }
+
+// Keep manifest.json's prompts array in sync with server.registerPrompt calls
+// (FBMCPB-17), same source-of-truth pattern as the tools array above. Name,
+// description and argument names come from the code; the short `text` summary
+// is hand-curated, so an existing manifest text is preserved by prompt name and
+// new prompts fall back to their description until someone curates one.
+const promptChunks = src.split(/server\.registerPrompt\(/).slice(1);
+const prompts = [];
+for (const c of promptChunks) {
+  const name = (c.match(/^\s*"([^"]+)"/) || [])[1];
+  if (!name) continue;
+  const descBlock = (c.match(/description:\s*([\s\S]*?)(?:argsSchema:|\n\s*\},)/) || [])[1] || "";
+  const desc = (descBlock.match(/"((?:[^"\\]|\\.)*)"/g) || [])
+    .map((s) =>
+      s
+        .slice(1, -1)
+        .replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
+        .replace(/\\"/g, '"')
+        .replace(/\\\\/g, "\\")
+    )
+    .join("");
+  // argsSchema objects only nest parens (z.string().describe(...)), never braces,
+  // so a non-greedy match to the first closing brace captures the whole block.
+  const argsBlock = (c.match(/argsSchema:\s*\{([\s\S]*?)\}/) || [])[1] || "";
+  const args = [...argsBlock.matchAll(/(\w+)\s*:\s*z\b/g)].map((m) => m[1]);
+  prompts.push({ name, desc, args });
+}
+try {
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  const curatedText = new Map((manifest.prompts || []).map((pr) => [pr.name, pr.text]));
+  manifest.prompts = prompts.map((pr) => ({
+    name: pr.name,
+    description: pr.desc,
+    arguments: pr.args,
+    text: curatedText.get(pr.name) || pr.desc,
+  }));
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n", "utf8");
+  console.log(`Synced manifest.json prompts (${manifest.prompts.length}).`);
+} catch (e) {
+  console.warn("Skipped manifest prompts sync:", e.message);
+}
