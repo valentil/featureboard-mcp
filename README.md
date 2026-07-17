@@ -54,6 +54,10 @@ drift on open-ended asks. See [docs/EVAL-BOARD-VS-CHAT.md](docs/EVAL-BOARD-VS-CH
 > surface (CRM, media, website, marketing, and more). After installing or updating, fully
 > **restart Claude Desktop** so new tools load.
 
+
+## Recipes
+
+Automate your board's daily routines without a daemon. Copy-paste these prompts into **Claude Code → Scheduled tasks** to run nightly board health checks, weekly sprint close-outs, and daily standups. See [docs/RECIPES.md](docs/RECIPES.md) for three ready-to-use scheduled task recipes and tool reference.
 ## Everything it can do
 
 **Board & tickets** — `list_projects` · `create_project` · `list_tasks` · `get_task` ·
