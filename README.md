@@ -8,7 +8,7 @@ no lock-in. Your boards are plain `featurelist.md` / `buglist.md` files you own 
 
 It started as a hosted web app (OpenClaw). We rebuilt it as an MCP server by taking the
 original app's file list and porting it, tool by tool, **while learning MCP from scratch** —
-and it came together fast. What you get is ~130 tools spanning the entire product surface:
+and it came together fast. What you get is ~189 tools spanning the entire product surface:
 board and churn loop, analytics, testing, a media studio, CRM, leads, contracts, mail and
 marketing, a website builder with git deploys, and per-ticket commits. The board is the
 front door; everything the original app did is one sentence away in chat.
@@ -32,7 +32,7 @@ front door; everything the original app did is one sentence away in chat.
 
 ## Quickstart
 
-1. Install the extension: double-click `featureboard-0.3.2.mcpb`, or Claude Desktop →
+1. Install the extension: double-click `featureboard-0.6.0.mcpb`, or Claude Desktop →
    **Settings → Extensions → Advanced → Install Extension**.
 2. On first run it asks for your **Boards folder**. Each subfolder with a `featurelist.md` or
    `buglist.md` is a board.
@@ -43,7 +43,7 @@ front door; everything the original app did is one sentence away in chat.
    - "How's velocity looking this week?"
 
 > **First-run tip:** the extension defaults to **Essential tools only** (~34 core board tools)
-> for a clean start. Turn that off in the extension settings to expose the full ~130-tool
+> for a clean start. Turn that off in the extension settings to expose the full ~189-tool
 > surface (CRM, media, website, marketing, and more). After installing or updating, fully
 > **restart Claude Desktop** so new tools load.
 
@@ -260,7 +260,7 @@ Requires Node 18+.
 ```bash
 npm install                       # MCP SDK + zod
 npm run check                     # syntax-check every server module
-node --test                       # unit tests (158)
+node --test                       # unit tests (630)
 npm run smoke                     # end-to-end stdio smoke test (no Claude Desktop needed)
 npm run build && npm run bundle   # preflight, then pack featureboard-<version>.mcpb
 ```

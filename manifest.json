@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "featureboard",
   "display_name": "FeatureBoard",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "A local, file-backed feature/bug board for agentic projects. Claude reads and writes your featurelist.md / buglist.md boards directly.",
   "long_description": "FeatureBoard turns your project's markdown task files into a first-class board that Claude can manage. It keeps the same `featurelist.md` / `buglist.md` format used by the original FeatureBoard app, with FBF-/FBB- ticket IDs, statuses (Todo / In Progress / Done), due dates, products, labels, linked issues and completion summaries. Because Claude is now the agent, workflow tools like brainstorm (bulk-add) and decompose fit naturally: Claude generates the ideas, the board persists them. Read-only analytics summarize velocity and open/closed counts.",
   "author": {
