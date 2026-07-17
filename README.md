@@ -30,6 +30,13 @@ front door; everything the original app did is one sentence away in chat.
   CRM, drafts contracts and campaigns, builds and deploys a marketing site, and commits your
   code per ticket. Turn it down to the essentials with one toggle, or open the whole toolbox.
 
+## Measured: what the board actually buys you
+
+A paired agent trial (n=10, sonnet model tier) showed the work packet cuts diff churn **1.76x**
+(837 vs 1,471 additions) with equal correctness (10/10 both). Token spend is 6–11% lower
+(77.5k vs 83.2k median), secondary to the focus gain: less to review, maintain, and scope
+drift on open-ended asks. See [docs/EVAL-BOARD-VS-CHAT.md](docs/EVAL-BOARD-VS-CHAT.md).
+
 ## Quickstart
 
 1. Install the extension: double-click `featureboard-0.6.0.mcpb`, or Claude Desktop →
