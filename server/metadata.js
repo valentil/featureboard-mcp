@@ -451,7 +451,18 @@ export function computeHealth(board, project) {
   const openBugs = bugs.filter((t) => t.status !== "Done").length;
   const openFeatures = features.filter((t) => t.status !== "Done").length;
   const doneFeatures = features.filter((t) => t.status === "Done").length;
-  const v = velocity(readWorkLog(board, project));
+  const log = readWorkLog(board, project);
+  const v = velocity(log);
+  // FBMCPF-190: token-telemetry coverage — share of the 30 most recent
+  // work-log events that recorded a numeric token count. Entries with
+  // tokens:null skew velocity and eval readouts (docs/EVIDENCE.md), so this
+  // surfaces how trustworthy the token numbers currently are. null when there
+  // are no work-log events yet (nothing to measure).
+  const recentEvents = log.slice(-30);
+  const withTokens = recentEvents.filter((e) => typeof e.tokens === "number").length;
+  const tokenCoverage = recentEvents.length
+    ? Math.round((withTokens / recentEvents.length) * 100)
+    : null;
 
   // 1. Bug pressure: open bugs relative to total open work (fewer is better)
   const openTotal = openBugs + openFeatures;
@@ -489,6 +500,7 @@ export function computeHealth(board, project) {
     project,
     score,
     grade,
+    tokenCoverage,
     breakdown: {
       bugPressure: { score: bugScore, openBugs, openFeatures },
       progress: { score: progressScore, doneFeatures, totalFeatures: features.length },

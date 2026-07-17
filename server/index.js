@@ -1356,6 +1356,9 @@ server.registerTool(
         model, tokens, inputTokens, outputTokens, additions, deletions,
       });
       result.metrics = meta.ticketMetrics(board, project, ticket);
+      // FBMCPF-190: nudge for token telemetry — velocity/eval readouts are
+      // skewed by metrics events that omit a token count (docs/EVIDENCE.md).
+      if (tokens == null) result.telemetryHint = "tokens not recorded \u2014 pass tokens for accurate velocity/eval";
     }
     // FBMCPF-151: for graduated projects, refresh the .featureboard/ pad mirror in
     // the code repo on close-out too (not just commit_feature), so the snapshot
@@ -2055,6 +2058,8 @@ server.registerTool(
     // set_status Done metrics line — same ticket, same day, same +/- lines.
     const dup = meta.findDuplicateWorkEntry(board, project, entry);
     const result = meta.logWork(board, project, entry);
+    // FBMCPF-190: nudge for token telemetry when this event omits a token count.
+    if (entry.tokens == null) result.telemetryHint = "tokens not recorded \u2014 pass tokens for accurate velocity/eval";
     if (dup) {
       result.duplicateSuspected = true;
       result.warning =
