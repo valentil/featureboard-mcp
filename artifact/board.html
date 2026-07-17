@@ -118,6 +118,7 @@
   }
   .banner.stop { background: #fdecec; border-color: #f2b8b4; color: #8a231c; }
   .banner.warn { background: #fff4e0; border-color: #f0d28a; color: #7a5310; }
+  .banner.info { background: #e8ecfd; border-color: #c7d0f7; color: #384bcc; }
   .banner ul { margin: 4px 0 0; padding-left: 18px; }
 
   .board { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding: 16px; }
@@ -320,6 +321,7 @@
 
 <div id="banner"></div>
 <div id="stallBanner"></div>
+<div id="liveBanner"></div>
 <div class="subbar">
   <span class="lbl">Done shows:</span>
   <div class="seg" id="rangeSeg">
@@ -480,6 +482,31 @@ function fmtMinutes(m) {
   return h + "h" + (rem ? " " + rem + "m" : "");
 }
 
+// live heartbeat banner (FBMCPB-15): surfaces get_agent_monitor's per-ticket
+// lastHeartbeat (phase note, model, heartbeat age) for in-flight dispatches
+// so a long (5-13min) sub-agent run shows real progress on reload instead of
+// a generic "multitasking" wait. Separate container from #stallBanner (which
+// only lists STALLED tickets) — this lists anything that has emitted at
+// least one heartbeat, whether stalled or not.
+function renderLiveBanner(monitor) {
+  const box = $("#liveBanner");
+  if (!box) return;
+  const tickets = monitor && Array.isArray(monitor.tickets) ? monitor.tickets : [];
+  const active = tickets.filter((t) => t.lastHeartbeat);
+  if (!active.length) { box.innerHTML = ""; return; }
+  const items = active.map((t) => {
+    const hb = t.lastHeartbeat;
+    const phase = hb.note ? esc(hb.note) : "working";
+    const modelTag = hb.model ? ' <span style="opacity:.75">[' + esc(hb.model) + ']</span>' : "";
+    const age = hb.ageMinutes != null ? fmtMinutes(hb.ageMinutes) + " ago" : "just now";
+    const running = t.elapsedMinutes != null ? ", running " + fmtMinutes(t.elapsedMinutes) : "";
+    return '<li><b>' + esc(t.ticket) + '</b>' + modelTag + ' — ' + phase +
+      ' <span style="opacity:.75">(' + age + running + ')</span></li>';
+  }).join("");
+  box.innerHTML = '<div class="banner info">\u23f1\ufe0f <div><b>' + active.length + ' ticket' + (active.length === 1 ? "" : "s") +
+    '</b> in flight' + '<ul>' + items + '</ul></div></div>';
+}
+
 let _refreshing = false;
 async function refresh(silent) {
   if (!state.board || _refreshing) return;
@@ -502,6 +529,7 @@ async function refresh(silent) {
     renderMetrics(metrics);
     renderHealth(health);
     renderStallBanner(monitor);
+    renderLiveBanner(monitor);
     populateProducts(tasks);
     populateSprints(tasks);
     renderBoard(state.tasks);

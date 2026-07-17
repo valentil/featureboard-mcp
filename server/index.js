@@ -30,7 +30,7 @@ import { notifySlack, notifyTicketEvent } from "./slack.js";
 import { registerEmail } from "./registration.js";
 import { addDecision, listDecisions, decisionsForTicket } from "./decisions.js";
 import { writeHandoff } from "./handoffs.js";
-import { getTicketHistory, agentMonitorV2, appendEvent, getTimelineData } from "./events.js";
+import { getTicketHistory, agentMonitorV2, appendEvent, getTimelineData, appendHeartbeat } from "./events.js";
 import { getPricing, rollupCost } from "./pricing.js";
 import { addKbDoc, listKbDocs, getKbDoc, searchKb } from "./kb.js";
 import {
@@ -119,10 +119,10 @@ const INSTRUCTIONS = `FeatureBoard is your task board for the user's projects. T
 When the user gives you a substantive, multi-step request (build X, fix these bugs, ship a feature):
 1. Pick or create the board. Call list_projects; if nothing fits, create_project.
 2. Break the request down onto the board. Use plan_work once to create the project (if needed) plus the initial features and bugs in a single step. Features are units of new work (FBF-###); bugs are defects (FBB-###).
-3. Step 0: check the packet's gitTargets — code commits and projectpad commits can go to DIFFERENT repos; never assume. Work one ticket at a time. Call next_task to pull the next open item (it honours manual priority). set_status <ticket> "In Progress" BEFORE you start. Call get_work_packet to assemble a focused brief (scope, linked issue, code location, custom prompt, definition of done) and read the files it points to rather than dumping them. For a substantial or code ticket, dispatch it to a fresh sub-agent with that packet so it works in isolated context; do trivial tickets inline. Pick the sub-agent\u2019s model from the ticket\u2019s model: label (or the packet\u2019s suggestedModel): sonnet/haiku tickets may run as PARALLEL sub-agents; opus/fable tickets run SEQUENTIALLY with orchestrator review between. Match rigor to the effort: label — low: minimal exploration, obvious change, verify, stop; medium: normal loop with tests; high: read adjacent code, protect invariants and back-compat, add tests, self-review the diff. Sub-agents NEVER write the board — the orchestrator alone sets status, logs work, and commits. Only you (the orchestrator) write to the board. When finished, set_status "Done" with a one-line completionSummary AND log_work with additions/deletions (and model) so progress is recorded. If git is configured for the project, commit the change per ticket (commit_feature, message referencing the ticket id) before pulling the next. Then pull the next. (The process_next prompt runs this loop for you.)
+3. Step 0: check the packet's gitTargets — code commits and projectpad commits can go to DIFFERENT repos; never assume. Work one ticket at a time. Call next_task to pull the next open item (it honours manual priority). set_status <ticket> "In Progress" BEFORE you start. Call get_work_packet to assemble a focused brief (scope, linked issue, code location, custom prompt, definition of done) and read the files it points to rather than dumping them. For a substantial or code ticket, dispatch it to a fresh sub-agent with that packet so it works in isolated context; do trivial tickets inline. Pick the sub-agent\u2019s model from the ticket\u2019s model: label (or the packet\u2019s suggestedModel): sonnet/haiku tickets may run as PARALLEL sub-agents; opus/fable tickets run SEQUENTIALLY with orchestrator review between. Match rigor to the effort: label — low: minimal exploration, obvious change, verify, stop; medium: normal loop with tests; high: read adjacent code, protect invariants and back-compat, add tests, self-review the diff. Dispatches running more than a couple minutes should show live progress, not just a generic \"multitasking\" wait: tell the sub-agent to call log_heartbeat a few times at natural milestones (a short phase note, plus model/elapsedMinutes/spend when known) — get_agent_monitor and the board's live/stall banners read these per ticket. As the orchestrator, emit your own one-line status when checking in on a running dispatch (ticket, model, elapsed, cap spend) so the user sees progress even before you next touch the board. Sub-agents NEVER write the board — the orchestrator alone sets status, logs work, and commits. Only you (the orchestrator) write to the board. When finished, set_status "Done" with a one-line completionSummary AND log_work with additions/deletions (and model) so progress is recorded. If git is configured for the project, commit the change per ticket (commit_feature, message referencing the ticket id) before pulling the next. Then pull the next. (The process_next prompt runs this loop for you.)
 4. Log new issues as you find them with log_bug, and split anything too big with decompose_feature.
 5. When the user asks how things are going, use get_metrics and list_tasks rather than guessing.
-6. Parallel dispatch (Cline-Kanban parity): when several ready tickets touch DISJOINT areas of the code, you may create an isolated git worktree per ticket (create_worktree) and dispatch one sub-agent per worktree in parallel - each sub-agent edits its own checked-out directory on branch ticket/<id>, never the shared repo working tree; the ticket packet's worktree block carries the path + branch + merge-back steps. Worktrees live OUTSIDE the repo (sibling <codeLocation>-worktrees/, configurable via the worktreeDir project config key) because under Cowork a worktree inside a synced repo mount can corrupt git internals. Board writes stay orchestrator-only. Merge branches back SERIALLY (one at a time): checkout the base branch, merge/rebase ticket/<id>, run tests, commit per ticket, then cleanup_worktree.
+6. Parallel dispatch (Cline-Kanban parity): when several ready tickets touch DISJOINT areas of the code, you may create an isolated git worktree per ticket (create_worktree) and dispatch one sub-agent per worktree in parallel - each sub-agent edits its own checked-out directory on branch ticket/<id>, never the shared repo working tree; the ticket packet's worktree block carries the path + branch + merge-back steps. Each parallel sub-agent should still call log_heartbeat at milestones so get_agent_monitor shows all of them progressing, not just whichever one last touched the board. Worktrees live OUTSIDE the repo (sibling <codeLocation>-worktrees/, configurable via the worktreeDir project config key) because under Cowork a worktree inside a synced repo mount can corrupt git internals. Board writes stay orchestrator-only. Merge branches back SERIALLY (one at a time): checkout the base branch, merge/rebase ticket/<id>, run tests, commit per ticket, then cleanup_worktree.
 
 Keep the board honest: a ticket should be In Progress only while you are actively working it, and Done only when it is genuinely finished. The board is scaffolding around the real work — it does not replace writing the code, running the tests, etc. Do not create boards or tickets for trivial one-shot chores that don't benefit from tracking.
 
@@ -1987,6 +1987,37 @@ server.registerTool(
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
   tryTool(({ project, stallMinutes, stallHours, asOf }) => agentMonitorV2(getBoard(), project, { stallMinutes, stallHours, asOf }))
+);
+
+// heartbeats (FBMCPB-15) -----------------------------------------------------
+server.registerTool(
+  "log_heartbeat",
+  {
+    title: "Log a dispatch heartbeat",
+    description:
+      "Append a lightweight in-flight progress ping for a ticket a sub-agent is actively working: a phase/milestone " +
+      "note, and optionally the model, elapsed minutes, and tokens spent so far. Distinct from log_work (which records " +
+      "a completed unit of work at the end of a session) — heartbeats are informational pings emitted DURING a long " +
+      "(5-13min) dispatch, so get_agent_monitor and the board's live/stall banners have something to show besides a " +
+      "generic \"multitasking\" indicator until the sub-agent returns. Call it at a few natural milestones (e.g. " +
+      "\"read the ticket + adjacent code\", \"wrote the fix\", \"tests passing, writing report\") rather than on every " +
+      "tool call. Sub-agents may call this directly — it is informational only and does not move the ticket's status.",
+    inputSchema: {
+      project: z.string(),
+      ticket: z.string(),
+      note: z.string().describe("Short phase/milestone description, e.g. \"reading affected files\" or \"tests passing, writing report\"."),
+      model: z.string().optional().describe("Model doing the work (sonnet/opus/haiku/fable, or a full model id)."),
+      elapsedMinutes: z.number().min(0).optional().describe("Minutes elapsed in this dispatch so far, if known."),
+      spend: z.number().min(0).optional().describe("Tokens spent so far in this dispatch, if known."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  writeTool(({ project, ticket, note, model, elapsedMinutes, spend }) => {
+    const board = getBoard();
+    const task = board.getTask(project, ticket);
+    if (!task) throw new Error(`Ticket ${ticket} not found in "${project}".`);
+    return appendHeartbeat(board, project, { ticket, note, model, elapsedMinutes, spend });
+  })
 );
 
 server.registerTool(
@@ -4400,7 +4431,7 @@ server.registerPrompt(
             "1. Call next_task to get the top open ticket (honours priority). If none, tell me the queue is clear and stop.\n" +
             "2. set_status the ticket to \"In Progress\".\n" +
             "3. Call get_work_packet for it. Read the files it points to at the code location — do not dump whole files into context.\n" +
-            "4. Do the work. If it's a substantial or code ticket, dispatch it to a fresh sub-agent with the packet so it gets isolated context — at the model from the ticket's model: label (sonnet/haiku may run in parallel; opus/fable sequentially with review), with rigor matched to its effort: label. Do trivial tickets inline. Only you (the orchestrator) write to the board.\n" +
+            "4. Do the work. If it's a substantial or code ticket, dispatch it to a fresh sub-agent with the packet so it gets isolated context — at the model from the ticket's model: label (sonnet/haiku may run in parallel; opus/fable sequentially with review), with rigor matched to its effort: label. Do trivial tickets inline. Tell the sub-agent to call log_heartbeat a few times at milestones during longer dispatches so get_agent_monitor shows live progress instead of a blank wait. Only you (the orchestrator) write to the board.\n" +
             "5. Verify the change — run it or its tests where relevant.\n" +
             "6. set_status Done with a one-line completionSummary, and log_work with additions/deletions (and the model used).\n" +
             "7. If git is configured for the project, commit the change now — one commit per ticket, message referencing the ticket id (commit_feature or git commit).\n" +

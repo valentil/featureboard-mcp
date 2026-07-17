@@ -128,6 +128,85 @@ export function getTicketHistory(board, project, ticket) {
 
   return { project, ticket, count: history.length, history };
 }
+
+// ---------------------------------------------------------------------------
+// Heartbeats (FBMCPB-15) — lightweight in-flight progress pings a sub-agent
+// emits mid-dispatch, so the orchestrator surface has something to show
+// besides a generic "multitasking" indicator during a long (5-13min) ticket
+// run. Stored append-only, one JSON object per line, in a project's:
+//
+//   <projectDir>/heartbeats.jsonl
+//
+// Distinct from ticket_events.jsonl (the field-change audit trail that
+// storage.js alone writes from setStatus/updateTask) — heartbeats are purely
+// informational "still here, this is what I'm doing now" pings, written
+// directly by the log_heartbeat tool. agentMonitorV2 below treats a
+// heartbeat as "activity" alongside audit events and work-log entries (so a
+// ticket that's only heartbeating isn't wrongly flagged stalled), and also
+// carries each ticket's own lastHeartbeat (note/model/elapsedMinutes/spend/
+// ageMinutes) for a richer "what's it doing right now" view than the
+// generic lastEvent gives.
+// ---------------------------------------------------------------------------
+
+const HEARTBEATS_FILE = "heartbeats.jsonl";
+
+function heartbeatsPath(board, project) {
+  return path.join(board.projectDir(project), HEARTBEATS_FILE);
+}
+
+/**
+ * Append one heartbeat. Best-effort like appendEvent: a filesystem hiccup
+ * here must never blow up the sub-agent call that triggered it, so failures
+ * are swallowed. Returns the normalized record that was (attempted to be)
+ * written.
+ */
+export function appendHeartbeat(board, project, heartbeat) {
+  const h = heartbeat || {};
+  const rec = {
+    ts: h.ts || new Date().toISOString(),
+    ticket: h.ticket,
+    note: h.note != null ? String(h.note) : null,
+    model: h.model || null,
+    elapsedMinutes: h.elapsedMinutes != null ? Number(h.elapsedMinutes) : null,
+    spend: h.spend != null ? Number(h.spend) : null,
+  };
+  try {
+    const p = heartbeatsPath(board, project);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.appendFileSync(p, JSON.stringify(rec) + "\n", "utf8");
+  } catch {
+    // best-effort — never throw out of a sub-agent's progress ping
+  }
+  return rec;
+}
+
+/** Read + parse a project's heartbeat log. Tolerates a missing file and malformed lines. */
+export function readHeartbeats(board, project) {
+  let content;
+  try {
+    content = fs.readFileSync(heartbeatsPath(board, project), "utf8");
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const raw of content.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    try {
+      const h = JSON.parse(line);
+      if (h && h.ticket) out.push(h);
+    } catch {
+      // skip a corrupted line rather than failing the whole read
+    }
+  }
+  return out;
+}
+
+/** Recorded heartbeats for one ticket, oldest first (append order == chronological). */
+export function heartbeatsForTicket(board, project, ticket) {
+  return readHeartbeats(board, project).filter((h) => h.ticket === ticket);
+}
+
 // ---------------------------------------------------------------------------
 // Agent monitor v2 (FBMCPF-145) — live view of In Progress tickets: elapsed
 // time since each went In Progress, its last event (audit or work-log) plus
@@ -169,11 +248,16 @@ function costForTicket(work, ticket, pricing) {
  * for the ticket that recorded a model. Returns null (capCost stays
  * uncomputable) when neither source gives a hint.
  */
-function inferModelForTicket(work, ticket, task) {
+function inferModelForTicket(work, ticket, task, heartbeats) {
   const labeled = modelOfTask(task);
   if (labeled) return normalizeModelName(labeled) || labeled;
   const withModel = work.filter((w) => w.ticket === ticket && w.model);
   if (withModel.length) return normalizeModelName(withModel[withModel.length - 1].model);
+  // FBMCPB-15: before a ticket has any work-log entry, a heartbeat's model
+  // is the earliest signal available — lets capCost price in as soon as a
+  // sub-agent's first heartbeat lands instead of waiting for completion.
+  const withHbModel = (heartbeats || []).filter((h) => h.ticket === ticket && h.model);
+  if (withHbModel.length) return normalizeModelName(withHbModel[withHbModel.length - 1].model);
   return null;
 }
 
@@ -208,9 +292,10 @@ function resolveStartedInProgress(events, work, ticket, task) {
  * its last work-log entry. Returns null when the ticket has neither (an
  * In Progress ticket that has never been touched).
  */
-function resolveLastEvent(events, work, ticket) {
+function resolveLastEvent(events, work, heartbeats, ticket) {
   const ticketEvents = events.filter((e) => e.ticket === ticket);
   const ticketWork = work.filter((w) => w.ticket === ticket);
+  const ticketHeartbeats = (heartbeats || []).filter((h) => h.ticket === ticket);
 
   let candidate = null;
   if (ticketEvents.length) {
@@ -224,7 +309,39 @@ function resolveLastEvent(events, work, ticket) {
       candidate = { kind: "work_log", ts, summary: w.text || null, model: w.model || null };
     }
   }
+  // FBMCPB-15: a heartbeat counts as activity too, so a ticket mid-dispatch
+  // that's only pinging heartbeats (no status/work-log event yet) isn't
+  // wrongly flagged stalled.
+  if (ticketHeartbeats.length) {
+    const h = ticketHeartbeats[ticketHeartbeats.length - 1];
+    if (!Number.isNaN(Date.parse(h.ts)) && (!candidate || Date.parse(h.ts) > Date.parse(candidate.ts))) {
+      candidate = { kind: "heartbeat", ts: h.ts, summary: h.note || null, model: h.model || null };
+    }
+  }
   return candidate;
+}
+
+/**
+ * Most recent heartbeat for a ticket, with age relative to `now`. Distinct
+ * from resolveLastEvent's generic "last activity" — this always reflects the
+ * latest heartbeat even when a status/work-log event is newer, so the board
+ * can show "current phase" (the note) separately from "last activity".
+ * Null when the ticket has never emitted one.
+ */
+function resolveLastHeartbeat(heartbeats, ticket, now) {
+  const ticketHeartbeats = (heartbeats || []).filter((h) => h.ticket === ticket);
+  if (!ticketHeartbeats.length) return null;
+  const h = ticketHeartbeats[ticketHeartbeats.length - 1];
+  if (Number.isNaN(Date.parse(h.ts))) return null;
+  const ageMinutes = Math.round(((now - new Date(h.ts)) / 60000) * 10) / 10;
+  return {
+    ts: h.ts,
+    note: h.note || null,
+    model: h.model || null,
+    elapsedMinutes: h.elapsedMinutes != null ? h.elapsedMinutes : null,
+    spend: h.spend != null ? h.spend : null,
+    ageMinutes,
+  };
 }
 
 /**
@@ -243,6 +360,7 @@ export function agentMonitorV2(board, project, opts = {}) {
   const inProgress = board.listTasks(project, {}).filter((t) => t.status === "In Progress");
   const events = readEvents(board, project);
   const work = readWorkLog(board, project);
+  const heartbeats = readHeartbeats(board, project);
   const pricing = getPricing(board, project);
 
   const tickets = inProgress.map((t) => {
@@ -252,12 +370,17 @@ export function agentMonitorV2(board, project, opts = {}) {
       ? Math.round(((now - new Date(startedAt)) / 60000) * 10) / 10
       : null;
 
-    const last = resolveLastEvent(events, work, ticket);
+    const last = resolveLastEvent(events, work, heartbeats, ticket);
     let lastEvent = null;
     if (last) {
       const ageMinutes = Math.round(((now - new Date(last.ts)) / 60000) * 10) / 10;
       lastEvent = { ...last, ageMinutes };
     }
+
+    // FBMCPB-15: the ticket's own latest heartbeat (note/model/elapsed/spend
+    // as reported by the sub-agent, plus age) — a richer "what's it doing
+    // right now" view than lastEvent, which only says activity happened.
+    const lastHeartbeat = resolveLastHeartbeat(heartbeats, ticket, now);
 
     const spend = spendForTicket(work, ticket);
     const cap = capOfTask(t);
@@ -267,9 +390,10 @@ export function agentMonitorV2(board, project, opts = {}) {
     // computable (falls back to the "default" pricing tier for entries with
     // no/unrecognized model — see pricing.js costOfEvent). capCost needs a
     // model to price the cap label in dollars; null when none can be
-    // inferred from a model:* label or the ticket's own work-log history.
+    // inferred from a model:* label, the ticket's own work-log history, or
+    // (FBMCPB-15) its latest heartbeat.
     const costSoFar = costForTicket(work, ticket, pricing);
-    const capModel = inferModelForTicket(work, ticket, t);
+    const capModel = inferModelForTicket(work, ticket, t, heartbeats);
     const capCost = cap != null && capModel && pricing[capModel]
       ? Math.round((cap * pricing[capModel].blendedPerMTok / 1e6) * 1e4) / 1e4
       : null;
@@ -286,6 +410,7 @@ export function agentMonitorV2(board, project, opts = {}) {
       startedAtSource,
       elapsedMinutes,
       lastEvent,
+      lastHeartbeat,
       spend,
       cap,
       spendRatio,

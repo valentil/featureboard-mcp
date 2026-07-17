@@ -323,6 +323,10 @@
       "description": "Live snapshot of the board's currently-running work: every In Progress ticket with elapsed time since it went In Progress (from the ticket_events.jsonl audit log, falling back to its earliest work-log entry or createdDate when there's no recorded status event), its last event (most recent audit event or work-log entry, whichever is newer) with age, token spend so far vs its cap:<tokens> label and the resulting spend ratio, and a stalled flag (no event/work-log activity within stallMinutes, default 30). Also reports costSoFar and capCost in dollars (via project-config-overridable pricing; capCost is null when no model can be inferred for the ticket). Sorted most-recently-active first, with a top-level summary (count, stalledCount, totalSpend, totalCap, totalCostSoFar, totalCapCost, stalledTickets). Pairs with churn mode: a stalled ticket mid-churn usually means the agent is stuck or has gone quiet. Use it to see what's underway and catch stuck tickets."
     },
     {
+      "name": "log_heartbeat",
+      "description": "Append a lightweight in-flight progress ping for a ticket a sub-agent is actively working: a phase/milestone note, and optionally the model, elapsed minutes, and tokens spent so far. Distinct from log_work (which records a completed unit of work at the end of a session) — heartbeats are informational pings emitted DURING a long (5-13min) dispatch, so get_agent_monitor and the board's live/stall banners have something to show besides a generic \"multitasking\" indicator until the sub-agent returns. Call it at a few natural milestones (e.g. \"read the ticket + adjacent code\", \"wrote the fix\", \"tests passing, writing report\") rather than on every tool call. Sub-agents may call this directly — it is informational only and does not move the ticket's status."
+    },
+    {
       "name": "get_health",
       "description": "Composite 0-100 health score with grade and breakdown: bug pressure, feature progress, momentum (recent tokens), and freshness (staleness of open work)."
     },

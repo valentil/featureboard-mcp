@@ -6,7 +6,7 @@ import path from "node:path";
 import { Board } from "../server/storage.js";
 import { assignSprint } from "../server/sprints.js";
 import { logWork } from "../server/metadata.js";
-import { appendEvent, readEvents, eventsForTicket, getTicketHistory } from "../server/events.js";
+import { appendEvent, readEvents, eventsForTicket, getTicketHistory, appendHeartbeat, readHeartbeats, heartbeatsForTicket } from "../server/events.js";
 
 // FBMCPF-142 — audit timeline: get_ticket_history event log per ticket.
 
@@ -176,4 +176,65 @@ test("getTicketHistory returns an empty history for a ticket with neither events
   const hist = getTicketHistory(b, "Proj", t.ticketNumber);
   assert.equal(hist.count, 0);
   assert.deepEqual(hist.history, []);
+});
+
+
+// FBMCPB-15 — heartbeats: lightweight in-flight progress pings, separate
+// append-only log from ticket_events.jsonl.
+
+test("appendHeartbeat writes a normalized record and heartbeatsForTicket reads it back", () => {
+  const b = tmpBoard();
+  const t = b.addTask("Proj", "feature", { title: "Thing" });
+  const rec = appendHeartbeat(b, "Proj", { ticket: t.ticketNumber, note: "reading affected files", model: "sonnet", elapsedMinutes: 2.5, spend: 8000 });
+  assert.equal(rec.ticket, t.ticketNumber);
+  assert.equal(rec.note, "reading affected files");
+  assert.equal(rec.model, "sonnet");
+  assert.equal(rec.elapsedMinutes, 2.5);
+  assert.equal(rec.spend, 8000);
+  assert.ok(rec.ts);
+
+  const hb = heartbeatsForTicket(b, "Proj", t.ticketNumber);
+  assert.equal(hb.length, 1);
+  assert.equal(hb[0].note, "reading affected files");
+});
+
+test("heartbeats.jsonl is append-only and distinct from ticket_events.jsonl", () => {
+  const b = tmpBoard();
+  const t = b.addTask("Proj", "feature", { title: "Thing" });
+  b.setStatus("Proj", t.ticketNumber, "In Progress");
+  appendHeartbeat(b, "Proj", { ticket: t.ticketNumber, note: "milestone 1" });
+  appendHeartbeat(b, "Proj", { ticket: t.ticketNumber, note: "milestone 2" });
+
+  const hb = heartbeatsForTicket(b, "Proj", t.ticketNumber);
+  assert.equal(hb.length, 2);
+  assert.equal(hb[0].note, "milestone 1");
+  assert.equal(hb[1].note, "milestone 2");
+
+  // the status-change audit event is untouched by heartbeat writes
+  const events = eventsForTicket(b, "Proj", t.ticketNumber);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].field, "status");
+
+  const p = path.join(b.projectDir("Proj"), "heartbeats.jsonl");
+  assert.ok(fs.existsSync(p));
+  const eventsPath = path.join(b.projectDir("Proj"), "ticket_events.jsonl");
+  assert.notEqual(p, eventsPath);
+});
+
+test("readHeartbeats / heartbeatsForTicket tolerate a missing heartbeats file entirely", () => {
+  const b = tmpBoard();
+  const t = b.addTask("Proj", "feature", { title: "Thing" });
+  assert.deepEqual(readHeartbeats(b, "Proj"), []);
+  assert.deepEqual(heartbeatsForTicket(b, "Proj", t.ticketNumber), []);
+});
+
+test("heartbeats.jsonl tolerates malformed lines on read", () => {
+  const b = tmpBoard();
+  const t = b.addTask("Proj", "feature", { title: "Thing" });
+  appendHeartbeat(b, "Proj", { ticket: t.ticketNumber, note: "ok" });
+  const p = path.join(b.projectDir("Proj"), "heartbeats.jsonl");
+  fs.appendFileSync(p, "not json at all\n");
+  fs.appendFileSync(p, "\n");
+  const all = readHeartbeats(b, "Proj");
+  assert.equal(all.length, 1);
 });

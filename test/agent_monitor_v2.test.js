@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Board } from "../server/storage.js";
-import { appendEvent, agentMonitorV2 } from "../server/events.js";
+import { appendEvent, agentMonitorV2, appendHeartbeat } from "../server/events.js";
 
 // FBMCPF-145 — agent monitor v2: live sessions, stalls, spend.
 //
@@ -175,4 +175,80 @@ test("only In Progress tickets are included — Todo/Done tickets are excluded",
   const r = agentMonitorV2(b, "Proj", {});
   assert.equal(r.count, 1);
   assert.equal(r.tickets[0].ticket, inProg.ticketNumber);
+});
+
+
+// FBMCPB-15 — heartbeats surfaced through agentMonitorV2: lastHeartbeat per
+// ticket, heartbeats counting as "activity" for stall detection, and
+// capModel inference falling back to a heartbeat's model when there is no
+// model:* label or work-log entry yet (e.g. before a sub-agent's first
+// log_work call).
+
+test("agentMonitorV2 exposes a ticket's latest heartbeat (note/model/elapsed/spend/age)", () => {
+  const b = tmpBoard();
+  const t = b.addTask("Proj", "feature", { title: "Long dispatch" });
+  b.setStatus("Proj", t.ticketNumber, "In Progress");
+  appendEvent(b, "Proj", { ticket: t.ticketNumber, field: "status", from: "Todo", to: "In Progress", source: "set_status", ts: "2030-01-01T10:00:00" });
+  appendHeartbeat(b, "Proj", { ticket: t.ticketNumber, note: "reading affected files", model: "sonnet", elapsedMinutes: 1, spend: 3000, ts: "2030-01-01T10:03:00" });
+  appendHeartbeat(b, "Proj", { ticket: t.ticketNumber, note: "wrote the fix, running tests", model: "sonnet", elapsedMinutes: 6, spend: 12000, ts: "2030-01-01T10:08:00" });
+
+  const r = agentMonitorV2(b, "Proj", { asOf: "2030-01-01T10:10:00" });
+  const ticket = r.tickets[0];
+  assert.ok(ticket.lastHeartbeat);
+  assert.equal(ticket.lastHeartbeat.note, "wrote the fix, running tests");
+  assert.equal(ticket.lastHeartbeat.model, "sonnet");
+  assert.equal(ticket.lastHeartbeat.elapsedMinutes, 6);
+  assert.equal(ticket.lastHeartbeat.spend, 12000);
+  assert.equal(ticket.lastHeartbeat.ageMinutes, 2); // 10:08 -> 10:10
+});
+
+test("a heartbeat counts as activity: lastEvent reflects it and a ticket with only heartbeats (no status/work-log event) is not stalled", () => {
+  const b = tmpBoard();
+  const t = b.addTask("Proj", "feature", { title: "Heartbeat only" });
+  b.setStatus("Proj", t.ticketNumber, "In Progress");
+  appendEvent(b, "Proj", { ticket: t.ticketNumber, field: "status", from: "Todo", to: "In Progress", source: "set_status", ts: "2030-01-01T10:00:00" });
+  // no work-log entries at all yet — only a heartbeat, 5 minutes before "now"
+  appendHeartbeat(b, "Proj", { ticket: t.ticketNumber, note: "still going", ts: "2030-01-01T10:20:00" });
+
+  const r = agentMonitorV2(b, "Proj", { asOf: "2030-01-01T10:25:00" });
+  const ticket = r.tickets[0];
+  assert.equal(ticket.lastEvent.kind, "heartbeat");
+  assert.equal(ticket.lastEvent.summary, "still going");
+  assert.equal(ticket.lastEvent.ageMinutes, 5);
+  assert.equal(ticket.stalled, false); // 5min idle < default 30min threshold
+});
+
+test("a heartbeat newer than the status event still leaves a ticket stalled once its own age exceeds the threshold", () => {
+  const b = tmpBoard();
+  const t = b.addTask("Proj", "feature", { title: "Stale heartbeat" });
+  b.setStatus("Proj", t.ticketNumber, "In Progress");
+  appendEvent(b, "Proj", { ticket: t.ticketNumber, field: "status", from: "Todo", to: "In Progress", source: "set_status", ts: "2030-01-01T08:00:00" });
+  appendHeartbeat(b, "Proj", { ticket: t.ticketNumber, note: "long since gone quiet", ts: "2030-01-01T08:10:00" });
+
+  const r = agentMonitorV2(b, "Proj", { asOf: "2030-01-01T09:00:00" }); // 50min after the heartbeat
+  const ticket = r.tickets[0];
+  assert.equal(ticket.lastEvent.kind, "heartbeat");
+  assert.equal(ticket.stalled, true);
+  assert.equal(r.stalledCount, 1);
+});
+
+test("capModel falls back to a heartbeat's model when there is no model:* label or work-log entry yet", () => {
+  const b = tmpBoard();
+  const t = b.addTask("Proj", "feature", { title: "No work-log yet", labels: ["cap:10000"] });
+  b.setStatus("Proj", t.ticketNumber, "In Progress");
+  appendHeartbeat(b, "Proj", { ticket: t.ticketNumber, note: "just started", model: "opus" });
+
+  const r = agentMonitorV2(b, "Proj", {});
+  const ticket = r.tickets[0];
+  assert.equal(ticket.cap, 10000);
+  // capCost is only computable once a model can be inferred — here, solely
+  // from the heartbeat (no model:* label, no work-log entries at all).
+  assert.ok(ticket.capCost != null);
+});
+
+test("a ticket with no heartbeats at all has lastHeartbeat null (back-compat, unaffected by FBMCPB-15)", () => {
+  const b = tmpBoard();
+  b.addTask("Proj", "feature", { title: "No heartbeats", status: "In Progress" });
+  const r = agentMonitorV2(b, "Proj", {});
+  assert.equal(r.tickets[0].lastHeartbeat, null);
 });
