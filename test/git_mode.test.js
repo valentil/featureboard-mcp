@@ -11,8 +11,10 @@ import {
   getGitConfig, setGitConfig, commitFeature,
   getGlobalConfig, setGlobalConfig, resolveGitMode,
   GLOBAL_CONFIG_FILE, DEFAULT_GLOBAL_CONFIG, GIT_MODES,
+  hasCommitForTicket, evaluateCommitGate,
 } from "../server/git.js";
 import { setProjectConfig } from "../server/metadata.js";
+import { appendEvent } from "../server/events.js";
 
 // A real board-shaped double: dataDir is the root, projectDir nests under it —
 // matches storage.js's Board so global-config resolution has somewhere to look.
@@ -312,4 +314,152 @@ test("metadata.setProjectConfig still works alongside the new gitMode exports", 
   const { board } = tmpBoard();
   const cfg = setProjectConfig(board, "P", { codeLocation: "/repo" });
   assert.equal(cfg.codeLocation, "/repo");
+});
+
+// ---------------------------------------------------------------------------
+// FBMCPF-189: Done-without-commit correlation — hasCommitForTicket
+// ---------------------------------------------------------------------------
+
+// Makes resolveGitTargets(board, "P") resolve to a repo dir with a `.git`
+// directory (so hasCommitForTicket's existsSync gate passes) without ever
+// shelling out for real — the git log call itself is always the injected exec.
+function seedCodeRepo(board, dataDir) {
+  const repo = path.join(dataDir, "coderepo");
+  fs.mkdirSync(path.join(repo, ".git"), { recursive: true });
+  setProjectConfig(board, "P", { codeLocation: repo });
+  return repo;
+}
+
+test("hasCommitForTicket: a recorded commit event is found without any git call", () => {
+  const { board } = tmpBoard();
+  appendEvent(board, "P", { ticket: "T-1", field: "commit", hash: "abc123def456", shortHash: "abc123de" });
+  let execCalled = false;
+  const exec = () => { execCalled = true; return { status: 0, stdout: "", stderr: "" }; };
+  const r = hasCommitForTicket(board, "P", "T-1", { exec });
+  assert.equal(r.found, true);
+  assert.equal(r.unknown, false);
+  assert.equal(r.source, "recorded");
+  assert.equal(execCalled, false);
+});
+
+test("hasCommitForTicket: no recorded commit, git log --grep finds one -> found via grep", () => {
+  const { board, dataDir } = tmpBoard();
+  const repo = seedCodeRepo(board, dataDir);
+  const exec = (args, cwd) => {
+    assert.equal(cwd, repo);
+    assert.deepEqual(args.slice(0, 2), ["log", "--fixed-strings"]);
+    return { status: 0, stdout: "deadbeef\n", stderr: "" };
+  };
+  const r = hasCommitForTicket(board, "P", "T-2", { exec });
+  assert.equal(r.found, true);
+  assert.equal(r.unknown, false);
+  assert.equal(r.source, "grep");
+  assert.equal(r.shortHash, "deadbeef");
+});
+
+test("hasCommitForTicket: no recorded commit, git log --grep finds nothing -> found:false, unknown:false", () => {
+  const { board, dataDir } = tmpBoard();
+  seedCodeRepo(board, dataDir);
+  const exec = () => ({ status: 0, stdout: "", stderr: "" });
+  const r = hasCommitForTicket(board, "P", "T-3", { exec });
+  assert.equal(r.found, false);
+  assert.equal(r.unknown, false);
+});
+
+test("hasCommitForTicket: no codeLocation configured -> unknown:true (can't tell, not a refusal)", () => {
+  const { board } = tmpBoard();
+  const r = hasCommitForTicket(board, "P", "T-4");
+  assert.equal(r.found, false);
+  assert.equal(r.unknown, true);
+});
+
+test("hasCommitForTicket: git log fails (non-zero exit) -> unknown:true", () => {
+  const { board, dataDir } = tmpBoard();
+  seedCodeRepo(board, dataDir);
+  const exec = () => ({ status: 128, stdout: "", stderr: "fatal: not a git repository" });
+  const r = hasCommitForTicket(board, "P", "T-5", { exec });
+  assert.equal(r.found, false);
+  assert.equal(r.unknown, true);
+});
+
+test("hasCommitForTicket: an exec that throws is swallowed -> unknown:true", () => {
+  const { board, dataDir } = tmpBoard();
+  seedCodeRepo(board, dataDir);
+  const exec = () => { throw new Error("spawn ENOENT"); };
+  const r = hasCommitForTicket(board, "P", "T-6", { exec });
+  assert.equal(r.found, false);
+  assert.equal(r.unknown, true);
+});
+
+// ---------------------------------------------------------------------------
+// FBMCPF-189: evaluateCommitGate — the set_status Done-without-commit
+// warning/refusal decision (config fixture pattern from above, reused).
+// ---------------------------------------------------------------------------
+
+test("evaluateCommitGate: git disabled for the project -> silent no-op regardless of requireCommitOnDone", () => {
+  const { board, dataDir } = tmpBoard();
+  seedCodeRepo(board, dataDir); // repo exists but git.config.json is never enabled
+  setProjectConfig(board, "P", { requireCommitOnDone: true });
+  const gate = evaluateCommitGate(board, "P", "T-10");
+  assert.deepEqual(gate, { missingCommit: false, refuse: false });
+});
+
+test("evaluateCommitGate: git enabled, a recorded commit exists -> no warning, no refusal", () => {
+  const { board, dataDir } = tmpBoard();
+  seedCodeRepo(board, dataDir);
+  setGitConfig(board, "P", { enabled: true });
+  setProjectConfig(board, "P", { requireCommitOnDone: true }); // even with the strict gate on
+  appendEvent(board, "P", { ticket: "T-11", field: "commit", hash: "1234567890ab" });
+  const gate = evaluateCommitGate(board, "P", "T-11");
+  assert.deepEqual(gate, { missingCommit: false, refuse: false });
+});
+
+// A deterministic "git log --grep found nothing" double, so these gate tests
+// don't depend on `coderepo` being a real (git-initialized) repository.
+const noCommitExec = () => ({ status: 0, stdout: "", stderr: "" });
+
+test("evaluateCommitGate: git enabled, no commit, requireCommitOnDone off (default) -> warning only", () => {
+  const { board, dataDir } = tmpBoard();
+  seedCodeRepo(board, dataDir);
+  setGitConfig(board, "P", { enabled: true });
+  const gate = evaluateCommitGate(board, "P", "T-12", { exec: noCommitExec });
+  assert.equal(gate.missingCommit, true);
+  assert.equal(gate.refuse, false);
+  assert.equal(gate.error, undefined);
+});
+
+test("evaluateCommitGate: git enabled, no commit, requireCommitOnDone on -> refusal with a clear error", () => {
+  const { board, dataDir } = tmpBoard();
+  seedCodeRepo(board, dataDir);
+  setGitConfig(board, "P", { enabled: true });
+  setProjectConfig(board, "P", { requireCommitOnDone: true });
+  const gate = evaluateCommitGate(board, "P", "T-13", { exec: noCommitExec });
+  assert.equal(gate.missingCommit, true);
+  assert.equal(gate.refuse, true);
+  assert.match(gate.error, /requireCommitOnDone/);
+  assert.match(gate.error, /T-13/);
+});
+
+test("evaluateCommitGate: requireCommitOnDone on but approve:true overrides the refusal (still flags missingCommit)", () => {
+  const { board, dataDir } = tmpBoard();
+  seedCodeRepo(board, dataDir);
+  setGitConfig(board, "P", { enabled: true });
+  setProjectConfig(board, "P", { requireCommitOnDone: true });
+  const gate = evaluateCommitGate(board, "P", "T-14", { approve: true, exec: noCommitExec });
+  assert.equal(gate.missingCommit, true);
+  assert.equal(gate.refuse, false);
+});
+
+test("evaluateCommitGate: git enabled but no codeLocation/repo (unknown result) -> never refuses, even with requireCommitOnDone on", () => {
+  const { board } = tmpBoard();
+  setGitConfig(board, "P", { enabled: true });
+  setProjectConfig(board, "P", { requireCommitOnDone: true });
+  const gate = evaluateCommitGate(board, "P", "T-15");
+  assert.deepEqual(gate, { missingCommit: false, refuse: false });
+});
+
+test("evaluateCommitGate: git never configured at all (fresh project) -> silent no-op (non-git path untouched)", () => {
+  const { board } = tmpBoard();
+  const gate = evaluateCommitGate(board, "P", "T-16");
+  assert.deepEqual(gate, { missingCommit: false, refuse: false });
 });

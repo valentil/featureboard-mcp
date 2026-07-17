@@ -64,7 +64,7 @@ import {
   listSiteTemplates, applySiteTemplate,
   renderSite, siteRoot, saveAsset, listAssets, setSiteAnalytics, addRawPage,
 } from "./website.js";
-import { getGitConfig, setGitConfig, commitFeature, mirrorGraduatedPad, getTicketDiff, getGlobalConfig, setGlobalConfig, resolveGitMode } from "./git.js";
+import { getGitConfig, setGitConfig, commitFeature, mirrorGraduatedPad, getTicketDiff, getGlobalConfig, setGlobalConfig, resolveGitMode, evaluateCommitGate } from "./git.js";
 import { createWorktree, listWorktrees, cleanupWorktree, mergeBackGuidance } from "./worktrees.js";
 import { addReviewComment, listReviewComments, resolveReviewComment, ticketsWithUnresolvedReviews } from "./reviews.js";
 import { scaffoldSite } from "./sitegen.js";
@@ -1210,12 +1210,12 @@ server.registerTool(
   {
     title: "Set status",
     description:
-      "Move a task between Todo / In Progress / Review / Done. Review sits between In Progress and Done when requireReview is on; approve:true overrides the gate. When moving to Done you can also record structured completion metadata (model, tokens, additions, deletions) — these are written to the work log and roll up into velocity/metrics. For graduated projects, moving to Done also refreshes the pad snapshot in <codeRepo>/.featureboard/ (best-effort; a mirror failure never blocks the status change).",
+      "Move a task between Todo / In Progress / Review / Done. Review sits between In Progress and Done when requireReview is on; approve:true overrides the gate. When moving to Done you can also record structured completion metadata (model, tokens, additions, deletions) — these are written to the work log and roll up into velocity/metrics. For graduated projects, moving to Done also refreshes the pad snapshot in <codeRepo>/.featureboard/ (best-effort; a mirror failure never blocks the status change). If git is enabled for the project and Done is reached with no commit referencing the ticket (recorded via commit_feature, or found via git log --grep), the response carries uncommitted:true + a commitReminder — or, when requireCommitOnDone is on, the move is refused outright (approve:true overrides).",
     inputSchema: {
       project: z.string(),
       ticket: z.string(),
       status: StatusEnum,
-      approve: z.boolean().optional().describe("Override the requireReview gate when moving straight to Done."),
+      approve: z.boolean().optional().describe("Override the requireReview gate, and the requireCommitOnDone gate, when moving straight to Done."),
       completionSummary: z.string().optional().describe("Recommended when moving to Done."),
       model: z.string().optional().describe("Model that did the work (Done only)."),
       tokens: z.number().int().optional().describe("Total tokens used (Done only)."),
@@ -1229,7 +1229,28 @@ server.registerTool(
   },
   writeTool(({ project, ticket, status, approve, completionSummary, model, tokens, inputTokens, outputTokens, additions, deletions, handoff }) => {
     const board = getBoard();
+    // FBMCPF-189: Done-without-commit gate/warning. evaluateCommitGate is a
+    // no-op (missingCommit:false) whenever git is disabled for the project,
+    // whenever a commit is actually found, or whenever the check itself is
+    // "unknown" (a git hiccup) — so the non-git path does no extra work and
+    // a git failure can never break set_status. When it does report a
+    // genuinely missing commit, requireCommitOnDone decides whether that's
+    // a hard refusal (thrown before the mutation below, approve:true
+    // overrides) or just a non-blocking uncommitted/commitReminder note.
+    let commitGate = { missingCommit: false, refuse: false };
+    if (status === "Done") {
+      try {
+        commitGate = evaluateCommitGate(board, project, ticket, { approve: approve === true });
+      } catch {
+        commitGate = { missingCommit: false, refuse: false };
+      }
+    }
+    if (commitGate.refuse) throw new Error(commitGate.error);
     const result = board.setStatus(project, ticket, status, completionSummary, { approve });
+    if (commitGate.missingCommit) {
+      result.uncommitted = true;
+      result.commitReminder = `${ticket} moved to Done with no commit found for it yet — consider commit_feature.`;
+    }
     if (status === "Done" && handoff) writeHandoff(board, project, ticket, handoff); // FBMCPF-144
     // FBMCPF-155: non-blocking Slack notification on Done/Review (never throws).
     if (status === "Done" || status === "Review") {
@@ -1596,6 +1617,7 @@ server.registerTool(
       brandVoice: z.string().optional().describe("Brand voice/tone for generated media, e.g. 'confident, playful, plain-spoken'."),
       imageTool: z.string().optional().describe("Preferred image-generation tool/connector/skill name for generate_image (e.g. an image MCP or an 'imagegen' skill). If unset, generate_image uses any available image generator, else falls back to SVG."),
       requireReview: z.boolean().optional(),
+      requireCommitOnDone: z.boolean().optional().describe("When on and git is enabled for the project, set_status refuses to move a ticket to Done unless a commit references it (recorded via commit_feature or found via git log --grep); approve:true overrides. Default false — a plain non-blocking uncommitted/commitReminder warning otherwise."),
       slackWebhook: z.string().url().optional().nullable().describe("Project's https://hooks.slack.com/... webhook; null clears. Opt-in egress."),
       slackEvents: z.array(z.enum(["done", "review", "summary"])).optional().describe("Which events may post to Slack (default all three).").describe("When on, a ticket must pass through Review before it can be marked Done (set_status enforces the gate; approve:true overrides)."),
       stage: z.enum(["incubating", "graduated"]).optional().describe("Project lifecycle stage (FBMCPF-149)."),

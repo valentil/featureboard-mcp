@@ -20,7 +20,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { resolveGitTargets, logWork } from "./metadata.js";
+import { resolveGitTargets, logWork, getProjectConfig } from "./metadata.js";
 import { PAD_FILES } from "./graduate.js";
 import { appendEvent, recordedCommitsForTicket } from "./events.js";
 
@@ -194,6 +194,88 @@ export function buildCommitPlan(config, { ticket, title, message, paths, push } 
 function defaultExec(args, cwd) {
   const r = spawnSync("git", args, { cwd, encoding: "utf8" });
   return { status: r.status == null ? 1 : r.status, stdout: r.stdout || "", stderr: r.stderr || "" };
+}
+
+/**
+ * FBMCPF-189: has this ticket got a commit yet? Used by set_status's
+ * Done-without-commit warning/refusal (requireCommitOnDone). Prefers
+ * recordedCommitsForTicket (FBMCPF-188 commit events — fast, no git call);
+ * falls back to a single `git log --grep=<ticket> -n 1` in the project's
+ * code repo for tickets committed outside commit_feature (or before -188
+ * landed). Never throws: any git hiccup (no codeLocation, no .git, spawn
+ * failure, non-zero exit) resolves to found:false, unknown:true so callers
+ * treat it as "can't tell" rather than a false-positive "no commit".
+ */
+export function hasCommitForTicket(board, project, ticket, { exec = defaultExec } = {}) {
+  try {
+    if (recordedCommitsForTicket(board, project, ticket).length > 0) {
+      return { found: true, unknown: false, source: "recorded" };
+    }
+  } catch {
+    return { found: false, unknown: true, source: null };
+  }
+  try {
+    const targets = resolveGitTargets(board, project);
+    const repo = (targets.codeRepo && targets.codeRepo.path) || null;
+    if (!repo || !fs.existsSync(path.join(repo, ".git"))) {
+      return { found: false, unknown: true, source: null };
+    }
+    const log = exec(["log", "--fixed-strings", `--grep=${ticket}`, "-n", "1", "--format=%h"], repo);
+    if (log.status !== 0) return { found: false, unknown: true, source: null };
+    const shortHash = (log.stdout || "").trim();
+    return shortHash
+      ? { found: true, unknown: false, source: "grep", shortHash }
+      : { found: false, unknown: false, source: "grep" };
+  } catch {
+    return { found: false, unknown: true, source: null };
+  }
+}
+
+/**
+ * FBMCPF-189: the full Done-without-commit gate decision for set_status, so
+ * the tool handler stays a thin wrapper and this stays unit-testable here
+ * alongside hasCommitForTicket. Combines: git must be enabled for the
+ * project (returns silently otherwise — zero added work on the non-git
+ * path); a commit must actually be missing (found:false, unknown:false —
+ * an "unknown" result from a git hiccup is silent too, per "never let a
+ * git failure break set_status"); and the project's requireCommitOnDone
+ * flag decides whether that missing commit is a non-blocking reminder or a
+ * hard refusal. approve:true (mirroring the FBMCPF-134 requireReview
+ * override) always short-circuits the refusal.
+ *
+ * Returns:
+ *   { missingCommit: false, refuse: false }                        — nothing to report
+ *   { missingCommit: true,  refuse: false }                        — attach uncommitted/commitReminder
+ *   { missingCommit: true,  refuse: true, error: "..." }           — throw `error` before mutating
+ */
+export function evaluateCommitGate(board, project, ticket, { approve = false, exec = defaultExec } = {}) {
+  let gitCfg;
+  try {
+    gitCfg = getGitConfig(board, project);
+  } catch {
+    return { missingCommit: false, refuse: false };
+  }
+  if (!gitCfg.enabled) return { missingCommit: false, refuse: false };
+
+  const commitCheck = hasCommitForTicket(board, project, ticket, { exec });
+  const missingCommit = !commitCheck.found && !commitCheck.unknown;
+  if (!missingCommit) return { missingCommit: false, refuse: false };
+  if (approve === true) return { missingCommit: true, refuse: false };
+
+  let requireCommitOnDone = false;
+  try {
+    const cfg = getProjectConfig(board, project);
+    requireCommitOnDone = !!cfg.requireCommitOnDone;
+  } catch {
+    requireCommitOnDone = false;
+  }
+  if (!requireCommitOnDone) return { missingCommit: true, refuse: false };
+
+  return {
+    missingCommit: true,
+    refuse: true,
+    error: `requireCommitOnDone is on — no commit found for ${ticket} (checked recorded commits and git log --grep). Commit the change (commit_feature) first, or pass approve:true to override.`,
+  };
 }
 
 /**
