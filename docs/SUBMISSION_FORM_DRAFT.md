@@ -51,10 +51,12 @@ a user-configured Slack webhook), request_commercial_license (surfaces a mailto
 URL only; request details written locally), register_email (optional onboarding
 email — stored locally, POSTed once to the featureboard.ai registrations
 listener only on explicit "Save email" submit), deploy_site / commit_feature
-(git push to the user's own configured remote), and get_site_traffic (fetch
-from the user's own configured analytics endpoint). Every network-touching call
-is user-configured and user-initiated. See docs/compliance/PRIVACY.md for the
-full disclosure (completeness tracked as FBMCPB-14).
+(git push to the user's own configured remote), get_site_traffic (fetch
+from the user's own configured analytics endpoint), and create_worktree /
+cleanup_worktree (flagged for filesystem access outside the repo's working
+tree — local git subcommands only, no network call). Every network-touching
+call is user-configured and user-initiated. See docs/compliance/PRIVACY.md for
+the full disclosure (complete egress inventory, FBMCPB-14).
 
 **Screenshots to attach:**
 1. Board artifact, light theme — Todo/In Progress/Done with sprint chips

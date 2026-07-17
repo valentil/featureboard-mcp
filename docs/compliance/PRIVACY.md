@@ -14,6 +14,37 @@ board files in the folder you configure (`FEATUREBOARD_DATA_DIR`): `featurelist.
 - No third-party data sharing.
 
 ## Exceptions
+
+This is the complete egress inventory: every tool that carries the MCP
+`openWorldHint:true` annotation, what leaves the machine, where it goes, and when.
+Anything not listed here — the other 180+ tools — is local-only: it only reads/writes
+files under `FEATUREBOARD_DATA_DIR` (or, for git-integration tools, the project's own
+code repo on disk) and makes no network call.
+
+- `notify_slack` posts a message to a project's Slack incoming webhook. Only fires when
+  you've set `slackWebhook` via `set_project_config` (a `https://hooks.slack.com/...`
+  URL you paste in — validated to that host) and the event is in the project's
+  `slackEvents` allow-list. No webhook configured, or event not allow-listed → no
+  network call (`sent:false`).
+- `deploy_site` and `commit_feature` commit (and, if configured, push) the project's
+  code/site repo to its configured git remote (default `origin`), using the machine's
+  own ambient git credentials — no credentials are stored or transmitted by FeatureBoard
+  itself. Only runs when git integration is enabled for the project via
+  `set_git_config` (`enabled:true`); pushing additionally requires `push:true` in that
+  same config (or an explicit per-call override). Disabled by default; no-ops with a
+  reason when git integration is off.
+- `get_site_traffic` is a read proxy: it fetches traffic stats from the site's
+  configured external analytics provider (Plausible at `plausible.io`, a self-hosted
+  umami instance at the host you configured, or a custom endpoint) via
+  `set_analytics_config` / `auto_configure_analytics`, and only when the
+  `FEATUREBOARD_ANALYTICS_KEY` environment variable is set. Unconfigured, disabled, or
+  missing a key → no network call; it returns the request URL for you to fetch yourself
+  instead.
+- `create_worktree` and `cleanup_worktree` carry `openWorldHint:true` because they touch
+  the filesystem outside the project's normal working tree (a sibling
+  `<codeLocation>-worktrees/` directory by default), but they make no network call —
+  every step is a local `git worktree` subcommand (add/remove/prune) run via the
+  machine's own git binary.
 - `request_commercial_license` records the name/email/company you supply to a local
   file so Lewis Valentine can follow up about a commercial agreement. It does not transmit
   data automatically; it returns a mailto/URL for you to contact the licensor.

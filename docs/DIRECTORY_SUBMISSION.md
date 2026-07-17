@@ -36,15 +36,22 @@ See `docs/TOOLS.md` for the generated access badge per tool.
 ## 3. Privacy & data handling
 
 - [ ] Include `docs/compliance/PRIVACY.md` (data stays local; see below).
-- [ ] Confirm network egress is limited to the deliberate, disclosed exceptions:
-      Slack (`notify_slack`, only when a project sets `slackWebhook`),
-      `request_commercial_license` (writes locally, returns a mailto/URL — no
-      automatic transmission), and `register_email` (the tier-picker onboarding's
-      optional email field — stores locally and POSTs once to the featureboard.ai
-      registrations listener, and only on explicit "Save email" submit). No usage
-      telemetry anywhere. Otherwise the server only reads/writes the local boards
-      folder (`FEATUREBOARD_DATA_DIR`).
-- [ ] `openWorldHint` is `false` on all tools except `notify_slack`,
+- [ ] Confirm network egress is limited to the deliberate, disclosed exceptions —
+      the full inventory (see `docs/compliance/PRIVACY.md` § Exceptions):
+      Slack (`notify_slack`, only when a project sets `slackWebhook`), git push
+      (`deploy_site` / `commit_feature`, only when git integration is enabled with
+      `push:true`), the analytics read proxy (`get_site_traffic`, only when a
+      provider is configured and `FEATUREBOARD_ANALYTICS_KEY` is set), git worktree
+      management (`create_worktree` / `cleanup_worktree` — local git subcommands
+      only, no network call despite the annotation), `request_commercial_license`
+      (writes locally, returns a mailto/URL — no automatic transmission), and
+      `register_email` (the tier-picker onboarding's optional email field — stores
+      locally and POSTs once to the featureboard.ai registrations listener, and
+      only on explicit "Save email" submit). No usage telemetry anywhere.
+      Otherwise the server only reads/writes the local boards folder
+      (`FEATUREBOARD_DATA_DIR`) or the project's own code repo on disk.
+- [ ] `openWorldHint` is `false` on all tools except `notify_slack`, `deploy_site`,
+      `commit_feature`, `get_site_traffic`, `create_worktree`, `cleanup_worktree`,
       `request_commercial_license`, and `register_email`.
 - [ ] License-request data (`request_commercial_license`) is written locally for
       the licensor's records; document this in the listing.
