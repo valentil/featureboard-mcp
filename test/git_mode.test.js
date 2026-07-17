@@ -169,7 +169,9 @@ test("commitFeature: commit-only (default) commits but never pushes when push is
   assert.equal(r.committed, true);
   assert.equal(r.pushed, false);
   assert.equal(r.note, undefined);
-  assert.deepEqual(execCalls.map((a) => a[0]), ["add", "commit"]);
+  // the plan's own steps run first, in order; FBMCPF-188's commit-info
+  // enrichment (rev-parse/diff --numstat) runs afterward — see git.test.js.
+  assert.deepEqual(execCalls.slice(0, 2).map((a) => a[0]), ["add", "commit"]);
   assert.equal(r.gitMode.mode, "commit-only");
   assert.equal(r.gitMode.source, "default");
 });
@@ -181,7 +183,7 @@ test("commitFeature: commit-push (project gitMode) pushes automatically when pus
   const r = commitFeature(board, "P", { ticket: "T", title: "x" }, { cwd: "/repo", exec });
   assert.equal(r.committed, true);
   assert.equal(r.pushed, true);
-  assert.deepEqual(execCalls.map((a) => a[0]), ["add", "commit", "push"]);
+  assert.deepEqual(execCalls.slice(0, 3).map((a) => a[0]), ["add", "commit", "push"]);
   assert.equal(r.gitMode.mode, "commit-push");
   assert.equal(r.gitMode.source, "project");
 });
@@ -193,7 +195,7 @@ test("commitFeature: commit-push resolved from the account-wide global config pu
   const { exec, execCalls } = seedRepo();
   const r = commitFeature(board, "P", { ticket: "T", title: "x" }, { cwd: "/repo", exec });
   assert.equal(r.pushed, true);
-  assert.deepEqual(execCalls.map((a) => a[0]), ["add", "commit", "push"]);
+  assert.deepEqual(execCalls.slice(0, 3).map((a) => a[0]), ["add", "commit", "push"]);
   assert.equal(r.gitMode.source, "global");
 });
 
@@ -204,7 +206,7 @@ test('commitFeature: "ask" commits but never pushes, and returns a note asking t
   const r = commitFeature(board, "P", { ticket: "T", title: "x" }, { cwd: "/repo", exec });
   assert.equal(r.committed, true);
   assert.equal(r.pushed, false);
-  assert.deepEqual(execCalls.map((a) => a[0]), ["add", "commit"]);
+  assert.deepEqual(execCalls.slice(0, 2).map((a) => a[0]), ["add", "commit"]);
   assert.match(r.note, /ask/i);
   assert.match(r.note, /confirm/i);
   assert.equal(r.gitMode.mode, "ask");
@@ -227,7 +229,7 @@ test("commitFeature: an explicit push:true overrides gitMode commit-only", () =>
   const { exec, execCalls } = seedRepo();
   const r = commitFeature(board, "P", { ticket: "T", title: "x", push: true }, { cwd: "/repo", exec });
   assert.equal(r.pushed, true);
-  assert.deepEqual(execCalls.map((a) => a[0]), ["add", "commit", "push"]);
+  assert.deepEqual(execCalls.slice(0, 3).map((a) => a[0]), ["add", "commit", "push"]);
   // explicit push short-circuits resolution entirely — no gitMode info attached
   assert.equal(r.gitMode, undefined);
 });
@@ -238,7 +240,7 @@ test("commitFeature: an explicit push:false overrides gitMode commit-push (never
   const { exec, execCalls } = seedRepo();
   const r = commitFeature(board, "P", { ticket: "T", title: "x", push: false }, { cwd: "/repo", exec });
   assert.equal(r.pushed, false);
-  assert.deepEqual(execCalls.map((a) => a[0]), ["add", "commit"]);
+  assert.deepEqual(execCalls.slice(0, 2).map((a) => a[0]), ["add", "commit"]);
   assert.equal(r.note, undefined);
 });
 

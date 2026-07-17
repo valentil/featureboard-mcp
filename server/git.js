@@ -20,8 +20,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { resolveGitTargets } from "./metadata.js";
+import { resolveGitTargets, logWork } from "./metadata.js";
 import { PAD_FILES } from "./graduate.js";
+import { appendEvent, recordedCommitsForTicket } from "./events.js";
+
+// git's well-known empty-tree object — diffing a root commit against this
+// (instead of a nonexistent HEAD^) is the standard way to get its stats.
+const EMPTY_TREE_HASH = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 export const GIT_CONFIG_FILE = "git.config.json";
 
@@ -192,6 +197,45 @@ function defaultExec(args, cwd) {
 }
 
 /**
+ * FBMCPF-188: after a successful commit, capture its hash plus line stats so
+ * commit_feature can hand the ticket its own commit correlation instead of
+ * relying on get_ticket_diff grepping git log after the fact. Guards the
+ * root-commit case (no HEAD^) by diffing against git's empty-tree object
+ * instead. Never throws — a git hiccup here must not undo/fail the commit
+ * that already landed; callers should try/catch around this anyway as
+ * defense-in-depth, but this itself always returns either a result or null.
+ */
+export function captureCommitInfo(exec, cwd) {
+  try {
+    const rev = exec(["rev-parse", "HEAD"], cwd);
+    if (rev.status !== 0) return null;
+    const hash = (rev.stdout || "").trim();
+    if (!hash) return null;
+    const shortHash = hash.slice(0, 8);
+
+    const parentCheck = exec(["rev-parse", "--verify", "-q", "HEAD^"], cwd);
+    const range = parentCheck.status === 0 ? "HEAD^..HEAD" : `${EMPTY_TREE_HASH}..HEAD`;
+
+    let additions = 0;
+    let deletions = 0;
+    const numstat = exec(["diff", "--numstat", range], cwd);
+    if (numstat.status === 0) {
+      for (const line of (numstat.stdout || "").split(/\r?\n/)) {
+        if (!line.trim()) continue;
+        const [a, d] = line.split("\t");
+        const an = parseInt(a, 10);
+        const dn = parseInt(d, 10);
+        if (!Number.isNaN(an)) additions += an;
+        if (!Number.isNaN(dn)) deletions += dn;
+      }
+    }
+    return { hash, shortHash, additions, deletions };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * FBMCPF-135: per-ticket diff capture. Find commits in the project's code repo
  * whose message mentions the ticket id and return, per commit, a summary
  * (hash/author/date/subject) plus a size-capped unified diff (`git show`).
@@ -220,11 +264,33 @@ export function getTicketDiff(board, project, ticket, opts = {}, { exec = defaul
     return { ticket: tk, repo, count: 0, commits: [], warning: `no git repository at ${repo} (no .git) — cannot capture diffs.` };
   }
 
-  const log = exec(["log", `--max-count=${maxCommits}`, "--fixed-strings", `--grep=${tk}`, "--format=%H%x00%an%x00%aI%x00%s"], repo);
-  if (log.status !== 0) {
-    return { ticket: tk, repo, count: 0, commits: [], warning: `git log failed: ${(log.stderr || "").trim() || "unknown error"}` };
+  // FBMCPF-188: prefer commits recorded by commit_feature's enrichment (real
+  // correlation — this ticket produced exactly these hashes) over grepping
+  // commit messages, which can both miss commits whose message doesn't
+  // literally contain the ticket id and pick up unrelated commits that
+  // happen to mention it. Falls back to grep for legacy tickets that never
+  // went through commit_feature's recording path (or whose recorded hashes
+  // no longer resolve in this repo, e.g. after a history rewrite).
+  let source = "grep";
+  let rows = [];
+  const recordedHashes = recordedCommitsForTicket(board, project, tk).slice(0, maxCommits);
+  if (recordedHashes.length) {
+    const recLog = exec(["log", "--no-walk", "--format=%H%x00%an%x00%aI%x00%s", ...recordedHashes], repo);
+    if (recLog.status === 0) {
+      const recRows = (recLog.stdout || "").split(/\r?\n/).map((l) => l.trimEnd()).filter(Boolean);
+      if (recRows.length) {
+        source = "recorded";
+        rows = recRows;
+      }
+    }
   }
-  const rows = (log.stdout || "").split(/\r?\n/).map((l) => l.trimEnd()).filter(Boolean);
+  if (source === "grep") {
+    const log = exec(["log", `--max-count=${maxCommits}`, "--fixed-strings", `--grep=${tk}`, "--format=%H%x00%an%x00%aI%x00%s"], repo);
+    if (log.status !== 0) {
+      return { ticket: tk, repo, count: 0, commits: [], warning: `git log failed: ${(log.stderr || "").trim() || "unknown error"}` };
+    }
+    rows = (log.stdout || "").split(/\r?\n/).map((l) => l.trimEnd()).filter(Boolean);
+  }
   if (!rows.length) {
     return { ticket: tk, repo, count: 0, commits: [], message: `no commits mention ${tk} in ${repo}.` };
   }
@@ -261,7 +327,7 @@ export function getTicketDiff(board, project, ticket, opts = {}, { exec = defaul
     commits.push({ hash, shortHash: (hash || "").slice(0, 8), author: author || null, date: date || null, subject: subject || null, diff, diffTruncated });
   }
 
-  return { ticket: tk, repo, context, maxBytes, maxCommits, count: commits.length, truncated, commits };
+  return { ticket: tk, repo, context, maxBytes, maxCommits, count: commits.length, truncated, commits, source };
 }
 
 /**
@@ -355,6 +421,48 @@ export function commitFeature(board, project, opts = {}, { exec = defaultExec, c
   const out = { committed: true, message: plan.message, pushed: plan.push, codeRepo: codeCwd, results };
   if (gitModeInfo) out.gitMode = gitModeInfo;
   if (pushNote) out.note = pushNote;
+
+  // FBMCPF-188: correlation — capture the commit this just produced and let the
+  // ticket learn its own hash (work-log line + a "commit" audit event) instead
+  // of correlation being grep-only (get_ticket_diff searching commit messages
+  // after the fact). Best-effort: any failure here is swallowed so a git hiccup
+  // in the enrichment step can never undo or fail a commit that already landed.
+  try {
+    const info = captureCommitInfo(exec, codeCwd);
+    if (info) {
+      out.commit = info;
+      if (opts.ticket) {
+        try {
+          logWork(board, project, {
+            ticket: opts.ticket,
+            summary: "commit",
+            hash: info.shortHash,
+            additions: info.additions,
+            deletions: info.deletions,
+          });
+        } catch {
+          // work-log append is best-effort — never blocks the commit result
+        }
+        try {
+          appendEvent(board, project, {
+            ticket: opts.ticket,
+            field: "commit",
+            from: null,
+            to: info.shortHash,
+            hash: info.hash,
+            shortHash: info.shortHash,
+            additions: info.additions,
+            deletions: info.deletions,
+            source: "commit_feature",
+          });
+        } catch {
+          // audit event append is best-effort — never blocks the commit result
+        }
+      }
+    }
+  } catch {
+    // commit-info capture is best-effort — the commit itself already succeeded
+  }
 
   if (!padMirror.skipped) {
     out.padMirror = padMirror;

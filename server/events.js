@@ -105,6 +105,14 @@ export function appendEvent(board, project, event) {
     to: event.to !== undefined ? event.to : null,
     source: event.source || null,
   };
+  // FBMCPF-188: commit events (field:"commit", appended by commit_feature's
+  // enrichment) carry the commit hash + line stats alongside the usual
+  // from/to/source shape, so get_ticket_diff/get_ticket_history can read the
+  // ticket's actual recorded commits instead of grepping git log.
+  if (event.hash != null) rec.hash = String(event.hash);
+  if (event.shortHash != null) rec.shortHash = String(event.shortHash);
+  if (event.additions != null) rec.additions = Number(event.additions);
+  if (event.deletions != null) rec.deletions = Number(event.deletions);
   try {
     const p = eventsPath(board, project);
     fs.mkdirSync(path.dirname(p), { recursive: true });
@@ -127,6 +135,29 @@ export function eventsForTicket(board, project, ticket) {
 }
 
 /**
+ * FBMCPF-188: full commit hashes recorded for a ticket via commit_feature's
+ * enrichment (field:"commit" events written by appendEvent), newest first and
+ * deduped. Callers (get_ticket_diff) treat a non-empty result as "this ticket
+ * has real correlation data" and use these hashes directly instead of
+ * grepping git log for the ticket id — grep both misses commits whose message
+ * doesn't literally include the ticket id and can false-positive on unrelated
+ * commits that happen to mention it.
+ */
+export function recordedCommitsForTicket(board, project, ticket) {
+  const hashes = eventsForTicket(board, project, ticket)
+    .filter((e) => e.field === "commit" && e.hash)
+    .map((e) => e.hash);
+  const seen = new Set();
+  const ordered = [];
+  for (const h of hashes) {
+    if (seen.has(h)) continue;
+    seen.add(h);
+    ordered.push(h);
+  }
+  return ordered.reverse(); // append order is oldest-first; callers want newest-first
+}
+
+/**
  * Merged chronological audit trail for one ticket: recorded field-change
  * events (status/priority/labels/sprint/dueDate, from storage.js mutations)
  * interleaved with work-log entries (tokens/additions/deletions per work
@@ -144,6 +175,7 @@ export function getTicketHistory(board, project, ticket) {
     from: e.from,
     to: e.to,
     source: e.source || null,
+    ...(e.hash != null ? { hash: e.hash, shortHash: e.shortHash || null, additions: e.additions ?? null, deletions: e.deletions ?? null } : {}),
   }));
 
   const work = readWorkLog(board, project)
@@ -156,6 +188,7 @@ export function getTicketHistory(board, project, ticket) {
       deletions: w.deletions,
       tokens: w.tokens,
       model: w.model,
+      hash: w.hash || null,
     }));
 
   const history = [...events, ...work].sort((a, b) => {

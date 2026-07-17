@@ -239,6 +239,10 @@ export function logWork(board, project, e) {
   if (e.inputTokens != null) parts.push(`inputTokens: ${e.inputTokens}`);
   if (e.outputTokens != null) parts.push(`outputTokens: ${e.outputTokens}`);
   if (e.model) parts.push(`model: ${e.model}`);
+  // FBMCPF-188: commit_feature's enrichment threads the resulting commit's short
+  // hash onto the work-log line it emits, so a ticket's history shows which commit
+  // it produced without grepping git log for the ticket id.
+  if (e.hash) parts.push(`commit:${e.hash}`);
   const line = parts.join(", ");
 
   // group under a "## [date]" header; add one if the file's latest header differs
@@ -266,6 +270,7 @@ export function parseWorkLog(content) {
     };
     const ticketM = rest.match(/Task:\s*([A-Z][A-Z0-9]*-\d+)/);
     const modelM = rest.match(/model:\s*([^,]+)/i);
+    const hashM = rest.match(/commit:([0-9a-f]+)/i);
     entries.push({
       date: dm[1],
       time: dm[2],
@@ -276,7 +281,8 @@ export function parseWorkLog(content) {
       additions: num(/(?:Add|additions):\s*(\d+)/i),
       deletions: num(/(?:Del|deletions):\s*(\d+)/i),
       model: modelM ? modelM[1].trim() : null,
-      text: rest.replace(/,?\s*(Task:|Add:|Del:|additions:|deletions:|tokens:|inputTokens:|outputTokens:|model:).*$/i, "").trim(),
+      hash: hashM ? hashM[1] : null,
+      text: rest.replace(/,?\s*(Task:|Add:|Del:|additions:|deletions:|tokens:|inputTokens:|outputTokens:|model:|commit:).*$/i, "").trim(),
     });
   }
   return entries;

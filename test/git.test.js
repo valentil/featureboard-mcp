@@ -3,11 +3,13 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import {
   getGitConfig, setGitConfig, commitMessage, buildCommitPlan, commitFeature,
-  mirrorGraduatedPad, GIT_CONFIG_FILE, DEFAULT_GIT_CONFIG,
+  mirrorGraduatedPad, captureCommitInfo, GIT_CONFIG_FILE, DEFAULT_GIT_CONFIG,
 } from "../server/git.js";
 import { setProjectConfig } from "../server/metadata.js";
+import { recordedCommitsForTicket } from "../server/events.js";
 
 // FBMCPF-65 — configurable per-project git integration
 
@@ -68,7 +70,9 @@ test("commitFeature runs steps via injected exec and reports success", () => {
   assert.equal(r.committed, true);
   assert.equal(r.pushed, true);
   assert.equal(r.message, "FBMCPF-65: Git");
-  assert.deepEqual(calls.map((c) => c.args[0]), ["add", "commit", "push"]);
+  // add/commit/push happen first, in order; commit-info enrichment (rev-parse,
+  // diff --numstat) runs afterward — see the FBMCPF-188 tests below.
+  assert.deepEqual(calls.slice(0, 3).map((c) => c.args[0]), ["add", "commit", "push"]);
   assert.equal(calls[0].cwd, "/repo");
 });
 
@@ -204,4 +208,103 @@ test("commitFeature: a pad-mirror failure warns but never blocks the code commit
   assert.equal(r.committed, true, "the code commit still succeeds despite the mirror failure");
   assert.ok(r.padMirror.warning);
   assert.match(r.warning, /pad mirror failed/);
+});
+
+// FBMCPF-188 — commit_feature captures the commit it just produced (hash +
+// line stats) and records it onto the ticket instead of leaving correlation
+// to grep-only get_ticket_diff lookups.
+
+function realGitExec(args, cwd) {
+  const r = spawnSync("git", args, { cwd, encoding: "utf8" });
+  return { status: r.status == null ? 1 : r.status, stdout: r.stdout || "", stderr: r.stderr || "" };
+}
+
+function realRepo() {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "fbgit-realrepo-"));
+  realGitExec(["init", "-q"], repo);
+  realGitExec(["config", "user.email", "t@t.dev"], repo);
+  realGitExec(["config", "user.name", "Tester"], repo);
+  realGitExec(["config", "commit.gpgsign", "false"], repo);
+  return repo;
+}
+
+test("captureCommitInfo: guards the root-commit case (no HEAD^) and still reports line stats", () => {
+  const repo = realRepo();
+  fs.writeFileSync(path.join(repo, "a.txt"), "line1\nline2\n");
+  realGitExec(["add", "-A"], repo);
+  realGitExec(["commit", "-q", "-m", "root commit"], repo);
+
+  const info = captureCommitInfo(realGitExec, repo);
+  assert.ok(info);
+  assert.equal(info.hash.length, 40);
+  assert.equal(info.shortHash, info.hash.slice(0, 8));
+  assert.equal(info.additions, 2);
+  assert.equal(info.deletions, 0);
+});
+
+test("captureCommitInfo: reports additions/deletions for a normal (non-root) commit", () => {
+  const repo = realRepo();
+  fs.writeFileSync(path.join(repo, "a.txt"), "line1\n");
+  realGitExec(["add", "-A"], repo);
+  realGitExec(["commit", "-q", "-m", "first"], repo);
+  fs.writeFileSync(path.join(repo, "a.txt"), "line1\nline2\nline3\n");
+  realGitExec(["add", "-A"], repo);
+  realGitExec(["commit", "-q", "-m", "second"], repo);
+
+  const info = captureCommitInfo(realGitExec, repo);
+  assert.equal(info.additions, 2);
+  assert.equal(info.deletions, 0);
+});
+
+test("captureCommitInfo: returns null (never throws) when rev-parse fails", () => {
+  const info = captureCommitInfo(() => ({ status: 1, stdout: "", stderr: "fatal: not a git repository" }), "/nowhere");
+  assert.equal(info, null);
+});
+
+test("commitFeature: FBMCPF-188 enrichment records the commit hash + stats onto the ticket's work log and events.jsonl", () => {
+  const { board, dir } = tmpBoard();
+  const repo = realRepo();
+  fs.writeFileSync(path.join(repo, "a.txt"), "hello\nworld\n");
+  setGitConfig(board, "P", { enabled: true });
+
+  const r = commitFeature(board, "P", { ticket: "FBMCPF-188", title: "Correlation" }, { cwd: repo });
+  assert.equal(r.committed, true);
+  assert.ok(r.commit);
+  assert.equal(r.commit.hash.length, 40);
+  assert.equal(r.commit.shortHash, r.commit.hash.slice(0, 8));
+  assert.equal(r.commit.additions, 2);
+  assert.equal(r.commit.deletions, 0);
+
+  // the work-log line for this ticket now carries the commit hash
+  const workLog = fs.readFileSync(path.join(dir, "agent_work_log.md"), "utf8");
+  assert.match(workLog, new RegExp(`Task: FBMCPF-188.*commit:${r.commit.shortHash}`));
+  assert.match(workLog, /Add: 2, Del: 0/);
+
+  // events.jsonl carries a "commit" event with the full hash + stats
+  const recorded = recordedCommitsForTicket(board, "P", "FBMCPF-188");
+  assert.deepEqual(recorded, [r.commit.hash]);
+});
+
+test("commitFeature: commit info is still captured without a ticket, but nothing is logged/recorded", () => {
+  const { board, dir } = tmpBoard();
+  const repo = realRepo();
+  fs.writeFileSync(path.join(repo, "a.txt"), "hi\n");
+  setGitConfig(board, "P", { enabled: true });
+
+  const r = commitFeature(board, "P", { title: "no ticket" }, { cwd: repo });
+  assert.equal(r.committed, true);
+  assert.ok(r.commit);
+  assert.equal(fs.existsSync(path.join(dir, "agent_work_log.md")), false);
+});
+
+test("commitFeature: a failing commit-info capture never fails the commit result (guarded)", () => {
+  const { board } = tmpBoard();
+  setGitConfig(board, "P", { enabled: true });
+  const exec = (args) => {
+    if (args[0] === "rev-parse") return { status: 1, stdout: "", stderr: "fatal: bad revision" };
+    return { status: 0, stdout: "", stderr: "" };
+  };
+  const r = commitFeature(board, "P", { ticket: "T", title: "x" }, { cwd: "/repo", exec });
+  assert.equal(r.committed, true);
+  assert.equal(r.commit, undefined);
 });

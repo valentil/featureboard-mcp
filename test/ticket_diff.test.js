@@ -6,6 +6,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { getTicketDiff } from "../server/git.js";
 import { setProjectConfig } from "../server/metadata.js";
+import { appendEvent } from "../server/events.js";
 
 // FBMCPF-135 — per-ticket diff capture (get_ticket_diff)
 
@@ -88,4 +89,51 @@ test("get_ticket_diff: codeLocation is not a git repo -> warning, no throw", () 
   const res = getTicketDiff(board, "Proj", "FBMCPF-135");
   assert.equal(res.count, 0);
   assert.match(res.warning, /no git repository/);
+});
+
+// FBMCPF-188 — get_ticket_diff prefers commit_feature's recorded hashes
+// (real correlation, from events.jsonl) over grepping commit messages, and
+// falls back to grep for legacy tickets / stale recorded hashes.
+
+test("get_ticket_diff: prefers recorded commit hashes over grep when the ticket has recorded commits", () => {
+  const { board, repo } = setup();
+  commit(repo, "a.txt", "hello\n", "FBMCPF-135: first change"); // would grep-match
+  commit(repo, "b.txt", "tracked\n", "unrelated message, no ticket id"); // NOT grep-matched
+  const hash = git(repo, ["rev-parse", "HEAD"]).trim();
+
+  // simulate what commit_feature's enrichment records for the b.txt commit
+  appendEvent(board, "Proj", {
+    ticket: "FBMCPF-135", field: "commit", from: null, to: hash.slice(0, 8),
+    hash, shortHash: hash.slice(0, 8), additions: 1, deletions: 0, source: "commit_feature",
+  });
+
+  const res = getTicketDiff(board, "Proj", "FBMCPF-135");
+  assert.equal(res.source, "recorded");
+  assert.equal(res.count, 1);
+  assert.equal(res.commits[0].hash, hash);
+  assert.ok(/b\.txt/.test(res.commits[0].diff));
+  assert.ok(!/a\.txt/.test(res.commits[0].diff));
+});
+
+test("get_ticket_diff: falls back to grep for legacy tickets with no recorded commits", () => {
+  const { board, repo } = setup();
+  commit(repo, "a.txt", "hello\n", "FBMCPF-135: first change");
+  const res = getTicketDiff(board, "Proj", "FBMCPF-135");
+  assert.equal(res.source, "grep");
+  assert.equal(res.count, 1);
+});
+
+test("get_ticket_diff: falls back to grep when a recorded hash no longer resolves in the repo", () => {
+  const { board, repo } = setup();
+  commit(repo, "a.txt", "hello\n", "FBMCPF-135: first change");
+  const fakeHash = "deadbeef".repeat(5); // 40 hex-looking chars that don't resolve
+  appendEvent(board, "Proj", {
+    ticket: "FBMCPF-135", field: "commit", from: null, to: "deadbeef",
+    hash: fakeHash, shortHash: "deadbeef", additions: 3, deletions: 1, source: "commit_feature",
+  });
+
+  const res = getTicketDiff(board, "Proj", "FBMCPF-135");
+  assert.equal(res.source, "grep");
+  assert.equal(res.count, 1);
+  assert.equal(res.commits[0].subject, "FBMCPF-135: first change");
 });
