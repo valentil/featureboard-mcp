@@ -165,6 +165,9 @@
   /* FBMCPF-159: intake orchestration guard — open ticket with no model:/cap: label */
   .chip.unlabeled { background: #fde8e8; color: #b3261e; font-weight: 600; }
   html[data-theme="dark"] .chip.unlabeled { background: #3a2e2a; color: #e88f7a; }
+  /* FBMCPF-193: linked-commit chip in ticket history modal */
+  .chip.commit { background: #fdeee6; color: #b3591e; font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  html[data-theme="dark"] .chip.commit { background: #3a2e26; color: #d97757; }
   /* budget panel (FBMCPF-126) */
   .bpBarTrack { background: #eef0f5; border-radius: 6px; height: 8px; overflow: hidden; margin: 4px 0 8px; }
   .bpBarFill { display: block; height: 100%; background: #1a7d47; border-radius: 6px; }
@@ -1194,6 +1197,19 @@ function histRowHTML(h) {
   }
   return '<div class="histRow"><span class="histTs">' + esc(ts) + '</span><span class="histBody">' + body + '</span></div>';
 }
+// FBMCPF-193: render a linked-commit row from a get_ticket_history entry
+// carrying hash/shortHash (+additions/deletions). Sourced from the same
+// get_ticket_history response used to populate the Timeline below — no
+// separate tool call.
+function commitRowHTML(c) {
+  const hash = esc(c.shortHash || String(c.hash || "").slice(0, 7) || "—");
+  const stats = (c.additions != null || c.deletions != null)
+    ? '<span class="chip commit">+' + (c.additions || 0) + ' / -' + (c.deletions || 0) + '</span>'
+    : "";
+  const msg = c.summary || c.message || c.subject;
+  return '<div class="histRow"><span class="histTs" style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace">' + hash + '</span><span class="histBody">' +
+    stats + (msg ? ' <span class="hint">' + esc(msg) + '</span>' : '') + '</span></div>';
+}
 function rcRowHTML(c) {
   const loc = [c.file ? esc(c.file) : null, c.line != null ? "L" + esc(String(c.line)) : null].filter(Boolean).join(":");
   const who = c.author ? esc(c.author) : "—";
@@ -1236,6 +1252,8 @@ async function openHistory(e, ticket) {
     '<div style="max-height:55vh;overflow:auto">' +
     '<div style="font-size:12px;font-weight:600;color:#59617a;margin:0 0 4px">💬 Review comments</div>' +
     '<div id="rcBody"><span class="hint">Loading…</span></div>' +
+    '<div style="font-size:12px;font-weight:600;color:#59617a;margin:12px 0 4px">🔗 Commits</div>' +
+    '<div id="commitsBody"><span class="hint">Loading…</span></div>' +
     '<div style="font-size:12px;font-weight:600;color:#59617a;margin:12px 0 4px">Timeline</div>' +
     '<div id="histBody"><span class="hint">Loading…</span></div>' +
     '</div>' +
@@ -1244,6 +1262,15 @@ async function openHistory(e, ticket) {
   loadReviewComments(ticket);
   try {
     const res = await call("get_ticket_history", { project: state.board, ticket });
+    // FBMCPF-193: commits are entries in the same get_ticket_history payload
+    // that carry a hash/shortHash (per FBMCPF-188) — filter, don't re-fetch.
+    const commitsEl = document.getElementById("commitsBody");
+    if (commitsEl) {
+      const commits = (res.history || []).filter((h) => h.hash || h.shortHash);
+      commitsEl.innerHTML = commits.length
+        ? commits.map(commitRowHTML).join("")
+        : '<span class="hint">No commits linked yet.</span>';
+    }
     const el = document.getElementById("histBody");
     if (!el) return;
     if (!res.history || !res.history.length) {
@@ -1254,6 +1281,8 @@ async function openHistory(e, ticket) {
   } catch (err) {
     const el = document.getElementById("histBody");
     if (el) el.innerHTML = '<span class="hint">' + esc(String(err.message).slice(0, 160)) + ' — get_ticket_history needs the 0.4.0+ server (repack + restart Claude Desktop).</span>';
+    const commitsEl = document.getElementById("commitsBody");
+    if (commitsEl) commitsEl.innerHTML = '<span class="hint">Unavailable.</span>';
   }
 }
 
