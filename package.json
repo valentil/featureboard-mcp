@@ -16,7 +16,8 @@
     "nightly": "node scripts/run-nightly-tests.mjs",
     "smoke": "node scripts/mcp-smoke.mjs",
     "build": "node scripts/build.mjs",
-    "bundle": "npx --yes @anthropic-ai/mcpb pack"
+    "bundle": "npx --yes @anthropic-ai/mcpb pack",
+    "release": "node scripts/release.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
