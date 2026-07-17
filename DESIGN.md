@@ -72,23 +72,37 @@ Design choices that matter:
   graphs were UI. The underlying counts (open/closed features and bugs, completions
   by date) survive as a read-only tool Claude can summarize however it likes.
 
-### Deliberately dropped
+### Deliberately dropped & absent
+
+The original FeatureBoard included several capabilities the MCP has since substantially
+ported or made viable. See [`docs/research/OPENCLAW-MINING-2026-07.md`](./docs/research/OPENCLAW-MINING-2026-07.md)
+for the full inventory.
+
+**Still genuinely dropped:**
 - **All UI and animation** — Kanban rendering, drag-and-drop, the dancing-lobster
   progress animations, dark/light theme. An MCP server has no UI surface.
 - **OpenClaw trigger plumbing** — `parseworkspace.js`, `CommandServer` HTTP
   endpoints, SSE task broadcasting, pre-task session flushing. Replaced wholesale
   by the MCP protocol.
-- **Social publishing** — share-to-X / LinkedIn. Out of scope for a task board and
-  better served by a dedicated connector.
-- **Media generation & gallery** — image/report generation, tagging, annotations,
-  version history. This is a separate product concern; it could become its own
-  plugin later.
-- **The CRM / leads / mail / marketing modules** — these grew on top of FeatureBoard
-  but are a different application. Keeping the plugin to "a board Claude can manage"
-  makes it publishable and reviewable.
-- **Autonomous background routines** — predictive due-date adjustment, doc-sync
-  monitors, scheduled cleanups. MCP servers are request/response with no daemon;
-  where these are still wanted, they belong in a scheduled task that calls the tools.
+
+**Partially ported or newly viable:**
+- **Social publishing** — `draft_share` and `list_shares` (draft-only, no live post)
+  exist in `server/social.js`. A full publish-and-engagement-track loop (posting to X/LinkedIn,
+  recording post links, scraping metrics) remains out of scope for the MCP itself and is
+  better served by a connector (e.g., `claude-in-chrome` + an X/LinkedIn MCP, or
+  `mcp__scheduled-tasks__*` for recurring metric pulls).
+- **Autonomous background routines** — predictive due-date adjustment, doc-sync monitors,
+  scheduled cleanups all exist as on-demand tools (`predict_due_dates`, `drift_start/record/report/remediate`,
+  `scan_board_cleanup`, `scan_test_cleanup`, `prune_board`). The original's daemon/cron wrapper
+  is gone, but Cowork's `mcp__scheduled-tasks__*` now make recurring cadences trivial to set up
+  without new server code.
+
+**Now fully ported (~189 tools):**
+The MCP has since grown to include CRM, leads, mail, marketing, and media generation & gallery,
+which the original v1 doc listed as "a different application." Tools include `add_company`,
+`add_contact`, `add_lead`, `create_campaign`, `save_media`, `list_media`, `add_media_comment`,
+and ~40 more across `server/crm.js`, `server/leads.js`, `server/mail.js`, `server/campaigns.js`,
+`server/media.js`, `server/contracts.js`, `server/bookings.js`, `server/portal.js`.
 
 ## Why this scope is the right v1
 
