@@ -2375,7 +2375,9 @@ function showModal(html) { $("#modal").innerHTML = html; $("#overlay").classList
 function closeModal() { $("#overlay").classList.remove("show"); }
 $("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") closeModal(); });
 
-function openOnboarding() {
+async function openOnboarding() {
+  let gitMode = "commit-only";
+  try { gitMode = (await call("get_global_config")).gitMode || "commit-only"; } catch {}
   showModal(
     '<h3>Welcome to FeatureBoard</h3><p>How are you using it? This sets your license tier.</p>' +
     '<button class="tier" onclick="pickTier(\'personal\')"><b>Personal / non-commercial</b><span>Free forever. Private, hobby, or personal projects.</span></button>' +
@@ -2383,14 +2385,33 @@ function openOnboarding() {
     '<button class="tier" onclick="pickTier(\'commercial-trial\')"><b>Commercial — start 24h trial</b><span>Evaluate commercially for 24 hours. Writes freeze after that until licensed.</span></button>' +
     '<button class="tier" onclick="openActivate()"><b>Commercial — I have a license key</b><span>Enter a key issued after signing a commercial agreement.</span></button>' +
     '<hr style="margin:14px 0;border:none;border-top:1px solid #d8dce6">' +
+    '<label>How should FeatureBoard handle git?</label>' +
+    '<p class="hint" style="margin:2px 0 6px">Applies account-wide to every project, unless a project sets its own override. commit_feature/deploy_site always commit; this controls whether they also push. Change anytime with set_global_config.</p>' +
+    renderGitModeOptions(gitMode) +
+    '<hr style="margin:14px 0;border:none;border-top:1px solid #d8dce6">' +
     '<label>Email (optional)</label>' +
     '<p class="hint" style="margin:2px 0 6px">Get occasional product updates. Optional — nothing is sent unless you click Save; this is the only network call the onboarding screen makes.</p>' +
     '<div style="display:flex;gap:6px"><input id="obEmail" type="email" placeholder="you@example.com" style="flex:1"><button class="ghost" onclick="submitOnboardingEmail()">Save email</button></div>' +
     '<div id="obEmailMsg" class="hint" style="margin-top:4px"></div>'
   );
 }
+function renderGitModeOptions(current) {
+  const opts = [
+    ["commit-only", "Commit only", "Never push automatically (default) — you push yourself when ready."],
+    ["commit-push", "Commit and push", "Every commit_feature/deploy_site also pushes to the configured remote."],
+    ["ask", "Ask each time", "Commits normally, but always asks for confirmation before pushing."],
+  ];
+  return opts.map(([mode, label, hint]) =>
+    '<button class="tier" onclick="pickGitMode(\'' + mode + '\')" style="' + (mode === current ? "border-color:#4a7dff" : "") + '">' +
+    '<b>' + label + (mode === current ? " ✓" : "") + '</b><span>' + hint + '</span></button>'
+  ).join("");
+}
 async function pickTier(type) {
   try { state.license = await call("set_usage_type", { type }); closeModal(); renderLicense(); toast("Usage set: " + type); }
+  catch (e) { toast(e.message); }
+}
+async function pickGitMode(gitMode) {
+  try { await call("set_global_config", { gitMode }); toast("Git mode set: " + gitMode); openOnboarding(); }
   catch (e) { toast(e.message); }
 }
 // Optional onboarding email: explicit click of "Save email" is the only consent

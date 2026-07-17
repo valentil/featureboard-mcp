@@ -688,7 +688,7 @@
     },
     {
       "name": "deploy_site",
-      "description": "Re-render the project's site and publish it by committing (and optionally pushing) its site/ folder through the git integration — the MCP equivalent of the old website deploy. Requires git integration enabled (set_git_config) with the site folder as a git repo; no-ops with a reason otherwise. Runs on this machine using its git credentials."
+      "description": "Re-render the project's site and publish it by committing (and optionally pushing) its site/ folder through the git integration — the MCP equivalent of the old website deploy. Requires git integration enabled (set_git_config) with the site folder as a git repo; no-ops with a reason otherwise. When push is omitted, the effective push behavior is resolved from gitMode the same way as commit_feature (project override, else account-wide default, else \"commit-only\"); \"ask\" never pushes silently. Runs on this machine using its git credentials."
     },
     {
       "name": "upload_site_asset",
@@ -740,15 +740,23 @@
     },
     {
       "name": "get_git_config",
-      "description": "Read the project's optional git integration settings (enabled, remote, branch, push, messagePrefix). Disabled by default."
+      "description": "Read the project's optional git integration settings (enabled, remote, branch, push, messagePrefix, gitMode). Also reports the RESOLVED push mode (resolvedGitMode) and where it came from (gitModeSource: \"project\" | \"global\" | \"default\") — the project's own gitMode wins, then the account-wide default (set_global_config), then \"commit-only\" (never push). Disabled by default."
     },
     {
       "name": "set_git_config",
-      "description": "Enable/configure optional per-project git integration so finished tickets can be committed (and optionally pushed) to the project's code repo. No secrets are stored — push uses the machine's own git credentials. Set codeLocation in project config to point at the repo."
+      "description": "Enable/configure optional per-project git integration so finished tickets can be committed (and optionally pushed) to the project's code repo. No secrets are stored — push uses the machine's own git credentials. Set codeLocation in project config to point at the repo. gitMode (\"commit-only\" | \"commit-push\" | \"ask\") controls what commit_feature/deploy_site do when a call doesn't pass an explicit push param, and overrides the account-wide default from set_global_config for this project only."
+    },
+    {
+      "name": "get_global_config",
+      "description": "Read FeatureBoard's account-wide settings that apply across every project unless a project overrides them via set_git_config. Currently just gitMode (default \"commit-only\"). Stored at <boardsRoot>/.featureboard.global.json."
+    },
+    {
+      "name": "set_global_config",
+      "description": "Set FeatureBoard's account-wide settings, applied to every project that doesn't set its own override via set_git_config. Currently: gitMode — \"commit-only\" (never push automatically; the original default behavior), \"commit-push\" (push after every commit_feature/deploy_site that doesn't pass an explicit push param), or \"ask\" (commit only, and return a note asking the caller to confirm with the user before pushing — never pushes silently). Ask the user which they want during onboarding."
     },
     {
       "name": "commit_feature",
-      "description": "If git integration is enabled for the project, commit (and optionally push) the current changes in the project's code repo with a message like 'FBMCPF-##: title' — mirroring the original OpenClaw git flow. For graduated projects, also refreshes a read-only snapshot of the pad (featurelist.md, buglist.md, scratchpad.md, agent_work_log.md, config) into <codeRepo>/.featureboard/ and includes it in the same commit — the central pad stays authoritative, this is a one-way mirror. No-ops with a reason when disabled. Runs on this machine using its git credentials."
+      "description": "If git integration is enabled for the project, commit (and optionally push) the current changes in the project's code repo with a message like 'FBMCPF-##: title' — mirroring the original OpenClaw git flow. For graduated projects, also refreshes a read-only snapshot of the pad (featurelist.md, buglist.md, scratchpad.md, agent_work_log.md, config) into <codeRepo>/.featureboard/ and includes it in the same commit — the central pad stays authoritative, this is a one-way mirror. No-ops with a reason when disabled. When push is omitted, the effective push behavior is resolved from gitMode (project override via set_git_config, else the account-wide default via set_global_config, else \"commit-only\") — \"ask\" commits without pushing and returns a note asking you to confirm before pushing again with push:true; it never pushes silently. Passing push explicitly always overrides gitMode. Runs on this machine using its git credentials."
     },
     {
       "name": "create_worktree",

@@ -25,12 +25,28 @@ import { PAD_FILES } from "./graduate.js";
 
 export const GIT_CONFIG_FILE = "git.config.json";
 
+// FBMCPF-163: account-wide git config lives at <boardsRoot>/.featureboard.global.json,
+// sibling to the per-project folders (board.dataDir). A project's own gitMode (below)
+// wins over this; this wins over the built-in default ("commit-only" — never push
+// unless asked, matching the original pre-FBMCPF-163 behavior).
+export const GLOBAL_CONFIG_FILE = ".featureboard.global.json";
+
+/** The only three git push behaviors a project or the account can be set to. */
+export const GIT_MODES = ["commit-only", "commit-push", "ask"];
+
+export const DEFAULT_GLOBAL_CONFIG = {
+  gitMode: "commit-only",
+};
+
 export const DEFAULT_GIT_CONFIG = {
   enabled: false,
   remote: "origin",
   branch: "main",
   push: false,
   messagePrefix: "",
+  // FBMCPF-163: project-level override of the account-wide/default gitMode. null
+  // means "not set here" — falls through to the global config, then the default.
+  gitMode: null,
 };
 
 function readJsonSafe(p) {
@@ -47,6 +63,22 @@ function atomicWrite(filePath, data) {
 }
 function configPath(board, project) {
   return path.join(board.projectDir(project), GIT_CONFIG_FILE);
+}
+
+/** Path to the account-wide config, or null when the board has no resolvable root
+ *  (e.g. lightweight test doubles that only implement projectDir()). */
+function globalConfigPath(board) {
+  const root = board && typeof board.dataDir === "string" && board.dataDir ? board.dataDir : null;
+  return root ? path.join(root, GLOBAL_CONFIG_FILE) : null;
+}
+
+/** Raw parsed global config file, or null if missing/unreadable/malformed — the
+ *  tolerant-parsing primitive other helpers build on. Never throws. */
+function readGlobalConfigRaw(board) {
+  const p = globalConfigPath(board);
+  if (!p) return null;
+  const raw = readJsonSafe(p);
+  return raw && typeof raw === "object" ? raw : null;
 }
 
 /** Read a project's git config (merged over defaults). */
@@ -69,8 +101,64 @@ export function setGitConfig(board, project, patch = {}) {
     cfg.branch = String(patch.branch).trim();
   }
   if (patch.messagePrefix != null) cfg.messagePrefix = String(patch.messagePrefix);
+  if (patch.gitMode != null) {
+    if (!GIT_MODES.includes(patch.gitMode)) {
+      throw new Error(`gitMode must be one of: ${GIT_MODES.join(", ")}`);
+    }
+    cfg.gitMode = patch.gitMode;
+  }
   atomicWrite(configPath(board, project), JSON.stringify(cfg, null, 2) + "\n");
   return cfg;
+}
+
+/** Read the account-wide git config (tolerant of a missing/corrupt file — always
+ *  returns a valid object, defaulting gitMode to "commit-only"). */
+export function getGlobalConfig(board) {
+  const raw = readGlobalConfigRaw(board);
+  const cfg = { ...DEFAULT_GLOBAL_CONFIG };
+  if (raw && GIT_MODES.includes(raw.gitMode)) cfg.gitMode = raw.gitMode;
+  return cfg;
+}
+
+/** Update the account-wide git config (currently just gitMode). Requires a board
+ *  with a resolvable dataDir (a real Board, not a projectDir()-only test double). */
+export function setGlobalConfig(board, patch = {}) {
+  const p = globalConfigPath(board);
+  if (!p) throw new Error("board has no resolvable dataDir — cannot locate the account-wide config file");
+  const cfg = getGlobalConfig(board);
+  if (patch.gitMode != null) {
+    if (!GIT_MODES.includes(patch.gitMode)) {
+      throw new Error(`gitMode must be one of: ${GIT_MODES.join(", ")}`);
+    }
+    cfg.gitMode = patch.gitMode;
+  }
+  atomicWrite(p, JSON.stringify(cfg, null, 2) + "\n");
+  return cfg;
+}
+
+/**
+ * FBMCPF-163: resolve the effective git push mode for a project. Precedence:
+ *   1. the project's own gitMode (set_git_config) — explicit per-project override.
+ *   2. legacy per-project push:true (pre-dates gitMode; kept so existing configs
+ *      that only ever set `push` keep behaving exactly as before).
+ *   3. the account-wide gitMode (set_global_config), if the file actually sets one.
+ *   4. the built-in default: "commit-only" (never push unless asked — the original
+ *      behavior before this ticket).
+ * Returns { mode, source } where source is "project" | "global" | "default", so
+ * get_git_config can report not just the resolved mode but where it came from.
+ */
+export function resolveGitMode(board, project, config) {
+  if (config && GIT_MODES.includes(config.gitMode)) {
+    return { mode: config.gitMode, source: "project" };
+  }
+  if (config && config.push === true) {
+    return { mode: "commit-push", source: "project" };
+  }
+  const globalRaw = readGlobalConfigRaw(board);
+  if (globalRaw && GIT_MODES.includes(globalRaw.gitMode)) {
+    return { mode: globalRaw.gitMode, source: "global" };
+  }
+  return { mode: DEFAULT_GLOBAL_CONFIG.gitMode, source: "default" };
 }
 
 /** Compose the commit message for a ticket. */
@@ -232,7 +320,30 @@ export function commitFeature(board, project, opts = {}, { exec = defaultExec, c
   // warning on `out`, not a throw.
   const padMirror = mirrorGraduatedPad(board, project, targets);
 
-  const plan = buildCommitPlan(config, opts);
+  // FBMCPF-163: when the caller didn't pass an explicit push param, resolve the
+  // effective gitMode (project > global > default) instead of silently defaulting
+  // to no-push. "ask" never pushes here — it surfaces a note telling the caller to
+  // confirm with the user, then call again with push:true. An explicit opts.push
+  // (true or false) always wins over all of this — the resolution below only runs
+  // when opts.push is null/undefined.
+  let effectivePush = opts.push;
+  let gitModeInfo = null;
+  let pushNote = null;
+  if (opts.push == null) {
+    gitModeInfo = resolveGitMode(board, project, config);
+    if (gitModeInfo.mode === "commit-push") {
+      effectivePush = true;
+    } else if (gitModeInfo.mode === "ask") {
+      effectivePush = false;
+      pushNote =
+        `git push mode is "ask" (resolved from ${gitModeInfo.source} config) — committed without pushing. ` +
+        `Confirm with the user, then call again with push:true to push.`;
+    } else {
+      effectivePush = false;
+    }
+  }
+
+  const plan = buildCommitPlan(config, { ...opts, push: effectivePush });
   const results = [];
   for (const step of plan.steps) {
     const r = exec(step.args, codeCwd);
@@ -242,6 +353,8 @@ export function commitFeature(board, project, opts = {}, { exec = defaultExec, c
     }
   }
   const out = { committed: true, message: plan.message, pushed: plan.push, codeRepo: codeCwd, results };
+  if (gitModeInfo) out.gitMode = gitModeInfo;
+  if (pushNote) out.note = pushNote;
 
   if (!padMirror.skipped) {
     out.padMirror = padMirror;

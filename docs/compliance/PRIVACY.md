@@ -30,8 +30,12 @@ code repo on disk) and makes no network call.
   code/site repo to its configured git remote (default `origin`), using the machine's
   own ambient git credentials — no credentials are stored or transmitted by FeatureBoard
   itself. Only runs when git integration is enabled for the project via
-  `set_git_config` (`enabled:true`); pushing additionally requires `push:true` in that
-  same config (or an explicit per-call override). Disabled by default; no-ops with a
+  `set_git_config` (`enabled:true`). Whether a commit also pushes is controlled by
+  `gitMode` (`"commit-only"` never pushes, `"commit-push"` always pushes, `"ask"`
+  commits and asks before pushing) — set per project via `set_git_config` or
+  account-wide via `set_global_config`; either way an explicit `push:true`/`false` on
+  the call itself always overrides `gitMode`. `commit-only` is the default, matching
+  the original no-push-unless-asked behavior. Disabled by default; no-ops with a
   reason when git integration is off.
 - `get_site_traffic` is a read proxy: it fetches traffic stats from the site's
   configured external analytics provider (Plausible at `plausible.io`, a self-hosted

@@ -64,7 +64,7 @@ import {
   listSiteTemplates, applySiteTemplate,
   renderSite, siteRoot, saveAsset, listAssets, setSiteAnalytics, addRawPage,
 } from "./website.js";
-import { getGitConfig, setGitConfig, commitFeature, mirrorGraduatedPad, getTicketDiff } from "./git.js";
+import { getGitConfig, setGitConfig, commitFeature, mirrorGraduatedPad, getTicketDiff, getGlobalConfig, setGlobalConfig, resolveGitMode } from "./git.js";
 import { createWorktree, listWorktrees, cleanupWorktree, mergeBackGuidance } from "./worktrees.js";
 import { addReviewComment, listReviewComments, resolveReviewComment, ticketsWithUnresolvedReviews } from "./reviews.js";
 import { scaffoldSite } from "./sitegen.js";
@@ -3874,11 +3874,11 @@ server.registerTool(
   {
     title: "Deploy the website",
     description:
-      "Re-render the project's site and publish it by committing (and optionally pushing) its site/ folder through the git integration — the MCP equivalent of the old website deploy. Requires git integration enabled (set_git_config) with the site folder as a git repo; no-ops with a reason otherwise. Runs on this machine using its git credentials.",
+      "Re-render the project's site and publish it by committing (and optionally pushing) its site/ folder through the git integration — the MCP equivalent of the old website deploy. Requires git integration enabled (set_git_config) with the site folder as a git repo; no-ops with a reason otherwise. When push is omitted, the effective push behavior is resolved from gitMode the same way as commit_feature (project override, else account-wide default, else \"commit-only\"); \"ask\" never pushes silently. Runs on this machine using its git credentials.",
     inputSchema: {
       project: z.string(),
       message: z.string().optional().describe("Custom deploy commit message."),
-      push: z.boolean().optional().describe("Override the git config's push setting."),
+      push: z.boolean().optional().describe("Override the resolved gitMode for this deploy (always wins over gitMode)."),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
@@ -4157,14 +4157,17 @@ server.registerTool(
   "get_git_config",
   {
     title: "Get git integration config",
-    description: "Read the project's optional git integration settings (enabled, remote, branch, push, messagePrefix). Disabled by default.",
+    description:
+      "Read the project's optional git integration settings (enabled, remote, branch, push, messagePrefix, gitMode). Also reports the RESOLVED push mode (resolvedGitMode) and where it came from (gitModeSource: \"project\" | \"global\" | \"default\") — the project's own gitMode wins, then the account-wide default (set_global_config), then \"commit-only\" (never push). Disabled by default.",
     inputSchema: { project: z.string() },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
   tryTool(({ project }) => {
     const board = getBoard();
     if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
-    return getGitConfig(board, project);
+    const cfg = getGitConfig(board, project);
+    const resolved = resolveGitMode(board, project, cfg);
+    return { ...cfg, resolvedGitMode: resolved.mode, gitModeSource: resolved.source };
   })
 );
 
@@ -4173,22 +4176,49 @@ server.registerTool(
   {
     title: "Configure git integration",
     description:
-      "Enable/configure optional per-project git integration so finished tickets can be committed (and optionally pushed) to the project's code repo. No secrets are stored — push uses the machine's own git credentials. Set codeLocation in project config to point at the repo.",
+      "Enable/configure optional per-project git integration so finished tickets can be committed (and optionally pushed) to the project's code repo. No secrets are stored — push uses the machine's own git credentials. Set codeLocation in project config to point at the repo. gitMode (\"commit-only\" | \"commit-push\" | \"ask\") controls what commit_feature/deploy_site do when a call doesn't pass an explicit push param, and overrides the account-wide default from set_global_config for this project only.",
     inputSchema: {
       project: z.string(),
       enabled: z.boolean().optional(),
       remote: z.string().optional(),
       branch: z.string().optional(),
-      push: z.boolean().optional().describe("Also push after committing."),
+      push: z.boolean().optional().describe("Also push after committing. Superseded by gitMode going forward; kept for back-compat."),
       messagePrefix: z.string().optional(),
+      gitMode: z.enum(["commit-only", "commit-push", "ask"]).optional().describe("Per-project push behavior, overriding the account-wide default (set_global_config)."),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  writeTool(({ project, enabled, remote, branch, push, messagePrefix }) => {
+  writeTool(({ project, enabled, remote, branch, push, messagePrefix, gitMode }) => {
     const board = getBoard();
     if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
-    return setGitConfig(board, project, { enabled, remote, branch, push, messagePrefix });
+    return setGitConfig(board, project, { enabled, remote, branch, push, messagePrefix, gitMode });
   })
+);
+
+server.registerTool(
+  "get_global_config",
+  {
+    title: "Get account-wide config",
+    description:
+      "Read FeatureBoard's account-wide settings that apply across every project unless a project overrides them via set_git_config. Currently just gitMode (default \"commit-only\"). Stored at <boardsRoot>/.featureboard.global.json.",
+    inputSchema: {},
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(() => getGlobalConfig(getBoard()))
+);
+
+server.registerTool(
+  "set_global_config",
+  {
+    title: "Configure account-wide settings",
+    description:
+      "Set FeatureBoard's account-wide settings, applied to every project that doesn't set its own override via set_git_config. Currently: gitMode — \"commit-only\" (never push automatically; the original default behavior), \"commit-push\" (push after every commit_feature/deploy_site that doesn't pass an explicit push param), or \"ask\" (commit only, and return a note asking the caller to confirm with the user before pushing — never pushes silently). Ask the user which they want during onboarding.",
+    inputSchema: {
+      gitMode: z.enum(["commit-only", "commit-push", "ask"]).optional(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  writeTool(({ gitMode }) => setGlobalConfig(getBoard(), { gitMode }))
 );
 
 server.registerTool(
@@ -4196,13 +4226,13 @@ server.registerTool(
   {
     title: "Commit a finished feature",
     description:
-      "If git integration is enabled for the project, commit (and optionally push) the current changes in the project's code repo with a message like 'FBMCPF-##: title' — mirroring the original OpenClaw git flow. For graduated projects, also refreshes a read-only snapshot of the pad (featurelist.md, buglist.md, scratchpad.md, agent_work_log.md, config) into <codeRepo>/.featureboard/ and includes it in the same commit — the central pad stays authoritative, this is a one-way mirror. No-ops with a reason when disabled. Runs on this machine using its git credentials.",
+      "If git integration is enabled for the project, commit (and optionally push) the current changes in the project's code repo with a message like 'FBMCPF-##: title' — mirroring the original OpenClaw git flow. For graduated projects, also refreshes a read-only snapshot of the pad (featurelist.md, buglist.md, scratchpad.md, agent_work_log.md, config) into <codeRepo>/.featureboard/ and includes it in the same commit — the central pad stays authoritative, this is a one-way mirror. No-ops with a reason when disabled. When push is omitted, the effective push behavior is resolved from gitMode (project override via set_git_config, else the account-wide default via set_global_config, else \"commit-only\") — \"ask\" commits without pushing and returns a note asking you to confirm before pushing again with push:true; it never pushes silently. Passing push explicitly always overrides gitMode. Runs on this machine using its git credentials.",
     inputSchema: {
       project: z.string(),
       ticket: z.string().optional(),
       title: z.string().optional(),
       message: z.string().optional().describe("Explicit commit message (overrides ticket/title)."),
-      push: z.boolean().optional().describe("Override the config's push setting for this commit."),
+      push: z.boolean().optional().describe("Override the resolved gitMode for this commit (always wins over gitMode)."),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
@@ -4401,7 +4431,8 @@ server.registerPrompt(
             "   - features = new capabilities, tasks, or ideas to build\n" +
             "   - bugs = problems, defects, regressions, or issues raised\n" +
             "3. Call plan_work once with createProject:true to create the project and add those features and bugs. Keep titles short; put detail in each description. Where a chat item maps to an outside id, set its ref.\n" +
-            "4. Show me the created tickets grouped by feature/bug.\n\n" +
+            "4. If this project will use git integration (set_git_config with a codeLocation), ask how I want finished tickets pushed: commit only (never push automatically), commit + push every time, or ask each time before pushing. Record the answer with set_git_config's gitMode for this project (or set_global_config's gitMode if I say it should apply to every project). Skip this if git integration isn't relevant here.\n" +
+            "5. Show me the created tickets grouped by feature/bug.\n\n" +
             "If the scope is large or ambiguous, show me the proposed name and breakdown and let me adjust before you create anything.",
         },
       },
@@ -4434,7 +4465,7 @@ server.registerPrompt(
             "4. Do the work. If it's a substantial or code ticket, dispatch it to a fresh sub-agent with the packet so it gets isolated context — at the model from the ticket's model: label (sonnet/haiku may run in parallel; opus/fable sequentially with review), with rigor matched to its effort: label. Do trivial tickets inline. Tell the sub-agent to call log_heartbeat a few times at milestones during longer dispatches so get_agent_monitor shows live progress instead of a blank wait. Only you (the orchestrator) write to the board.\n" +
             "5. Verify the change — run it or its tests where relevant.\n" +
             "6. set_status Done with a one-line completionSummary, and log_work with additions/deletions (and the model used).\n" +
-            "7. If git is configured for the project, commit the change now — one commit per ticket, message referencing the ticket id (commit_feature or git commit).\n" +
+            "7. If git is configured for the project, commit the change now — one commit per ticket, message referencing the ticket id (commit_feature or git commit). Don't pass push explicitly unless I've told you to; commit_feature resolves the project's/account's gitMode on its own, and if it comes back with a note (gitMode \"ask\"), check with me before calling it again with push:true.\n" +
             (continuous === "yes"
               ? "8. Repeat from step 1 until the queue is empty, but pause to check in with me on anything ambiguous, risky, or destructive before proceeding."
               : "8. Then stop and report what you did and what's next in the queue."),
