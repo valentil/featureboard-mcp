@@ -255,6 +255,32 @@ export function logWork(board, project, e) {
   return { date, time, line, ...e };
 }
 
+/**
+ * FBMCPB-21: flag a probable work-log double-count. The recommended close-out
+ * calls set_status Done (which writes a metrics line when given
+ * additions/deletions) and THEN log_work — if both carry the same
+ * additions/deletions for the same ticket on the same day, velocity counts that
+ * one event twice. This returns the pre-existing matching entry so the caller
+ * can surface a non-blocking `duplicateSuspected` warning. It never blocks: a
+ * ticket legitimately worked across several sessions can repeat numbers, so we
+ * only warn. Entries with neither additions nor deletions carry no metrics to
+ * double-count and are ignored. Call this BEFORE appending the new entry.
+ */
+export function findDuplicateWorkEntry(board, project, entry) {
+  if (!entry || !entry.ticket) return null;
+  const add = entry.additions != null ? entry.additions : null;
+  const del = entry.deletions != null ? entry.deletions : null;
+  if (add == null && del == null) return null;
+  const { date } = stamp();
+  for (const e of readWorkLog(board, project)) {
+    if (e.ticket !== entry.ticket || e.date !== date) continue;
+    const eAdd = e.additions != null ? e.additions : null;
+    const eDel = e.deletions != null ? e.deletions : null;
+    if (eAdd === add && eDel === del) return e;
+  }
+  return null;
+}
+
 /** Parse the work log into structured entries. */
 export function parseWorkLog(content) {
   const entries = [];

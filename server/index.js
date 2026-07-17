@@ -2036,7 +2036,20 @@ server.registerTool(
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
-  writeTool(({ project, ...entry }) => meta.logWork(getBoard(), project, entry))
+  writeTool(({ project, ...entry }) => {
+    const board = getBoard();
+    // FBMCPB-21: warn (never block) when this looks like a double-count of a
+    // set_status Done metrics line — same ticket, same day, same +/- lines.
+    const dup = meta.findDuplicateWorkEntry(board, project, entry);
+    const result = meta.logWork(board, project, entry);
+    if (dup) {
+      result.duplicateSuspected = true;
+      result.warning =
+        `A work-log entry for ${entry.ticket} already recorded +${dup.additions ?? 0}/\u2212${dup.deletions ?? 0} today` +
+        ` (likely from set_status Done metrics) \u2014 velocity may double-count this event. Not blocked; ignore if this was a separate work session.`;
+    }
+    return result;
+  })
 );
 
 server.registerTool(
