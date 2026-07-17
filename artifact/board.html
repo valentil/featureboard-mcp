@@ -1745,9 +1745,14 @@ function tlSpanFromTask(t) {
 }
 
 function tlInit(data) {
-  const spans = (data.spans || []).map(tlPrep).filter(Boolean);
+  // FBMCPB-18: "now" comes from the server payload (asOf) when the server
+  // supports it, so the now-line and every Done-ticket clamp below share one
+  // time basis instead of the client computing its own via Date.now() —
+  // falls back to the client clock only for the pre-asOf/list_tasks path.
+  const nowMs = data.asOf ? Date.parse(data.asOf) : Date.now();
+  const spans = (data.spans || []).map((s) => tlPrep(s, nowMs)).filter(Boolean);
   tl = {
-    raw: data, spans, byDate: data.byDate || [],
+    raw: data, spans, byDate: data.byDate || [], now: nowMs,
     group: "product", gran: "day", stream: "none", color: "status",
     viewStart: 0, pxPerMs: 1,
     gutterW: 148, rulerH: 30, streamH: 48, clipH: 18, clipGap: 4, lanePad: 8,
@@ -1777,7 +1782,7 @@ function tlInit(data) {
   tlFit();
 }
 
-function tlPrep(s) {
+function tlPrep(s, nowMs) {
   const p = (v) => { if (!v) return null; const t = Date.parse(String(v).length === 10 ? v + "T00:00:00" : v); return Number.isNaN(t) ? null : t; };
   const DAY = 86400000;
   let s0 = p(s.startedAt) != null ? p(s.startedAt) : p(s.created);
@@ -1785,6 +1790,15 @@ function tlPrep(s) {
   if (s0 == null && s1 != null) s0 = s1;           // completion-day-only block
   if (s0 == null) return null;                      // undated ticket → skip
   if (s1 == null || s1 <= s0) s1 = s0 + DAY;        // min one-day block
+  // FBMCPB-18: belt-and-braces clamp — getTimelineData already clamps a Done
+  // ticket's completedAt to its own "now", but this covers the date-only
+  // fallback path (tlSpanFromTask, servers predating get_timeline_data) and
+  // any stale cached payload, so a Done bar can never draw past the now-line.
+  if (s.status === "Done") {
+    const now = nowMs != null ? nowMs : Date.now();
+    if (s1 > now) s1 = now;
+    if (s0 > s1) s0 = s1;
+  }
   return Object.assign({}, s, { _s0: s0, _s1: s1 });
 }
 
@@ -1871,10 +1885,14 @@ function tlHoverMove(e) {
   if (!hit) { box.style.display = "none"; return; }
   const dark = document.documentElement.getAttribute("data-theme") === "dark";
   const col = tlClipColor(hit, tlColors(dark));
+  // FBMCPB-18: for a Done ticket, show when it actually finished (date + time,
+  // from the clamped/precise _s1 the bar itself is drawn to — not the raw
+  // date-only completionDate) so the tooltip matches what's on screen.
+  const finished = hit.status === "Done" && hit._s1 != null ? ' · finished ' + tlFmtDayTime(hit._s1) : '';
   box.innerHTML =
     '<div class="tlTtl"><span class="tlDot" style="background:' + col + '"></span>' + esc(tlShort(hit.title, 46)) + '</div>' +
     '<div class="tlSub">' + esc(hit.ticket) + ' · ' + esc(hit.status) +
-    (hit.model ? ' · ' + esc(hit.model) : '') + ' · ' + fmtTokens(hit.tokens || 0) + ' tok</div>';
+    (hit.model ? ' · ' + esc(hit.model) : '') + ' · ' + fmtTokens(hit.tokens || 0) + ' tok' + finished + '</div>';
   box.style.display = "block";
   let left = e.clientX + 14, top = e.clientY + 16;
   const w = box.offsetWidth || 260, h = box.offsetHeight || 48;
@@ -2038,7 +2056,10 @@ function tlDraw() {
   const rx = rl.getContext("2d"); rx.setTransform(dpr, 0, 0, dpr, 0, 0); rx.clearRect(0, 0, cw, topH);
 
   const ticks = tlTicks(cw, timeToX);
-  const now = Date.now();
+  // FBMCPB-18: draw the now-line from the same clock the spans were clamped
+  // against (tl.now, sourced from getTimelineData's asOf) instead of a
+  // separately-sampled Date.now(), so the line and the bars can't drift.
+  const now = tl.now != null ? tl.now : Date.now();
 
   // lane backgrounds + labels
   lx.font = '600 11px -apple-system,Segoe UI,Roboto,sans-serif';
@@ -2154,6 +2175,16 @@ function tlTickLabel(t, step) {
   return MON[d.getMonth()] + " " + d.getDate();
 }
 function tlFmtDay(t) { const d = new Date(t); const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]; return MON[d.getMonth()] + " " + d.getDate(); }
+// FBMCPB-18: date + local time, for the "finished" line in the timeline
+// hover tooltip — getHours/getMinutes are the browser's local clock, same
+// basis as everything else drawn on the piano roll.
+function tlFmtDayTime(t) {
+  const d = new Date(t);
+  const h = d.getHours(), m = d.getMinutes();
+  const hh = ((h + 11) % 12) + 1;
+  const ap = h < 12 ? "am" : "pm";
+  return tlFmtDay(t) + ", " + hh + ":" + String(m).padStart(2, "0") + ap;
+}
 function tlShort(s, n) { s = String(s || ""); return s.length > n ? s.slice(0, n - 1) + "…" : s; }
 
 /* ---------- sprint close-out reports (FBMCPF-156) ---------- */

@@ -479,6 +479,11 @@ function timelineModel(work, ticket, task) {
 export function getTimelineData(board, project, opts = {}) {
   const from = opts.from ? Date.parse(opts.from) : null;
   const to = opts.to ? Date.parse(opts.to) : null;
+  // FBMCPB-18: "now" is overridable (same convention as agentMonitorV2's
+  // opts.asOf) so tests can assert future-completionDate clamping
+  // deterministically instead of racing the real clock.
+  const now = opts.asOf ? new Date(opts.asOf) : new Date();
+  const nowMs = now.getTime();
 
   const tasks = board.listTasks(project, {});
   const events = readEvents(board, project);
@@ -507,12 +512,43 @@ export function getTimelineData(board, project, opts = {}) {
     }
     if (!startedAt && t.createdDate) { startedAt = `${t.createdDate}T00:00:00`; startedSource = "created_date"; }
 
-    // When it finished: completionDate, else last status→Done event.
-    let completedAt = null;
-    if (t.completionDate) completedAt = `${t.completionDate}T23:59:59`;
-    else {
-      const done = evs.filter((e) => e.field === "status" && e.to === "Done");
-      if (done.length) completedAt = done[done.length - 1].ts;
+    // When it finished: prefer a precise timestamp over the date-only
+    // completionDate field, which (FBMCPB-18) can be flat-out wrong — it used
+    // to be stamped from the UTC calendar day, so a ticket closed late in the
+    // local evening could land on tomorrow's date — and is coarse even when
+    // correct (day-boundary granularity snaps every bar to midnight instead
+    // of the real finish time). Preference order: last status→Done audit
+    // event, else the ticket's last work-log entry (only once the ticket is
+    // actually Done — an in-progress ticket's latest work-log entry isn't a
+    // completion), else completionDate interpreted as local end-of-day. This
+    // also doubles as the read-side repair for already-stored future
+    // completionDates: whichever event/work-log timestamp exists wins over a
+    // bogus date, with no rewrite of the markdown needed.
+    let completedAt = null, completedSource = null;
+    const done = evs.filter((e) => e.field === "status" && e.to === "Done");
+    if (done.length) { completedAt = done[done.length - 1].ts; completedSource = "status_event"; }
+    else if (t.status === "Done" && wls.length) {
+      const last = wls[wls.length - 1];
+      const ts = `${last.date}T${last.time}`;
+      if (!Number.isNaN(Date.parse(ts))) { completedAt = ts; completedSource = "work_log"; }
+    }
+    if (!completedAt && t.completionDate) {
+      completedAt = `${t.completionDate}T23:59:59`;
+      completedSource = "completion_date";
+    }
+
+    // Belt-and-braces clamp: whatever we landed on, a Done ticket's end can
+    // never be later than "now" — this is what actually stops a bar from
+    // drawing past the now-line even if some other bug reintroduces a
+    // future-dated completionDate or event.
+    let completedClamped = false;
+    if (t.status === "Done" && completedAt) {
+      const parsed = Date.parse(completedAt);
+      if (!Number.isNaN(parsed) && parsed > nowMs) {
+        completedAt = now.toISOString();
+        completedSource = completedSource ? `${completedSource}_clamped` : "clamped";
+        completedClamped = true;
+      }
     }
 
     let tokens = 0, additions = 0, deletions = 0, cost = 0;
@@ -549,6 +585,8 @@ export function getTimelineData(board, project, opts = {}) {
       startedAt,
       startedSource,
       completedAt,
+      completedSource,
+      completedClamped,
       lastActivity,
       tokens,
       additions,
@@ -580,6 +618,10 @@ export function getTimelineData(board, project, opts = {}) {
     project,
     from: opts.from || null,
     to: opts.to || null,
+    // FBMCPB-18: the same clock the spans above were clamped against, so the
+    // artifact's now-line and the span data it's drawn from share one time
+    // basis instead of the client computing its own "now" independently.
+    asOf: now.toISOString(),
     count: filtered.length,
     spans: filtered,
     byDate: byDateArr,

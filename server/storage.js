@@ -30,6 +30,19 @@ const INDEX_FILE = "index.json";
 // upward deps on sprints.js/metadata.js beyond getProjectConfig).
 const SPRINT_LABEL_RE = /^sprint:(.+)$/i;
 
+// FBMCPB-18: "today" in the *local* calendar day, not UTC. `toISOString()`
+// always renders the UTC instant, so `.split("T")[0]` silently rolls the
+// date forward (or back) a day for any timezone ahead of (or behind) UTC —
+// e.g. a ticket closed at 22:00 local on 2026-07-16 in a UTC+2 zone stamps
+// as 2026-07-17 in UTC. createdDate/completionDate are user-facing calendar
+// dates, so they must be derived from local Y/M/D components.
+export function localDateStr(d = new Date()) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 // ---------------------------------------------------------------------------
 // Parsing  (ported from the original js/parser.js, trimmed to the fields we use)
 // ---------------------------------------------------------------------------
@@ -189,7 +202,7 @@ export function serializeTask(t) {
   const summary =
     t.status === "Done" && t.completionSummary ? ` Summary: ${t.completionSummary}` : "";
 
-  const created = t.createdDate || new Date().toISOString().split("T")[0];
+  const created = t.createdDate || localDateStr();
   const due = t.dueDate ? ` | Due: ${t.dueDate}` : "";
   const completed =
     t.status === "Done" && t.completionDate ? ` | Completed: ${t.completionDate}` : "";
@@ -758,7 +771,7 @@ export class Board {
       description,
       status: fields.status || "Todo",
       completionSummary: null,
-      createdDate: new Date().toISOString().split("T")[0],
+      createdDate: localDateStr(),
       dueDate: due.dueDate,
       completionDate: null,
       product: fields.product || null,
@@ -901,7 +914,7 @@ export class Board {
       t.status = status;
       if (status === "Done") {
         if (completionSummary) t.completionSummary = completionSummary;
-        t.completionDate = new Date().toISOString().split("T")[0];
+        t.completionDate = localDateStr();
       }
       return t;
     });
