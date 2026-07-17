@@ -82,6 +82,58 @@ const DATA_DIR = process.env.FEATUREBOARD_DATA_DIR;
 const SERVER_DIR = nodePath.dirname(fileURLToPath(import.meta.url));
 const BOARD_HTML_PATH = nodePath.join(SERVER_DIR, "..", "artifact", "board.html");
 
+// FBMCPB-19 — the board UI calls back into this server via a `call(tool, args)`
+// wrapper (`window.cowork.callMcpTool("mcp__FeatureBoard__" + tool, args)`).
+// get_board used to tell the calling agent to guess "this server's tools" for
+// the artifact's mcp_tools allowlist, which drifted from what board.html
+// actually calls (e.g. get_test_runs, get_scratchpad went missing). Instead,
+// derive the allowlist straight from board.html's own call() sites so it can
+// never drift again — whatever the UI calls IS the allowlist.
+// NOTE: test/board_tools_parity.test.js re-implements this same extraction
+// (it can't import this file — main() connects a stdio transport on import)
+// to guard against silent regressions; keep the two in sync.
+function extractBoardToolNames(html) {
+  const names = new Set();
+  const callRe = /\bcall\(/g;
+  let m;
+  while ((m = callRe.exec(html))) {
+    const start = callRe.lastIndex;
+    let depth = 1;
+    let i = start;
+    let firstArgEnd = -1;
+    while (i < html.length && depth > 0) {
+      const c = html[i];
+      if (c === "(") depth++;
+      else if (c === ")") {
+        depth--;
+        if (depth === 0) break;
+      } else if (c === "," && depth === 1 && firstArgEnd === -1) {
+        firstArgEnd = i;
+      }
+      i++;
+    }
+    const firstArg = html.slice(start, firstArgEnd === -1 ? i : firstArgEnd).trim();
+    if (!firstArg) continue;
+    // Ternary tool names (`type === "bug" ? "log_bug" : "add_feature"`): only
+    // look at the two branches, never the condition (it may contain unrelated
+    // quoted strings like "bug" that aren't tool names).
+    const qmark = firstArg.indexOf("?");
+    let branches;
+    if (qmark === -1) {
+      branches = [firstArg];
+    } else {
+      const rest = firstArg.slice(qmark + 1);
+      const colon = rest.indexOf(":");
+      branches = colon === -1 ? [rest] : [rest.slice(0, colon), rest.slice(colon + 1)];
+    }
+    for (const branch of branches) {
+      const lit = branch.match(/^\s*["'`]([a-zA-Z_][a-zA-Z0-9_]*)["'`]\s*$/);
+      if (lit) names.add(lit[1]);
+    }
+  }
+  return [...names].sort();
+}
+
 function getBoard() {
   if (!DATA_DIR) {
     throw new Error(
@@ -126,7 +178,7 @@ When the user gives you a substantive, multi-step request (build X, fix these bu
 
 Keep the board honest: a ticket should be In Progress only while you are actively working it, and Done only when it is genuinely finished. The board is scaffolding around the real work — it does not replace writing the code, running the tests, etc. Do not create boards or tickets for trivial one-shot chores that don't benefit from tracking.
 
-Showing the board: when the user asks to see, open, or check on the board in natural language — e.g. "show me the board", "show the featureboard", "open the board", "let's see the tasks/queue", "what's on my plate", "how's it going / how are we looking", "give me a status", or "show velocity/analytics" — call the get_board tool and render the HTML it returns as a Cowork artifact (create_artifact with id "featureboard-board", or update_artifact if one is already open — reuse it, don't create duplicates). Do NOT hand-write your own board or reply only in text: get_board returns the shipped UI, which already has the Todo / In Progress / Done columns, the product filter, the dark/light theme toggle, and the 📊 Analytics dashboard (velocity, timeline, bug health, and the work-log feed) — tasks + analytics + everything in one place. List this server's tools in the artifact's mcp_tools so its buttons and charts work. Pair the artifact with a one- or two-line text summary of where things stand.`;
+Showing the board: when the user asks to see, open, or check on the board in natural language — e.g. "show me the board", "show the featureboard", "open the board", "let's see the tasks/queue", "what's on my plate", "how's it going / how are we looking", "give me a status", or "show velocity/analytics" — call the get_board tool and render the HTML it returns as a Cowork artifact (create_artifact with id "featureboard-board", or update_artifact if one is already open — reuse it, don't create duplicates). Do NOT hand-write your own board or reply only in text: get_board returns the shipped UI, which already has the Todo / In Progress / Done columns, the product filter, the dark/light theme toggle, and the 📊 Analytics dashboard (velocity, timeline, bug health, and the work-log feed) — tasks + analytics + everything in one place. Use the mcp_tools array get_board returns VERBATIM as the artifact's mcp_tools (don't hand-pick tools from memory) so its buttons and charts work. Pair the artifact with a one- or two-line text summary of where things stand.`;
 
 const server = new McpServer(
   { name: "featureboard", version: "0.3.3" },
@@ -286,20 +338,24 @@ server.registerTool(
       "\"what's on my plate\", \"how are we looking\", \"give me a status\", \"show velocity/analytics\". " +
       "Do NOT hand-write your own board: take the returned `html`, write it to a file, and pass it to create_artifact " +
       "(use artifact id \"featureboard-board\"; if a board artifact is already open, reuse it via update_artifact instead of creating a duplicate). " +
-      "List this server's tools in the artifact's mcp_tools so the columns, product filter, and analytics dashboard work.",
+      "Use the `mcp_tools` array in this response VERBATIM as the artifact's mcp_tools (do not hand-pick tools from memory — " +
+      "the board's buttons and analytics dashboard call back into exactly these tools, and any you omit will fail with " +
+      "\"not in this artifact's mcp_tools allowlist\").",
     inputSchema: {},
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
   tryTool(() => {
     const html = readFileSync(BOARD_HTML_PATH, "utf8");
+    const mcp_tools = extractBoardToolNames(html).map((name) => "mcp__FeatureBoard__" + name);
     return {
       artifactId: "featureboard-board",
       filename: "board.html",
       bytes: Buffer.byteLength(html, "utf8"),
+      mcp_tools,
       render:
         "Write `html` to a file, then call create_artifact with id \"featureboard-board\" " +
-        "(or update_artifact if a board artifact is already open). Include the FeatureBoard tools in mcp_tools " +
-        "so the board's buttons and analytics can call back into this server.",
+        "(or update_artifact if a board artifact is already open), passing this response's `mcp_tools` array verbatim " +
+        "as the artifact's mcp_tools param so the board's buttons and analytics can call back into this server.",
       html,
     };
   })
