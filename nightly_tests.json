@@ -7,5 +7,12 @@
   "timeoutMinutes": 10,
   "resultsDir": ".featureboard/nightly",
   "keepRuns": 30,
-  "notifyOnFailureOnly": true
+  "notifyOnFailureOnly": true,
+  "suites": [
+    { "name": "git_mode", "file": "test/git_mode.test.js", "enabled": true },
+    { "name": "perf_cache", "file": "test/perf_cache.test.js", "enabled": true },
+    { "name": "timeline_accuracy", "file": "test/timeline_accuracy.test.js", "enabled": true },
+    { "name": "manifest_prompts", "file": "test/manifest_prompts.test.js", "enabled": true },
+    { "name": "release_script", "file": "test/release_script.test.js", "enabled": true }
+  ]
 }

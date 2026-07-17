@@ -66,6 +66,8 @@ async function main() {
     "add_page", "list_pages", "deploy_site", "upload_site_asset", "set_site_analytics", // website+
     "publish_media_to_site", "save_test_page", "list_test_pages", // media→site + test pages
     "get_git_config", "set_git_config", "commit_feature",     // git
+    "log_heartbeat", "close_sprint", "get_ticket_diff", "get_ticket_history", // 0.6 monitoring & history
+    "get_global_config", "set_global_config",                 // account-wide git defaults
     "list_contract_templates", "generate_contract",           // contracts
   ];
   await step(`tools/list exposes ${expect.length} expected tools (of ${names.size} total)`, async () => {
