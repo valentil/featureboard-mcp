@@ -220,6 +220,9 @@ const CORE_TOOLS = new Set([
   "get_ticket_diff", "add_review_comment", "list_review_comments", "resolve_review_comment",
   // knowledge base (FBMCPF-141)
   "add_kb_doc", "list_kb_docs", "search_kb", "get_kb_doc",
+  // FBMCPF-206: board.html also calls these — needed for the live monitor banner,
+  // global git-config panel, and sprint-report panel to work in core mode.
+  "get_agent_monitor", "get_global_config", "set_global_config", "get_sprint_report",
 ]);
 const TOOLSET = (process.env.FEATUREBOARD_TOOLS || "all").toLowerCase();
 const CORE_ONLY = TOOLSET === "core"

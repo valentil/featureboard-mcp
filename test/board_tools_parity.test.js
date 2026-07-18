@@ -93,6 +93,15 @@ function findRegisteredTools(src) {
   return names;
 }
 
+/** The CORE_TOOLS allowlist (FEATUREBOARD_TOOLS=core gate) parsed from server/index.js. */
+function findCoreTools(src) {
+  const start = src.indexOf("const CORE_TOOLS = new Set([");
+  const end = src.indexOf("]);", start);
+  if (start === -1 || end === -1) return new Set();
+  const block = src.slice(start, end);
+  return new Set([...block.matchAll(/"([a-zA-Z_][a-zA-Z0-9_]*)"/g)].map((m) => m[1]));
+}
+
 test("extractBoardToolNames sanity: parses a non-empty set of tool names from board.html", () => {
   const { names } = extractBoardToolNames(boardHtml);
   assert.ok(names.length > 0, "expected at least one call()'d tool name — parser may be broken");
@@ -137,5 +146,19 @@ test("get_board's advertised mcp_tools allowlist (server/index.js) is built from
     /function extractBoardToolNames\(html\)/,
     "expected server/index.js to derive get_board's mcp_tools allowlist from board.html at request time " +
       "(extractBoardToolNames) rather than from a static, hand-maintained tool list"
+  );
+});
+
+
+test("every tool board.html calls is in CORE_TOOLS (so the board UI works in FEATUREBOARD_TOOLS=core mode) — FBMCPF-206", () => {
+  const { names } = extractBoardToolNames(boardHtml);
+  const core = findCoreTools(serverSrc);
+  const missing = names.filter((name) => !core.has(name));
+  assert.deepEqual(
+    missing,
+    [],
+    `board.html calls tool(s) absent from CORE_TOOLS: ${missing.join(", ")} — in an Essential-tools-only ` +
+      "install (FEATUREBOARD_TOOLS=core) those tools aren't registered, so the board UI panels that call " +
+      "them break even though the derived allowlist advertises them. Add them to CORE_TOOLS in server/index.js."
   );
 });
