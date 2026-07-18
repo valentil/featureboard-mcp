@@ -1647,15 +1647,16 @@ server.registerTool(
   {
     title: "Map the codebase",
     description:
-      "Recursively map the project's codeLocation: total file count + bytes, counts by extension, and the files that exceed the split thresholds (lines/bytes) as split candidates (worst first) — useful for spotting oversized modules to decompose.",
+      "Recursively map the project's codeLocation: total file count + bytes, counts by extension, and the files that exceed the split thresholds (lines/bytes) as split candidates (worst first) — useful for spotting oversized modules to decompose. With symbols:true, also returns a per-file list of top-level exported functions/classes/consts for JS/TS files (regex-based, capped per file) — a lightweight symbol map for navigation.",
     inputSchema: {
       project: z.string(),
       splitLines: z.coerce.number().int().optional().default(400),
       splitBytes: z.coerce.number().int().optional().default(32768),
+      symbols: z.boolean().optional().default(false).describe("Also extract top-level exported symbols per JS/TS file."),
     },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
-  tryTool(({ project, splitLines, splitBytes }) => codeFileMap(codeRoot(project), { splitLines, splitBytes }))
+  tryTool(({ project, splitLines, splitBytes, symbols }) => codeFileMap(codeRoot(project), { splitLines, splitBytes, symbols }))
 );
 
 // analytics & metadata (v0.3) ----------------------------------------------

@@ -232,7 +232,7 @@
     },
     {
       "name": "code_file_map",
-      "description": "Recursively map the project's codeLocation: total file count + bytes, counts by extension, and the files that exceed the split thresholds (lines/bytes) as split candidates (worst first) — useful for spotting oversized modules to decompose."
+      "description": "Recursively map the project's codeLocation: total file count + bytes, counts by extension, and the files that exceed the split thresholds (lines/bytes) as split candidates (worst first) — useful for spotting oversized modules to decompose. With symbols:true, also returns a per-file list of top-level exported functions/classes/consts for JS/TS files (regex-based, capped per file) — a lightweight symbol map for navigation."
     },
     {
       "name": "get_metrics",

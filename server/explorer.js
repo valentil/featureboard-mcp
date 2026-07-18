@@ -22,6 +22,36 @@ const IGNORE_DIRS = new Set([
 const SPLIT_LINES = 400;
 const SPLIT_BYTES = 32 * 1024;
 
+// FBMCPF-203: symbol-level map. Regex-based (no AST dependency) extraction of a
+// file's top-level *exported* symbols, for the source languages we care about.
+const SYMBOL_EXTS = new Set([".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx"]);
+const MAX_SYMBOLS_PER_FILE = 100;
+
+/**
+ * Extract top-level exported symbols from JS/TS source via line-anchored regexes
+ * (no AST): `export [default] [async] function X`, `export class X`, and
+ * `export const|let|var X = ...` (marked "function" when the value is an arrow
+ * or function expression, else "const"). Returns [{ name, kind, line }] capped
+ * at maxSymbols. Pure — the caller decides which files to feed it.
+ */
+export function extractExportedSymbols(content, { maxSymbols = MAX_SYMBOLS_PER_FILE } = {}) {
+  const out = [];
+  const lines = String(content || "").split(/\r?\n/);
+  const re = /^\s*export\s+(?:default\s+)?(?:async\s+)?(function\*?|class|const|let|var)\s+([A-Za-z_$][\w$]*)/;
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(re);
+    if (!m) continue;
+    const kw = m[1];
+    let kind;
+    if (kw === "class") kind = "class";
+    else if (kw.startsWith("function")) kind = "function";
+    else kind = /=\s*(?:async\s+)?(?:function\b|\([^)]*\)\s*=>|[A-Za-z_$][\w$]*\s*=>)/.test(lines[i]) ? "function" : "const";
+    out.push({ name: m[2], kind, line: i + 1 });
+    if (out.length >= maxSymbols) break;
+  }
+  return out;
+}
+
 /** Resolve `rel` under `root`, throwing if it escapes the root. Returns abs path. */
 export function resolveWithin(root, rel = "") {
   const base = path.resolve(root);
@@ -118,7 +148,7 @@ export function readCodeFile(root, relPath, { maxBytes = 200 * 1024 } = {}) {
  * counts, plus the files that exceed the split thresholds (lines or bytes) as
  * split candidates — worst first — to feed decompose/refactor work.
  */
-export function codeFileMap(root, { maxDepth = 6, splitLines = SPLIT_LINES, splitBytes = SPLIT_BYTES } = {}) {
+export function codeFileMap(root, { maxDepth = 6, splitLines = SPLIT_LINES, splitBytes = SPLIT_BYTES, symbols = false, maxSymbolsPerFile = MAX_SYMBOLS_PER_FILE } = {}) {
   const base = path.resolve(root);
   const st = statSafe(base);
   if (!st || !st.isDirectory()) throw new Error(`codeLocation not found or not a directory: ${root}`);
@@ -127,6 +157,7 @@ export function codeFileMap(root, { maxDepth = 6, splitLines = SPLIT_LINES, spli
   let totalBytes = 0;
   const byExt = {};
   const candidates = [];
+  const symbolMap = {}; // FBMCPF-203: rel path -> exported symbols (when symbols:true)
 
   const walk = (abs, d) => {
     if (d < 0) return;
@@ -148,18 +179,24 @@ export function codeFileMap(root, { maxDepth = 6, splitLines = SPLIT_LINES, spli
         totalBytes += s.size;
         const ext = path.extname(e.name).toLowerCase() || "(none)";
         byExt[ext] = (byExt[ext] || 0) + 1;
-        // count lines cheaply for text-ish files under a sane cap
+        // count lines cheaply for text-ish files under a sane cap; reuse the
+        // same read for symbol extraction (FBMCPF-203) so we never read twice.
         let lines = null;
+        let text = null;
         if (s.size <= 2 * 1024 * 1024) {
           try {
             const buf = fs.readFileSync(fp);
-            if (!looksBinary(buf)) lines = buf.toString("utf8").split("\n").length;
+            if (!looksBinary(buf)) { text = buf.toString("utf8"); lines = text.split("\n").length; }
           } catch {
             /* ignore */
           }
         }
         if ((lines != null && lines >= splitLines) || s.size >= splitBytes) {
           candidates.push({ path: path.relative(base, fp), lines, sizeBytes: s.size });
+        }
+        if (symbols && text != null && SYMBOL_EXTS.has(path.extname(e.name).toLowerCase())) {
+          const syms = extractExportedSymbols(text, { maxSymbols: maxSymbolsPerFile });
+          if (syms.length) symbolMap[path.relative(base, fp)] = syms;
         }
       }
     }
@@ -174,5 +211,6 @@ export function codeFileMap(root, { maxDepth = 6, splitLines = SPLIT_LINES, spli
     byExt,
     splitThreshold: { lines: splitLines, bytes: splitBytes },
     splitCandidates: candidates,
+    ...(symbols ? { symbols: symbolMap, symbolFileCount: Object.keys(symbolMap).length } : {}),
   };
 }
