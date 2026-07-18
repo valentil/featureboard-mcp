@@ -239,6 +239,10 @@
       "description": "Read-only snapshot: feature/bug counts by status, completions by date, and velocity from the work log (tokens, additions/deletions, active days, recent tokens, and $ cost by model — see project config \"pricing\" to override the default Anthropic API rates)."
     },
     {
+      "name": "post_project_update",
+      "description": "Append a dated narrative status update (Linear-style) to the project's updates.md pad — a lightweight health check-in that lives between the heavier sprint close-out reports. Takes a health flag (on-track | at-risk | off-track) and a free-text narrative. The latest update (and a staleness hint when it's more than 7 days old) is surfaced on get_metrics and get_health."
+    },
+    {
       "name": "predict_due_dates",
       "description": "Estimate when open work will complete by dividing the backlog by the board's observed throughput (tickets closed per active day). Walks the priority-ordered queue to give each open ticket a projected completion date, suggests a due date for tickets that don't have one, and flags tickets whose existing due date is likely to slip. Read-only — apply a suggestion with update_task if you want it stuck."
     },

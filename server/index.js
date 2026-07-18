@@ -32,6 +32,7 @@ import { addDecision, listDecisions, decisionsForTicket } from "./decisions.js";
 import { writeHandoff } from "./handoffs.js";
 import { getTicketHistory, agentMonitorV2, appendEvent, getTimelineData, appendHeartbeat, completedAtForTask } from "./events.js";
 import { evaluateRules } from "./rules.js";
+import { postProjectUpdate, getLatestUpdate, UPDATE_HEALTH } from "./updates.js";
 import { getPricing, rollupCost } from "./pricing.js";
 import { addKbDoc, listKbDocs, getKbDoc, searchKb } from "./kb.js";
 import {
@@ -1677,6 +1678,9 @@ server.registerTool(
     // FBMCPF-157: cost rollup by model, using project-config-overridable pricing.
     const pricing = getPricing(board, project);
     const costRollup = rollupCost(entries, pricing);
+    // FBMCPF-199: surface the latest narrative project update (+ staleness hint).
+    let projectUpdate = null;
+    try { projectUpdate = getLatestUpdate(board, project); } catch { projectUpdate = null; }
     return {
       ...base,
       ...(sp.sprints.length ? { sprints: sp.sprints, backlogOpen: sp.backlogOpen } : {}),
@@ -1688,7 +1692,28 @@ server.registerTool(
         byModel: costRollup.byModel,
         totalCost: costRollup.totalCost,
       },
+      ...(projectUpdate && projectUpdate.latest ? { projectUpdate } : {}),
     };
+  })
+);
+
+server.registerTool(
+  "post_project_update",
+  {
+    title: "Post project update",
+    description:
+      "Append a dated narrative status update (Linear-style) to the project's updates.md pad — a lightweight health check-in that lives between the heavier sprint close-out reports. Takes a health flag (on-track | at-risk | off-track) and a free-text narrative. The latest update (and a staleness hint when it's more than 7 days old) is surfaced on get_metrics and get_health.",
+    inputSchema: {
+      project: z.string(),
+      health: z.enum(["on-track", "at-risk", "off-track"]),
+      narrative: z.string().describe("Free-text status narrative for this update."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  writeTool(({ project, health, narrative }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return postProjectUpdate(board, project, { health, narrative });
   })
 );
 
@@ -2203,6 +2228,11 @@ server.registerTool(
       const churn = reconcileChurn(board, project, { allowGit: false });
       health.churnAccuracy = churn.totals.churnAccuracy;
     } catch { /* churn reconciliation is best-effort on the health path */ }
+    // FBMCPF-199: surface the latest narrative project update (+ staleness hint).
+    try {
+      const pu = getLatestUpdate(board, project);
+      if (pu && pu.latest) health.projectUpdate = pu;
+    } catch { /* project-update surfacing is best-effort */ }
     return health;
   })
 );
