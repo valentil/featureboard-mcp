@@ -31,6 +31,7 @@ import { registerEmail } from "./registration.js";
 import { addDecision, listDecisions, decisionsForTicket } from "./decisions.js";
 import { writeHandoff } from "./handoffs.js";
 import { getTicketHistory, agentMonitorV2, appendEvent, getTimelineData, appendHeartbeat, completedAtForTask } from "./events.js";
+import { evaluateRules } from "./rules.js";
 import { getPricing, rollupCost } from "./pricing.js";
 import { addKbDoc, listKbDocs, getKbDoc, searchKb } from "./kb.js";
 import {
@@ -492,7 +493,17 @@ server.registerTool(
     inputSchema: addFields,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
-  writeTool(({ project, ...f }) => getBoard().addTask(project, "feature", withOrchestrationLabels("feature", f)))
+  writeTool(({ project, ...f }) => {
+    const board = getBoard();
+    const created = board.addTask(project, "feature", withOrchestrationLabels("feature", f));
+    // FBMCPF-196: fire ticket-created automation rules (best-effort).
+    const auto = evaluateRules(board, project, { trigger: "ticket-created", ticket: created.ticketNumber }, { notify: (text) => notifySlack(board, project, { text, event: "summary" }) });
+    if (!auto.applied.length && !auto.warnings.length) return created;
+    const view = fullView(board.getTask(project, created.ticketNumber));
+    if (auto.applied.length) view.automations = auto.applied;
+    if (auto.warnings.length) view.warnings = auto.warnings;
+    return view;
+  })
 );
 
 server.registerTool(
@@ -503,7 +514,17 @@ server.registerTool(
     inputSchema: addFields,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
-  writeTool(({ project, ...f }) => getBoard().addTask(project, "bug", withOrchestrationLabels("bug", f)))
+  writeTool(({ project, ...f }) => {
+    const board = getBoard();
+    const created = board.addTask(project, "bug", withOrchestrationLabels("bug", f));
+    // FBMCPF-196: fire ticket-created automation rules (best-effort).
+    const auto = evaluateRules(board, project, { trigger: "ticket-created", ticket: created.ticketNumber }, { notify: (text) => notifySlack(board, project, { text, event: "summary" }) });
+    if (!auto.applied.length && !auto.warnings.length) return created;
+    const view = fullView(board.getTask(project, created.ticketNumber));
+    if (auto.applied.length) view.automations = auto.applied;
+    if (auto.warnings.length) view.warnings = auto.warnings;
+    return view;
+  })
 );
 
 server.registerTool(
@@ -892,7 +913,16 @@ server.registerTool(
     } else {
       rollover = { mode: "review", ...planRollover(board, project, sprint, { nextSprint: nextSprint || null }) };
     }
-    return { ...result, rollover };
+    // FBMCPF-196: fire sprint-closed automation rules for each ticket in the sprint.
+    const automations = [];
+    for (const t of board.listTasks(project, {})) {
+      if ((sprintOfTask(t) || "").toLowerCase() !== String(sprint).toLowerCase()) continue;
+      const auto = evaluateRules(board, project, { trigger: "sprint-closed", ticket: t.ticketNumber }, { notify });
+      if (auto.applied.length) automations.push({ ticket: t.ticketNumber, applied: auto.applied });
+    }
+    const out = { ...result, rollover };
+    if (automations.length) out.automations = automations;
+    return out;
   })
 );
 
@@ -1382,6 +1412,10 @@ server.registerTool(
         "Closed without a completionSummary — pass one so the board records what was done. Also consider log_work with additions/deletions.";
       result.warning = result.warning ? `${result.warning}; ${w}` : w;
     }
+    // FBMCPF-196: fire status-change automation rules (best-effort).
+    const auto = evaluateRules(board, project, { trigger: "status-change", ticket, to: status }, { notify: (text) => notifySlack(board, project, { text, event: "summary" }) });
+    if (auto.applied.length) result.automations = auto.applied;
+    if (auto.warnings.length) result.warning = result.warning ? `${result.warning}; ${auto.warnings.join("; ")}` : auto.warnings.join("; ");
     return result;
   })
 );
