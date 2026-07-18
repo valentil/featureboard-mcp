@@ -7,9 +7,11 @@ import { spawnSync } from "node:child_process";
 import {
   getGitConfig, setGitConfig, commitMessage, buildCommitPlan, commitFeature,
   mirrorGraduatedPad, captureCommitInfo, GIT_CONFIG_FILE, DEFAULT_GIT_CONFIG,
+  parseClosingRefs, autoStatusFromCommit,
 } from "../server/git.js";
 import { setProjectConfig } from "../server/metadata.js";
 import { recordedCommitsForTicket } from "../server/events.js";
+import { Board } from "../server/storage.js";
 
 // FBMCPF-65 — configurable per-project git integration
 
@@ -307,4 +309,69 @@ test("commitFeature: a failing commit-info capture never fails the commit result
   const r = commitFeature(board, "P", { ticket: "T", title: "x" }, { cwd: "/repo", exec });
   assert.equal(r.committed, true);
   assert.equal(r.commit, undefined);
+});
+
+
+// FBMCPF-200 — auto-status-on-commit (GitHub-style "closes FBB-12").
+
+function realBoard() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fbgit-real-"));
+  fs.mkdirSync(path.join(dir, "Proj"));
+  fs.writeFileSync(path.join(dir, "Proj", "featurelist.md"), "# Feature List\n");
+  fs.writeFileSync(path.join(dir, "Proj", "buglist.md"), "# Bug List\n");
+  return new Board(dir);
+}
+
+// exec that satisfies commitFeature's add/commit + FBMCPF-188 enrichment calls
+function okExec() {
+  return (args) => {
+    if (args[0] === "rev-parse" && args[1] === "HEAD") return { status: 0, stdout: "abcdef1234567890\n", stderr: "" };
+    if (args[0] === "rev-parse") return { status: 0, stdout: "", stderr: "" }; // parent exists
+    if (args[0] === "diff") return { status: 0, stdout: "", stderr: "" };
+    return { status: 0, stdout: "", stderr: "" }; // add / commit
+  };
+}
+
+test("parseClosingRefs picks up closes/fixes/resolves + ticket id, deduped", () => {
+  const refs = parseClosingRefs("FBF-9: work; closes FBB-1, fixes FBF-2. resolves FBB-1 again");
+  assert.deepEqual(refs.map((r) => r.ticket), ["FBB-1", "FBF-2"]);
+  assert.equal(refs[0].keyword, "closes");
+  assert.deepEqual(parseClosingRefs("no keywords here FBB-9"), []);
+});
+
+test("autoStatusFromCommit moves a referenced ticket to Done (same project only)", () => {
+  const b = realBoard();
+  const t = b.addTask("Proj", "bug", { title: "bug to close" });
+  const applied = autoStatusFromCommit(b, "Proj", `work; closes ${t.ticketNumber}`);
+  assert.deepEqual(applied, [{ ticket: t.ticketNumber, keyword: "closes", status: "Done" }]);
+  assert.equal(b.getTask("Proj", t.ticketNumber).status, "Done");
+  // an id that isn't on the board is ignored
+  assert.deepEqual(autoStatusFromCommit(b, "Proj", "fixes FBB-999"), []);
+});
+
+test("autoStatusFromCommit respects requireReview: closes -> Review, not Done", () => {
+  const b = realBoard();
+  setProjectConfig(b, "Proj", { requireReview: true });
+  const t = b.addTask("Proj", "feature", { title: "gated" });
+  const applied = autoStatusFromCommit(b, "Proj", `resolves ${t.ticketNumber}`);
+  assert.equal(applied[0].status, "Review");
+  assert.equal(b.getTask("Proj", t.ticketNumber).status, "Review");
+});
+
+test("commitFeature applies auto-status only when the autoStatusOnCommit config is on", () => {
+  const b = realBoard();
+  setGitConfig(b, "Proj", { enabled: true });
+  const t = b.addTask("Proj", "bug", { title: "closed via commit" });
+
+  // off by default: no status change
+  const off = commitFeature(b, "Proj", { ticket: "FBF-100", title: "x", message: `x; closes ${t.ticketNumber}` }, { cwd: "/repo", exec: okExec() });
+  assert.equal(off.committed, true);
+  assert.equal(off.autoStatus, undefined);
+  assert.equal(b.getTask("Proj", t.ticketNumber).status, "Todo");
+
+  // enable and retry
+  setProjectConfig(b, "Proj", { autoStatusOnCommit: true });
+  const on = commitFeature(b, "Proj", { ticket: "FBF-101", title: "x", message: `x; closes ${t.ticketNumber}` }, { cwd: "/repo", exec: okExec() });
+  assert.ok(on.autoStatus && on.autoStatus.some((a) => a.ticket === t.ticketNumber && a.status === "Done"));
+  assert.equal(b.getTask("Proj", t.ticketNumber).status, "Done");
 });

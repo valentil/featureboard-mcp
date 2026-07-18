@@ -445,6 +445,61 @@ export function mirrorGraduatedPad(board, project, targets) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// FBMCPF-200: auto-status-on-commit — GitHub-style "closes FBB-12" keywords.
+// ---------------------------------------------------------------------------
+
+// Conservative: a closing keyword immediately followed by a FeatureBoard-shaped
+// ticket id. Matches closes/fixes/resolves (case-insensitive); the ticket must
+// still exist on THIS project (validated by the caller via board.getTask), so a
+// stray id in prose can't move an unrelated ticket.
+const CLOSING_RE = /\b(clos(?:e|es|ed)|fix(?:es|ed)?|resolv(?:e|es|ed))\s+([A-Z][A-Z0-9]*-\d+)\b/gi;
+
+/** Parse closing references out of a commit message: [{ keyword, ticket }], deduped by ticket. */
+export function parseClosingRefs(message) {
+  const re = new RegExp(CLOSING_RE.source, "gi");
+  const seen = new Set();
+  const out = [];
+  let m;
+  while ((m = re.exec(String(message || "")))) {
+    const ticket = m[2].toUpperCase();
+    if (seen.has(ticket)) continue;
+    seen.add(ticket);
+    out.push({ keyword: m[1].toLowerCase(), ticket });
+  }
+  return out;
+}
+
+/**
+ * Apply auto-status transitions for a commit message's closing refs. For each
+ * referenced ticket that exists on the project and isn't already at its target,
+ * move it to Done — or, when requireReview is on for the project, to Review
+ * instead (silently, respecting the gate). Returns the applied transitions.
+ * Never throws — a bad ref can't break the commit that already landed.
+ */
+export function autoStatusFromCommit(board, project, message) {
+  const refs = parseClosingRefs(message);
+  if (!refs.length) return [];
+  let requireReview = false;
+  try { requireReview = !!(getProjectConfig(board, project) || {}).requireReview; } catch { requireReview = false; }
+  const applied = [];
+  for (const { ticket, keyword } of refs) {
+    try {
+      const t = board.getTask(project, ticket);
+      if (!t) continue; // not on this project
+      if (t.status === "Done") continue;
+      const target = requireReview ? "Review" : "Done";
+      if (t.status === target) continue;
+      const summary = target === "Done" ? `Auto-closed by commit (${keyword} ${ticket})` : `Auto-moved to Review by commit (${keyword} ${ticket})`;
+      board.setStatus(project, ticket, target, summary, { source: "auto_status_on_commit" });
+      applied.push({ ticket, keyword, status: target });
+    } catch {
+      // one bad ref must never break the commit result
+    }
+  }
+  return applied;
+}
+
 /**
  * Run the commit (and optional push) for a ticket in the repo at `cwd`. No-ops with
  * a clear reason when git integration is disabled for the project. Stops at the
@@ -544,6 +599,19 @@ export function commitFeature(board, project, opts = {}, { exec = defaultExec, c
     }
   } catch {
     // commit-info capture is best-effort — the commit itself already succeeded
+  }
+
+  // FBMCPF-200: opt-in auto-status-on-commit. Runs BEFORE the pad commit below
+  // so any status change rides along in the same board-markdown commit. Gated
+  // on the autoStatusOnCommit config key; best-effort (never fails the commit).
+  try {
+    const cfg = getProjectConfig(board, project);
+    if (cfg && cfg.autoStatusOnCommit) {
+      const autoStatus = autoStatusFromCommit(board, project, plan.message);
+      if (autoStatus.length) out.autoStatus = autoStatus;
+    }
+  } catch {
+    // auto-status is best-effort — never undo a commit that already landed
   }
 
   if (!padMirror.skipped) {
