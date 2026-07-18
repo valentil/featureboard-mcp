@@ -42,7 +42,7 @@ import {
   addComment, listComments, removeComment,
 } from "./media.js";
 import { startDriftRun, recordDriftScore, driftReport, applyDriftRemediation } from "./drift.js";
-import { scanBoardCleanup, pruneBoard, scanTestFiles } from "./cleanup.js";
+import { scanBoardCleanup, pruneBoard, scanTestFiles, dismissCleanupFinding } from "./cleanup.js";
 import { listCodeTree, readCodeFile, codeFileMap } from "./explorer.js";
 import { saveTestPage, listTestPages, getTestPage, removeTestPage } from "./testpages.js";
 import { groupBySuite, coverageByProduct, generateMultiModelTests, saveGeneratedTests, listVariants } from "./testing.js";
@@ -1599,6 +1599,22 @@ server.registerTool(
     if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
     return pruneBoard(board, project, tickets, { confirm });
   })
+);
+
+server.registerTool(
+  "dismiss_cleanup_finding",
+  {
+    title: "Dismiss a cleanup finding",
+    description:
+      "Suppress a scan_board_cleanup finding from future scans WITHOUT deleting anything — for false positives or findings you've consciously accepted. Pass the finding's stable `id` (shown on each duplicate/stale/unlabeled/SLA finding) and an optional reason. Dismissals are append-only; future scans hide the finding and report dismissedCount. The id is a hash of the finding's type+ticket, so it keeps matching across rescans until that ticket changes category.",
+    inputSchema: {
+      project: z.string(),
+      findingId: z.string().describe("The stable `id` from a scan_board_cleanup finding."),
+      reason: z.string().optional().describe("Why this finding is being dismissed."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  writeTool(({ project, findingId, reason }) => dismissCleanupFinding(getBoard(), project, { findingId, reason }))
 );
 
 /* ---------- code file explorer over codeLocation (FBMCPF-82) ---------- */

@@ -10,6 +10,9 @@
  * are exported for unit testing; scanBoardCleanup/pruneBoard take a Board.
  */
 
+import fs from "node:fs";
+import path from "node:path";
+import crypto from "node:crypto";
 import { findUnlabeledTickets } from "./orchestration.js";
 import { readWorkLog, getProjectConfig } from "./metadata.js";
 
@@ -204,6 +207,53 @@ export function findSlaBreaches(tasks, { slaThresholds = DEFAULT_SLA_THRESHOLDS,
   return out.sort((a, b) => (b.ageDays || 0) - (a.ageDays || 0));
 }
 
+// ---------------------------------------------------------------------------
+// FBMCPF-204: dismiss cleanup findings without deleting anything.
+//
+// A finding can otherwise only be acted on (prune) or ignored forever, so it
+// keeps reappearing every scan. Dismissals are recorded in an append-only jsonl
+// sidecar and suppress a finding on future scans. Finding ids are STABLE — a
+// short hash of type+ticket — so the same finding stays dismissed across
+// rescans (until the ticket changes category and produces a different finding).
+// ---------------------------------------------------------------------------
+
+const DISMISSALS_FILE = ".featureboard.cleanup_dismissals.jsonl";
+
+/** Stable id for a finding: short sha1 of "<type>:<ticket>". */
+export function findingId(type, ticket) {
+  return crypto.createHash("sha1").update(`${type}:${ticket || ""}`).digest("hex").slice(0, 12);
+}
+
+function dismissalsPath(board, project) {
+  return path.join(board.projectDir(project), DISMISSALS_FILE);
+}
+
+/** Map of dismissed finding id -> record. Tolerates a missing/corrupt file. */
+export function readDismissals(board, project) {
+  const map = new Map();
+  let content = null;
+  try { content = fs.readFileSync(dismissalsPath(board, project), "utf8"); } catch { content = null; }
+  if (!content) return map;
+  for (const line of content.split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t) continue;
+    try { const rec = JSON.parse(t); if (rec && rec.id) map.set(rec.id, rec); } catch { /* skip bad line */ }
+  }
+  return map;
+}
+
+/** Record a dismissal (append-only). Returns the stored record. */
+export function dismissCleanupFinding(board, project, { findingId: id, reason } = {}) {
+  if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+  const fid = String(id || "").trim();
+  if (!fid) throw new Error("findingId is required (copy it from a scan_board_cleanup finding's id).");
+  const rec = { id: fid, reason: reason ? String(reason) : null, date: new Date().toISOString() };
+  const p = dismissalsPath(board, project);
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  fs.appendFileSync(p, JSON.stringify(rec) + "\n", "utf8");
+  return { ...rec, project };
+}
+
 /**
  * Read-only scan: duplicate groups + stale/placeholder tickets, plus a suggested
  * removal set (the duplicate removal-candidates) for a follow-up pruneBoard call.
@@ -227,18 +277,38 @@ export function scanBoardCleanup(board, project, { staleDays = 30, similarity = 
   try { slaCfg = (getProjectConfig(board, project) || {}).slaThresholds || {}; } catch { slaCfg = {}; }
   const slaThresholds = resolveSlaThresholds(slaCfg);
   const slaBreaches = findSlaBreaches(tasks, { slaThresholds, lastActivity, now });
-  const suggestedRemovals = duplicates.flatMap((g) => g.removeCandidates.map((c) => c.ticket));
+
+  // FBMCPF-204: annotate every finding with its stable id and drop the ones the
+  // user has dismissed; dismissedCount reports how many were suppressed.
+  const dismissed = readDismissals(board, project);
+  let dismissedCount = 0;
+  const annotateKeep = (type, items, ticketOf) => {
+    const kept = [];
+    for (const it of items) {
+      const id = findingId(type, ticketOf(it));
+      if (dismissed.has(id)) { dismissedCount += 1; continue; }
+      kept.push({ ...it, id });
+    }
+    return kept;
+  };
+  const keptDuplicates = annotateKeep("duplicate", duplicates, (g) => g.keep.ticket);
+  const keptStale = annotateKeep("stale", stale, (x) => x.ticket);
+  const keptUnlabeled = annotateKeep("unlabeled", unlabeled, (x) => x.ticket);
+  const keptSla = annotateKeep("sla", slaBreaches, (x) => x.ticket);
+
+  const suggestedRemovals = keptDuplicates.flatMap((g) => g.removeCandidates.map((c) => c.ticket));
   return {
     project,
     total: tasks.length,
-    duplicateGroups: duplicates.length,
-    duplicates,
-    staleCount: stale.length,
-    stale,
-    unlabeledCount: unlabeled.length,
-    unlabeled,
-    slaBreachCount: slaBreaches.length,
-    slaBreaches,
+    duplicateGroups: keptDuplicates.length,
+    duplicates: keptDuplicates,
+    staleCount: keptStale.length,
+    stale: keptStale,
+    unlabeledCount: keptUnlabeled.length,
+    unlabeled: keptUnlabeled,
+    slaBreachCount: keptSla.length,
+    slaBreaches: keptSla,
+    dismissedCount,
     suggestedRemovals,
     note: suggestedRemovals.length
       ? `Review the groups, then prune_board with the ticket ids to remove (dry run by default; pass confirm:true to delete).`
