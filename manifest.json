@@ -212,7 +212,7 @@
     },
     {
       "name": "scan_board_cleanup",
-      "description": "Read-only deep-clean scan: finds likely-duplicate tickets (grouped by title similarity, each group nominating a keeper + removal candidates), stale/placeholder tickets (old Todo items, placeholder titles), and open tickets missing a model:/cap: label (FBMCPF-159 intake orchestration guard — nothing should sit in the queue without a sub-model orchestration decision). Returns a suggested removal set to feed prune_board. Never deletes."
+      "description": "Read-only deep-clean scan: finds likely-duplicate tickets (grouped by title similarity, each group nominating a keeper + removal candidates), stale/placeholder tickets (old Todo items, placeholder titles), open tickets missing a model:/cap: label (FBMCPF-159 intake orchestration guard — nothing should sit in the queue without a sub-model orchestration decision), and priority-scaled SLA breaches (FBMCPF-198: high-priority tickets stuck In Progress with no recent work-log activity → 'escalate'; tickets languishing in Todo → 'stale'; per-priority thresholds overridable via the slaThresholds config key). Returns a suggested removal set to feed prune_board. Never deletes — a good fit for a recurring Cowork scheduled task that surfaces breaches each morning."
     },
     {
       "name": "scan_test_cleanup",

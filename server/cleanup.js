@@ -11,6 +11,7 @@
  */
 
 import { findUnlabeledTickets } from "./orchestration.js";
+import { readWorkLog, getProjectConfig } from "./metadata.js";
 
 const STOPWORDS = new Set(["the", "a", "an", "to", "for", "of", "and", "or", "in", "on", "with", "add", "support"]);
 const PLACEHOLDER_RE = /^(test|todo|tbd|tba|asdf|qwer|xxx+|placeholder|untitled|foo|bar|temp|delete ?me|wip)\b/i;
@@ -134,6 +135,75 @@ export function findStale(tasks, { staleDays = 30, now = new Date() } = {}) {
   return out.sort((a, b) => (b.ageDays || 0) - (a.ageDays || 0));
 }
 
+// ---------------------------------------------------------------------------
+// FBMCPF-198: priority-scaled SLA / stale escalation.
+//
+// Beyond the generic "old Todo / placeholder" staleness above, these are
+// priority-aware service-level checks: a high-priority ticket sitting In
+// Progress with no recent work-log activity, or a ticket languishing in Todo,
+// breaches its SLA sooner the higher its priority. Thresholds are per-priority
+// (keyed by the numeric priority; `default` covers unprioritized/other values)
+// and overridable per project via the slaThresholds config key. Pure: callers
+// pass the current time and a ticket->last-activity-date map so it stays
+// deterministic and testable.
+// ---------------------------------------------------------------------------
+
+export const DEFAULT_SLA_THRESHOLDS = {
+  // days In Progress with no work-log activity before we escalate
+  inProgressDays: { 0: 1, 1: 1, 2: 3, 3: 5, default: 7 },
+  // days sitting in Todo before we call it stale
+  todoDays: { 0: 1, 1: 3, 2: 7, 3: 14, default: 30 },
+};
+
+/** Merge a project's slaThresholds config over the defaults (per-map shallow merge). */
+export function resolveSlaThresholds(cfg) {
+  const c = cfg && typeof cfg === "object" ? cfg : {};
+  return {
+    inProgressDays: { ...DEFAULT_SLA_THRESHOLDS.inProgressDays, ...(c.inProgressDays || {}) },
+    todoDays: { ...DEFAULT_SLA_THRESHOLDS.todoDays, ...(c.todoDays || {}) },
+  };
+}
+
+function thresholdFor(map, priority) {
+  if (!map) return null;
+  if (priority != null && map[priority] != null) return Number(map[priority]);
+  return map.default != null ? Number(map.default) : null;
+}
+
+/**
+ * Flag SLA breaches among open tickets. In Progress tickets breach when the days
+ * since their last activity (last work-log date, else createdDate) reach their
+ * priority's inProgressDays threshold (severity "escalate"). Todo tickets breach
+ * when their age reaches todoDays (severity "stale"). Done/Review are ignored.
+ * `lastActivity` maps ticketNumber -> YYYY-MM-DD of last work-log event.
+ */
+export function findSlaBreaches(tasks, { slaThresholds = DEFAULT_SLA_THRESHOLDS, lastActivity = {}, now = new Date() } = {}) {
+  const ip = slaThresholds.inProgressDays || DEFAULT_SLA_THRESHOLDS.inProgressDays;
+  const td = slaThresholds.todoDays || DEFAULT_SLA_THRESHOLDS.todoDays;
+  const out = [];
+  for (const t of tasks) {
+    const priority = t.priority != null ? t.priority : null;
+    const plabel = priority != null ? `P${priority}` : "unprioritized";
+    if (t.status === "In Progress") {
+      const thr = thresholdFor(ip, priority);
+      if (thr == null) continue;
+      const last = lastActivity[t.ticketNumber] || t.createdDate || null;
+      const age = ageDays(last, now);
+      if (age != null && age >= thr) {
+        out.push({ ticket: t.ticketNumber, title: t.title, status: t.status, priority, ageDays: age, threshold: thr, severity: "escalate", reason: `In Progress ${age}d with no activity (SLA ${thr}d for ${plabel})` });
+      }
+    } else if (t.status === "Todo") {
+      const thr = thresholdFor(td, priority);
+      if (thr == null) continue;
+      const age = ageDays(t.createdDate, now);
+      if (age != null && age >= thr) {
+        out.push({ ticket: t.ticketNumber, title: t.title, status: t.status, priority, ageDays: age, threshold: thr, severity: "stale", reason: `Todo ${age}d (SLA ${thr}d for ${plabel})` });
+      }
+    }
+  }
+  return out.sort((a, b) => (b.ageDays || 0) - (a.ageDays || 0));
+}
+
 /**
  * Read-only scan: duplicate groups + stale/placeholder tickets, plus a suggested
  * removal set (the duplicate removal-candidates) for a follow-up pruneBoard call.
@@ -147,6 +217,16 @@ export function scanBoardCleanup(board, project, { staleDays = 30, similarity = 
   // label never got a sub-model orchestration decision at intake. Surfaced here
   // (read-only, same as duplicates/stale) rather than as a separate tool.
   const unlabeled = findUnlabeledTickets(tasks);
+  // FBMCPF-198: priority-scaled SLA breaches. Last-activity per ticket comes from
+  // the work log (latest entry date); slaThresholds is project-overridable.
+  const lastActivity = {};
+  for (const e of readWorkLog(board, project)) {
+    if (e.ticket && e.date) lastActivity[e.ticket] = e.date; // log is oldest-first, so last wins
+  }
+  let slaCfg = {};
+  try { slaCfg = (getProjectConfig(board, project) || {}).slaThresholds || {}; } catch { slaCfg = {}; }
+  const slaThresholds = resolveSlaThresholds(slaCfg);
+  const slaBreaches = findSlaBreaches(tasks, { slaThresholds, lastActivity, now });
   const suggestedRemovals = duplicates.flatMap((g) => g.removeCandidates.map((c) => c.ticket));
   return {
     project,
@@ -157,6 +237,8 @@ export function scanBoardCleanup(board, project, { staleDays = 30, similarity = 
     stale,
     unlabeledCount: unlabeled.length,
     unlabeled,
+    slaBreachCount: slaBreaches.length,
+    slaBreaches,
     suggestedRemovals,
     note: suggestedRemovals.length
       ? `Review the groups, then prune_board with the ticket ids to remove (dry run by default; pass confirm:true to delete).`
