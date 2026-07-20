@@ -302,6 +302,16 @@
   html[data-theme="dark"] .showmore { background: #34332e; color: #e0876a; }
   html[data-theme="dark"] .card.dragging { opacity: .5; }
   html[data-theme="dark"] .col.over { outline-color: #d97757; background: #33322c; }
+  /* FBMCPF-251: subtle "working" indicator for In Progress cards — pulse dot +
+     a faint accent border, reusing the amber already used elsewhere for an
+     "in flight"/medium state (badge.trial, chip.eff-medium) rather than a new color. */
+  .card.inprogress { border-color: #f0d28a; box-shadow: 0 1px 2px rgba(20,30,60,.04), inset 0 0 0 1px rgba(161,92,0,.14); }
+  html[data-theme="dark"] .card.inprogress { border-color: #4a3a1e; box-shadow: inset 0 0 0 1px rgba(224,197,138,.16); }
+  .pulseDot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #a15c00; margin-left: 6px; vertical-align: middle; animation: fbPulse 1.6s ease-in-out infinite; }
+  html[data-theme="dark"] .pulseDot { background: #e0c58a; }
+  @keyframes fbPulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .35; transform: scale(.8); } }
+  @media (prefers-reduced-motion: reduce) { .pulseDot { animation: none; } }
+  #progressStrip .pulseDot { margin-left: 0; margin-right: 5px; }
 </style>
 </head>
 <body>
@@ -317,6 +327,7 @@
   <select id="sprintFilter" title="Filter by sprint"><option value="">All sprints</option></select>
   <div class="spacer"></div>
   <div class="metrics" id="metrics"></div>
+  <span class="metrics" id="progressStrip" title="In-progress tickets and most recent work-log activity"></span>
   <span class="badge" id="healthBadge" style="display:none"></span>
   <span class="badge lic" id="licBadge" style="display:none"></span>
   <button id="themeBtn" class="ghost" title="Toggle dark mode">🌙</button>
@@ -351,6 +362,7 @@
   <button class="ghost" id="prioBtn" title="Auto-prioritize Todo by due date">⚡ Prioritize</button>
   <button class="ghost" id="notesBtn" title="Project scratchpad">📝 Notes</button>
   <button class="ghost" id="settingsBtn" title="Board settings">⚙ Settings</button>
+  <button class="ghost" id="reportBugBtn" title="Report a bug in this board UI">🐞 Report bug</button>
   <button id="addBtn">+ Add task</button>
 </div>
 <div id="content"><div class="loading">Loading board…</div></div>
@@ -360,6 +372,9 @@
 
 <script>
 const FB = "mcp__FeatureBoard__";
+// FBMCPF-253: mirrors package.json's "version" — bump alongside a release.
+// Sent as best-effort context on bug reports; the worker re-validates/caps it.
+const BOARD_VERSION = "0.6.2";
 const $ = (s) => document.querySelector(s);
 const store = {
   get: (k, d) => { try { return JSON.parse(localStorage.getItem("fb_"+k)) ?? d; } catch { return d; } },
@@ -401,6 +416,46 @@ function toast(msg) {
   const t = $("#toast"); t.textContent = msg; t.classList.add("show");
   clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove("show"), 3200);
 }
+
+/* ---------- composer draft persistence (FBMCPB-25) ----------
+   An outside click on the overlay used to discard whatever the user had typed
+   into a free-text composer (Add task, Brainstorm, Decompose, Import, Report
+   bug) — the modal's innerHTML is thrown away and nothing was persisted.
+   Composers below autosave to localStorage (per board + composer name) as the
+   user types, restore on reopen, and only clear on a successful submit or an
+   explicit Cancel/Esc. An outside click just hides the overlay (closeModal())
+   — the draft is left in place for next time. */
+let activeComposer = null; // name of the currently open draft-backed composer, or null
+function draftKey(name) { return "draft_" + name + "_" + (state.board || "_"); }
+function saveDraft(name, data) { store.set(draftKey(name), data); }
+function loadDraft(name) { return store.get(draftKey(name), null); }
+function clearDraft(name) { store.set(draftKey(name), null); }
+// Wire autosave + restore for a set of field ids inside the just-shown modal.
+function bindDraft(name, fieldIds) {
+  activeComposer = name;
+  const draft = loadDraft(name) || {};
+  fieldIds.forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (draft[id] != null) { if (el.type === "checkbox") el.checked = !!draft[id]; else el.value = draft[id]; }
+    const persist = () => {
+      const cur = loadDraft(name) || {};
+      cur[id] = el.type === "checkbox" ? el.checked : el.value;
+      saveDraft(name, cur);
+    };
+    el.addEventListener("input", persist);
+    el.addEventListener("change", persist);
+  });
+}
+// Explicit discard — the Cancel button or Esc key on a draft-backed composer.
+function cancelComposer() {
+  if (activeComposer) clearDraft(activeComposer);
+  closeModal();
+}
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape" || !$("#overlay").classList.contains("show")) return;
+  if (activeComposer) cancelComposer(); else closeModal();
+});
 
 function normalize(t) {
   const ticket = t.ticket || t.ticketNumber || "";
@@ -537,12 +592,16 @@ async function refresh(silent) {
     state.monitor = monitor;
     applyBranding(cfg);
     renderMetrics(metrics);
+    renderProgressStrip();
     renderHealth(health);
     renderStallBanner(monitor);
     renderLiveBanner(monitor);
     populateProducts(tasks);
     populateSprints(tasks);
     renderBoard(state.tasks);
+    // FBMCPF-252: seed the poll fingerprint from the metrics this refresh already
+    // fetched, so pollForChanges() has a correct baseline without another call.
+    _lastFingerprint = fingerprintOf(metrics, tasks.length);
   } finally { _refreshing = false; }
 }
 
@@ -980,9 +1039,9 @@ function renderBudget(budget, multiplier) {
     burnup + cut + overCapHtml + dayRows + rows;
 }
 
-// Auto-refresh: on tab/window focus regain and a gentle background poll, so the
-// board reflects changes made elsewhere without manually switching projects.
-// Skips while a modal is open or a drag is in progress; silent = no loading flash.
+// Auto-refresh: on tab/window focus regain, so the board reflects changes made
+// elsewhere without manually switching projects. Skips while a modal/composer
+// is open or a drag is in progress, so an in-flight edit is never clobbered.
 function autoRefresh() {
   if (document.visibilityState !== "visible") return;
   if ($("#overlay").classList.contains("show") || dragTicket) return;
@@ -991,7 +1050,45 @@ function autoRefresh() {
 }
 document.addEventListener("visibilitychange", autoRefresh);
 window.addEventListener("focus", autoRefresh);
-setInterval(autoRefresh, 30000);
+
+// FBMCPF-252: poll every POLL_INTERVAL_MS for a cheap change fingerprint
+// (get_metrics — already one of the calls refresh() makes) instead of blindly
+// re-running the full refresh() (list_tasks + get_metrics + get_health +
+// get_project_config + get_work_log + get_agent_monitor) on a timer. Only
+// triggers a full refresh() when the fingerprint actually changes. Same
+// pause conditions as autoRefresh(): no modal/composer open, no drag in
+// progress — so a draft with unsaved text or a mid-drag card is never
+// disturbed by a re-render.
+// NOTE: Cowork's callMcpTool caches read-tool responses transparently within
+// a session. If get_metrics keeps returning an identical cached payload here
+// even after the underlying board data changed server-side, the fingerprint
+// will look unchanged and this poll won't notice until the user hits the
+// host chrome's Reload button (which resets the artifact + its call cache).
+// POLL_INTERVAL_MS/POLL_ENABLED are consts so this is easy to tune or disable
+// if that turns out to be the case in practice.
+const POLL_INTERVAL_MS = 12000;
+const POLL_ENABLED = true;
+let _lastFingerprint = null;
+function fingerprintOf(m, tasksCount) {
+  if (!m) return null;
+  return [
+    m.features && m.features.total, m.features && m.features.done,
+    m.bugs && m.bugs.open, m.bugs && m.bugs.closed,
+    m.velocity && m.velocity.totals && m.velocity.totals.events,
+    tasksCount,
+  ].join("|");
+}
+async function pollForChanges() {
+  if (document.visibilityState !== "visible") return;
+  if ($("#overlay").classList.contains("show") || dragTicket) return;
+  if (!state.board) return;
+  try {
+    const m = await call("get_metrics", { project: state.board });
+    const fp = fingerprintOf(m, state.tasks.length);
+    if (fp !== _lastFingerprint) { _lastFingerprint = fp; await refresh(true); }
+  } catch { /* transient poll error — next tick retries */ }
+}
+if (POLL_ENABLED) setInterval(pollForChanges, POLL_INTERVAL_MS);
 
 // branding (FBMCPF-27): configurable board title/subtitle from project config
 function applyBranding(cfg) {
@@ -1025,6 +1122,27 @@ function renderMetrics(m) {
       fmtCost(m.velocity.totalCost) + '</b> total <span style="opacity:.7">(' + byM + ')</span></span>';
   }
   $("#metrics").innerHTML = html;
+}
+
+// working-status strip (FBMCPF-251): "N in progress · last activity Xm ago",
+// built entirely from state refresh() already fetches every cycle —
+// state.tasks (status counts) and state.workLog (get_work_log,
+// most-recent-first) — no extra call. Work-log timestamps come from the MCP
+// server's local clock (server/metadata.js stamp()); "Xm ago" compares that
+// against the browser's local clock, so the age can be off by a machine/
+// timezone offset if the two aren't the same host.
+function renderProgressStrip() {
+  const el = $("#progressStrip");
+  if (!el) return;
+  const n = (state.tasks || []).filter((t) => t.status === "In Progress").length;
+  if (!n) { el.innerHTML = ""; return; }
+  const latest = (state.workLog || [])[0];
+  let ago = "no recent activity";
+  if (latest && latest.date && latest.time) {
+    const ts = Date.parse(latest.date + "T" + latest.time);
+    if (!isNaN(ts)) ago = "last activity " + fmtMinutes(Math.max(0, Math.round((Date.now() - ts) / 60000))) + " ago";
+  }
+  el.innerHTML = '<span><span class="pulseDot"></span><b>' + n + '</b> in progress · ' + ago + '</span>';
 }
 
 // FBMCPF-134: show a Review column when the gate is on OR any ticket sits in Review.
@@ -1128,6 +1246,8 @@ function renderBoard(tasks) {
 function cardHTML(t, opts) {
   opts = opts || {};
   const meta = [];
+  // FBMCPF-251: subtle "working" indicator — pulse dot + accent border for In Progress cards.
+  const inProgress = t.status === "In Progress";
   if (t.priority != null) meta.push('<span class="prio">#' + t.priority + '</span>');
   if (t.due) meta.push('<span class="chip due">📅 ' + t.due + '</span>');
   if (t.product) meta.push('<span class="chip prod">' + esc(t.product) + '</span>');
@@ -1174,8 +1294,10 @@ function cardHTML(t, opts) {
   // FBMCPF-142: read-only audit-timeline button — visible regardless of write access.
   const histBtn = '<button class="histBtn" title="History" onclick="openHistory(event,\'' + t.ticket + '\')">🕘</button>';
   const next = opts.upNext ? '<span class="upnext">UP NEXT</span>' : "";
-  return '<div class="card" data-ticket="' + t.ticket + '" data-col="' + opts.col + '"' + dragAttrs + '>' + del + split + sprintBtn + reviewBtns + histBtn +
-    '<div class="top"><span class="tk ' + t.type + '">' + esc(t.ticket) + '</span>' + next + '</div>' +
+  const pulse = inProgress ? '<span class="pulseDot" title="In progress"></span>' : "";
+  const cardCls = "card" + (inProgress ? " inprogress" : "");
+  return '<div class="' + cardCls + '" data-ticket="' + t.ticket + '" data-col="' + opts.col + '"' + dragAttrs + '>' + del + split + sprintBtn + reviewBtns + histBtn +
+    '<div class="top"><span class="tk ' + t.type + '">' + esc(t.ticket) + '</span>' + pulse + next + '</div>' +
     '<div class="title">' + esc(t.title) + '</div>' +
     (meta.length ? '<div class="meta">' + meta.join("") + '</div>' : "") + '</div>';
 }
@@ -1368,8 +1490,9 @@ function openAdd() {
     '<label>Token cap (optional, e.g. 50k)</label><input id="adCap" placeholder="max AI spend for this ticket">' +
     '<label>Due date</label><input id="adDue" type="date">' +
     '<label>Priority (1 = top, optional)</label><input id="adPrio" type="number" min="1">' +
-    '<div class="actions"><button class="ghost" onclick="closeModal()">Cancel</button><button class="primary" onclick="submitAdd()">Add</button></div>'
+    '<div class="actions"><button class="ghost" onclick="cancelComposer()">Cancel</button><button class="primary" onclick="submitAdd()">Add</button></div>'
   );
+  bindDraft("add", ["adType", "adTitle", "adDesc", "adProd", "adSprint", "adCap", "adDue", "adPrio"]);
 }
 async function submitAdd() {
   const type = $("#adType").value;
@@ -1391,7 +1514,7 @@ async function submitAdd() {
   const prio = parseInt($("#adPrio").value, 10); if (prio) args.priority = prio;
   try {
     const t = await call(type === "bug" ? "log_bug" : "add_feature", args);
-    closeModal(); toast("Added " + (t.ticketNumber || t.ticket || "task"));
+    clearDraft("add"); closeModal(); toast("Added " + (t.ticketNumber || t.ticket || "task"));
     await refresh(true);
   } catch (e) { toast(e.message.slice(0, 120)); }
 }
@@ -1436,8 +1559,9 @@ function openBrainstorm() {
     '<label>Features</label><textarea id="bsBody" rows="8" placeholder="Dark mode toggle&#10;CSV export: let users download their board&#10;Keyboard shortcuts"></textarea>' +
     '<label>Product (optional, applied to all)</label><input id="bsProd" list="bsProdList" placeholder="optional"><datalist id="bsProdList">' +
       prods.map((p) => '<option value="' + esc(p) + '">').join("") + '</datalist>' +
-    '<div class="actions"><button class="ghost" onclick="closeModal()">Cancel</button><button class="primary" onclick="submitBrainstorm()">Add features</button></div>'
+    '<div class="actions"><button class="ghost" onclick="cancelComposer()">Cancel</button><button class="primary" onclick="submitBrainstorm()">Add features</button></div>'
   );
+  bindDraft("brainstorm", ["bsGoal", "bsBody", "bsProd"]);
 }
 function parseTaskLines(text) {
   return String(text || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean).map((line) => {
@@ -1470,7 +1594,7 @@ async function submitBrainstorm() {
   try {
     const res = await call("add_features_bulk", { project: state.board, features });
     const n = (res && res.created && res.created.length) || features.length;
-    closeModal(); toast("Added " + n + " feature" + (n === 1 ? "" : "s"));
+    clearDraft("brainstorm"); closeModal(); toast("Added " + n + " feature" + (n === 1 ? "" : "s"));
     await refresh(true);
   } catch (e) { toast(String(e.message).slice(0, 120)); }
 }
@@ -1484,8 +1608,9 @@ function openDecompose(e, ticket) {
     '<p>Replace <b>' + esc(parent ? parent.title : ticket) + '</b> with linked subtasks (one per line, min 2). Use “Title: description” for detail.</p>' +
     '<textarea id="dcBody" rows="6" placeholder="Design the schema&#10;Implement the API&#10;Write tests"></textarea>' +
     '<label style="display:flex;align-items:center;gap:6px;margin-top:8px"><input type="checkbox" id="dcKeep" style="width:auto"> Keep the parent feature</label>' +
-    '<div class="actions"><button class="ghost" onclick="closeModal()">Cancel</button><button class="primary" onclick="submitDecompose(\'' + ticket + '\')">Decompose</button></div>'
+    '<div class="actions"><button class="ghost" onclick="cancelComposer()">Cancel</button><button class="primary" onclick="submitDecompose(\'' + ticket + '\')">Decompose</button></div>'
   );
+  bindDraft("decompose_" + ticket, ["dcBody", "dcKeep"]);
 }
 async function submitDecompose(ticket) {
   const subtasks = parseTaskLines($("#dcBody").value);
@@ -1494,7 +1619,7 @@ async function submitDecompose(ticket) {
   try {
     const res = await call("decompose_feature", { project: state.board, ticket, subtasks, keepParent });
     const n = (res && res.created && res.created.length) || subtasks.length;
-    closeModal(); toast("Created " + n + " subtasks from " + ticket);
+    clearDraft("decompose_" + ticket); closeModal(); toast("Created " + n + " subtasks from " + ticket);
     await refresh(true);
   } catch (e) { toast(String(e.message).slice(0, 120)); }
 }
@@ -1549,10 +1674,11 @@ function openImport() {
     '<label style="flex:1">Default type<select id="imType"><option value="feature">Feature</option><option value="bug">Bug</option></select></label></div>'+
     '<label>Content</label><textarea id="imBody" rows="9" placeholder="- [ ] First task&#10;- [ ] Second: with a description"></textarea>'+
     '<div id="imPreview" class="hint"></div>'+
-    '<div class="actions"><button class="ghost" onclick="closeModal()">Cancel</button>'+
+    '<div class="actions"><button class="ghost" onclick="cancelComposer()">Cancel</button>'+
     '<button class="ghost" onclick="previewImport()">Preview</button>'+
     '<button class="primary" onclick="submitImport()">Import</button></div>'
   );
+  bindDraft("import", ["imFmt", "imType", "imBody"]);
 }
 async function previewImport() {
   const content = $("#imBody").value.trim(); if (!content) { toast("Paste some content first"); return; }
@@ -1566,7 +1692,7 @@ async function submitImport() {
   const content = $("#imBody").value.trim(); if (!content) { toast("Paste some content first"); return; }
   try {
     const res = await call("import_tasks", { project: state.board, content, format: $("#imFmt").value, defaultType: $("#imType").value });
-    closeModal(); toast("Imported " + (res.imported || 0) + " tasks"); await refresh(true);
+    clearDraft("import"); closeModal(); toast("Imported " + (res.imported || 0) + " tasks"); await refresh(true);
   } catch (e) { toast(String(e.message).slice(0, 140)); }
 }
 
@@ -2434,7 +2560,7 @@ async function move(ticket, status) {
 
 /* ---------- onboarding / licensing modals ---------- */
 function showModal(html) { $("#modal").innerHTML = html; $("#overlay").classList.add("show"); }
-function closeModal() { $("#overlay").classList.remove("show"); }
+function closeModal() { $("#overlay").classList.remove("show"); activeComposer = null; }
 $("#overlay").addEventListener("click", (e) => { if (e.target.id === "overlay") closeModal(); });
 
 async function openOnboarding() {
@@ -2532,6 +2658,70 @@ async function doRequest() {
   } catch (e) { toast(e.message.slice(0, 140)); }
 }
 
+/* ---------- report bug (FBMCPF-253) ---------- */
+function openReportBug() {
+  if (!state.board) { toast("Select a board first"); return; }
+  showModal(
+    '<h3>🐞 Report a bug</h3>' +
+    '<p>This creates a ticket on <b>' + esc(state.board) + '</b> and also emails the FeatureBoard team directly.</p>' +
+    '<label>Title</label><input id="rbTitle" placeholder="Short summary">' +
+    '<label>What happened?</label><textarea id="rbDetail" rows="5" placeholder="Steps to reproduce, what you expected, what happened instead…"></textarea>' +
+    '<label>Contact (optional)</label><input id="rbContact" placeholder="email, if you want a reply">' +
+    '<div class="actions"><button class="ghost" onclick="cancelComposer()">Cancel</button><button class="primary" onclick="submitReportBug()">Send report</button></div>'
+  );
+  bindDraft("reportBug", ["rbTitle", "rbDetail", "rbContact"]);
+}
+async function submitReportBug() {
+  const title = $("#rbTitle").value.trim();
+  const detail = $("#rbDetail").value.trim();
+  const contact = $("#rbContact").value.trim();
+  if (!title || !detail) { toast("Title and a description are required"); return; }
+  const btn = document.querySelector("#modal .actions .primary");
+  if (btn) { btn.disabled = true; btn.textContent = "Sending…"; }
+
+  // (a) land it on the reporter's own board — the part they'll actually see
+  // show up, so track whether it succeeded separately from the team copy below.
+  let boardOk = true;
+  try {
+    await call("log_bug", {
+      project: state.board,
+      title: "[user report] " + title,
+      description: detail + (contact ? "\n\nContact: " + contact : ""),
+      labels: ["user-report"],
+    });
+  } catch (e) { boardOk = false; }
+
+  // (b) fire-and-forget copy to the FeatureBoard team. Never throws past this
+  // point — a network failure here just changes which confirmation we show.
+  let posted = false;
+  try {
+    const res = await fetch("https://featureboard.ai/api/report-bug", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, detail, project: state.board, version: BOARD_VERSION, contact }),
+    });
+    posted = !!(res && res.ok);
+  } catch (e) { posted = false; }
+
+  clearDraft("reportBug");
+  closeModal();
+  if (posted) {
+    toast(boardOk ? "Thanks — bug reported!" : "Sent to the FeatureBoard team (board ticket failed — try again from Add task)");
+    return;
+  }
+  // (c) the direct POST failed — offer a prefilled mailto: fallback so the
+  // report isn't just lost, and be explicit about the board-ticket outcome.
+  const mailBody = encodeURIComponent(
+    detail + (contact ? "\n\nContact: " + contact : "") + "\n\nProject: " + (state.board || "") + "\nVersion: " + BOARD_VERSION
+  );
+  const mailto = "mailto:lewis@featureboard.ai?subject=" + encodeURIComponent("FeatureBoard bug report: " + title) + "&body=" + mailBody;
+  showModal(
+    '<h3>' + (boardOk ? "Reported ✓" : "Couldn\u2019t reach the server") + '</h3>' +
+    '<p>' + (boardOk ? "Logged on your board. " : "") + 'The direct email to the FeatureBoard team didn\u2019t go through — you can send it yourself instead:</p>' +
+    '<div class="actions"><a href="' + mailto + '"><button class="ghost">✉ Email lewis@featureboard.ai</button></a><button class="primary" onclick="closeModal()">Done</button></div>'
+  );
+}
+
 /* ---------- boot ---------- */
 function esc(s) { return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 
@@ -2582,6 +2772,7 @@ $("#analyticsBtn").addEventListener("click", openAnalytics);
 $("#timelineBtn").addEventListener("click", openTimeline);
 $("#reportsBtn").addEventListener("click", openReports);
 $("#prioBtn").addEventListener("click", autoPrioritize);
+$("#reportBugBtn").addEventListener("click", openReportBug);
 
 (async function init() {
   state.license = await loadLicense();
