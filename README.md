@@ -275,6 +275,14 @@ telemetry attached to it. On submit, the email is saved locally and POSTed once 
 featureboard.ai registrations listener; skip the field and nothing leaves your machine. See
 `docs/compliance/PRIVACY.md` for the full disclosure.
 
+## Skills
+
+FeatureBoard ships a Claude Skill in `skills/` for the churn workflow this README describes:
+
+- **`skills/featureboarding.skill`** — boards substantive dev requests automatically (no need to say "put it on the board") and churns the queue with parallel sub-agents per ticket `dispatch` blocks.
+
+To install: drag the `.skill` file into Claude -> Settings -> Capabilities, or just open the file.
+
 ## Data & storage
 
 - Boards are plain markdown; a `.featureboard/index.json` sidecar caches the ticket counter.
