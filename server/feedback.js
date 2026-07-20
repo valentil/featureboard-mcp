@@ -15,7 +15,7 @@
  *     on the way (FBMCPF-159 intake guard).
  */
 
-import { withOrchestrationLabels } from "./orchestration.js";
+import { withOrchestrationLabels, applyTriage } from "./orchestration.js";
 import { getProjectConfig } from "./metadata.js";
 
 // ---------------------------------------------------------------------------
@@ -252,6 +252,15 @@ export function captureAsk(board, project, { source, text, from = null } = {}) {
     priority: c.priority != null ? c.priority : undefined,
     labels: [askLabel(source)],
   };
+  // FBMCPF-233: triage intelligence — when the keyword heuristics left product/
+  // priority empty, fill them from similar historical tickets (explicit and
+  // keyword-derived values win; history only fills gaps).
+  let triage = null;
+  try {
+    const tri = applyTriage(board.listTasks ? board.listTasks(project, {}) : [], fields);
+    Object.assign(fields, tri.fields);
+    triage = tri.triage;
+  } catch {}
   const created = board.addTask(project, c.type, withOrchestrationLabels(c.type, fields));
-  return { ...created, ask: { source: source || "external", from, type: c.type, signals: c.signals } };
+  return { ...created, ask: { source: source || "external", from, type: c.type, signals: c.signals, ...(triage ? { triage } : {}) } };
 }

@@ -49,3 +49,14 @@ test("plain request becomes a feature; empty text throws", () => {
   assert.equal(r.ask.source, "email");
   assert.throws(() => captureAsk(b, "Proj", { source: "email", text: "  " }), /text is required/);
 });
+
+test("triage fills product from similar history when keywords have no match", () => {
+  const b = tmpBoard();
+  // seed history: two similar past tickets under product CRM
+  b.addTask("Proj", "feature", { title: "Weekly pipeline digest email", description: "weekly pipeline digest", product: "CRM" });
+  b.addTask("Proj", "feature", { title: "Pipeline digest export", description: "pipeline digest export", product: "CRM" });
+  const r = captureAsk(b, "Proj", { source: "slack", text: "Can the pipeline digest include conversion deltas?" });
+  const t = b.getTask("Proj", r.ticketNumber);
+  assert.equal(t.product, "CRM");
+  assert.ok(r.ask.triage && r.ask.triage.basis.length >= 1);
+});
