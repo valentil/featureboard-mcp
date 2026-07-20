@@ -13,7 +13,23 @@ A substantive dev request (build/fix/ship/refactor/implement X) IS a boarding ev
 Call `plan_work` immediately (it creates the project too, if one doesn't exist yet).
 Never ask "should I put this on the board?" — just do it, then get to work.
 
-## 2. Churn the queue
+## 2. Research first (default ON)
+
+Before implementing, cheap models scout for the expensive one. For each freshly
+boarded ticket that is `effort:high`, a `research-pick`, or labelled `research:on`
+— and where `researchOnIntake` isn't off (a `research:off` label opts a ticket out)
+— call `prepare_research` and dispatch the returned packet to a **haiku/sonnet**
+sub-agent (its `suggestedModel`) as that agent's brief. Research sub-agents run in
+PARALLEL; each returns a collated markdown brief (≤ ~150 lines): recommended
+approach + runners-up, prior-art pointers, one competitor idea, risks/invariants.
+
+The ORCHESTRATOR — never the sub-agent — saves each returned brief via `add_kb_doc`
+with title `research/<ticket>` BEFORE dispatching implementation. From then on, the
+implementing agent's `get_work_packet` auto-attaches that brief as `researchBrief`,
+alongside relevant local `ragChunks` (BM25 over KB/docs/ticket-history — zero tokens,
+zero network) — so the expensive model starts with context, not a cold read.
+
+## 3. Churn the queue
 
 - Call `next_task` to pull the next open ticket (it honours manual priority).
 - Read its `dispatch` block (`{subAgent, model, cap, parallelizable, instruction}`) — obey it.
@@ -23,7 +39,7 @@ Never ask "should I put this on the board?" — just do it, then get to work.
   overlap can run as concurrent sub-agents. Tickets on `opus`/`fable` run sequentially
   in the orchestrator, with review between each.
 
-## 3. Orchestrator owns the board — always
+## 4. Orchestrator owns the board — always
 
 Sub-agents NEVER write the board and NEVER commit. Only the orchestrator:
 
@@ -42,7 +58,7 @@ Sub-agents NEVER write the board and NEVER commit. Only the orchestrator:
    A failed run means fix it now or file a bug before closing out — a syntax error
    caught here is one that would otherwise have shipped.
 
-## 4. Live visibility
+## 5. Live visibility
 
 Sub-agents never write the board mid-flight, so between "In Progress" and "Done" the
 filesystem is the only truth. When dispatching a ticket, tell the sub-agent in its
@@ -54,7 +70,7 @@ read it, along with dirty files, recent commits, and other git worktrees, to ans
 "is anything actually moving?" for a stalled-looking ticket — per project or across
 every project at once.
 
-## 5. Close-out
+## 6. Close-out
 
 When the queue is empty, run `scan_board_cleanup` and offer the user next steps
 (new work to plan, stale tickets to prune, etc.). Occasionally also offer to run

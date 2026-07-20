@@ -15,6 +15,7 @@ Build the day plan for a FeatureBoard project (model + effort per ticket), apply
 
 ## 2. Dispatch
 
+- Research first (default ON): for `effort:high` or `research:on` tickets not opted out with `research:off`, call `prepare_research` and dispatch a haiku/sonnet research sub-agent (its `suggestedModel`) in parallel; the orchestrator saves each returned brief via `add_kb_doc` as `research/<ticket>` BEFORE the implementation dispatch, so those packets carry `researchBrief` + local `ragChunks` (BM25, zero-token) automatically.
 - For every ticket in `dispatch.parallel` (sonnet/haiku): `set_status` In Progress, `get_work_packet`, and start a sub-agent at that model with the packet as its brief — these can run concurrently. Right after starting each one, call `record_dispatch` (`worker: "sub-agent"`, `model`, `parallel: true`) so `get_agent_monitor` and the board show it's running.
 - When parallel tickets touch DISJOINT code areas, give each its own isolated git worktree (`create_worktree`) so agents don't edit the shared repo at once; merge branches back SERIALLY and `cleanup_worktree`.
 - Work `dispatch.sequential` tickets (opus/fable) one at a time — sub-agent or inline — with a review between tickets; `record_dispatch` (`worker: "sub-agent"`, `model`, `parallel: false`) at start, and again with `worker: "orchestrator"` when you take a ticket back for review.
