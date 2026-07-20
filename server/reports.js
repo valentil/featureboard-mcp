@@ -32,6 +32,7 @@ import { getPricing, rollupCost, costOfEvent } from "./pricing.js";
 import { decisionsForTicket } from "./decisions.js";
 import { companiesForTicket } from "./crm.js";
 import { capOfTask } from "./budget.js";
+import { recordedCommitsForTicket } from "./events.js";
 
 export const AUDIENCES = ["marketing", "sales", "technical", "executive"];
 const REPORTS_DIR = "reports";
@@ -155,6 +156,12 @@ export function buildReportPacket(board, project, sprintName, { now = new Date()
       try { adrs = decisionsForTicket(board, project, t.ticketNumber).map((d) => ({ id: d.id, title: d.title })); } catch { adrs = []; }
       let customers = [];
       try { customers = (companiesForTicket(board, project, t.ticketNumber).companies || []).map((c) => ({ id: c.id, name: c.name })); } catch { customers = []; }
+      // FBMCPB-23: prefer commit_feature's recorded commit events (real
+      // correlation, FBMCPF-188) over hash-shaped substrings regexed out of
+      // work-log prose; the regex path stays as a legacy fallback only.
+      let commits = [];
+      try { commits = recordedCommitsForTicket(board, project, t.ticketNumber).map((h) => h.slice(0, 8)); } catch { commits = []; }
+      if (!commits.length) commits = [...new Set(a.commits)];
       return {
         ticket: t.ticketNumber,
         type: t.type || "feature",
@@ -173,7 +180,7 @@ export function buildReportPacket(board, project, sprintName, { now = new Date()
         cost: Math.round(a.cost * 1e4) / 1e4,
         model: a.model,
         cap: capOfTask(t),
-        commits: [...new Set(a.commits)],
+        commits,
         adrs,
         customers,
       };
