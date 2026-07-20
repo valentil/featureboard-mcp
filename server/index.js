@@ -16,7 +16,7 @@ import { Board, parseImport, suggestTestStub, generateTestFromPrompt, bugImpactS
 import * as license from "./license.js";
 import * as meta from "./metadata.js";
 import { predictDueDates } from "./predictive.js";
-import { createSprint, listSprints, assignSprint, sprintOfTask, planRollover, applyRollover } from "./sprints.js";
+import { createSprint, listSprints, assignSprint, sprintOfTask, planRollover, applyRollover, autoAssignSprintFields } from "./sprints.js";
 import { buildReportPacket, closeSprint, getSprintReport, AUDIENCES } from "./reports.js";
 import { graduateProject } from "./graduate.js";
 import { estimateWork, planBudget, suggestModel, dailyPlan } from "./budget.js";
@@ -503,7 +503,8 @@ server.registerTool(
     const board = getBoard();
     // FBMCPF-214: triage intelligence — fill missing product/priority from similar past tickets.
     const tri = applyTriage(board.listTasks(project, {}), f);
-    const created = board.addTask(project, "feature", withOrchestrationLabels("feature", tri.fields));
+    const spr = autoAssignSprintFields(board, project, tri.fields); // FBMCPF-219
+    const created = board.addTask(project, "feature", withOrchestrationLabels("feature", spr.fields));
     // FBMCPF-196: fire ticket-created automation rules (best-effort).
     const auto = evaluateRules(board, project, { trigger: "ticket-created", ticket: created.ticketNumber }, { notify: (text) => notifySlack(board, project, { text, event: "summary" }) });
     if (!auto.applied.length && !auto.warnings.length && !tri.triage) return created;
@@ -527,7 +528,8 @@ server.registerTool(
     const board = getBoard();
     // FBMCPF-214: triage intelligence — fill missing product/priority from similar past tickets.
     const tri = applyTriage(board.listTasks(project, {}), f);
-    const created = board.addTask(project, "bug", withOrchestrationLabels("bug", tri.fields));
+    const spr = autoAssignSprintFields(board, project, tri.fields); // FBMCPF-219
+    const created = board.addTask(project, "bug", withOrchestrationLabels("bug", spr.fields));
     // FBMCPF-196: fire ticket-created automation rules (best-effort).
     const auto = evaluateRules(board, project, { trigger: "ticket-created", ticket: created.ticketNumber }, { notify: (text) => notifySlack(board, project, { text, event: "summary" }) });
     if (!auto.applied.length && !auto.warnings.length && !tri.triage) return created;
@@ -717,8 +719,8 @@ server.registerTool(
       board.createProject(project, projectDescription);
       created_project = true;
     }
-    const createdFeatures = features.map((f) => board.addTask(project, "feature", withOrchestrationLabels("feature", f)));
-    const createdBugs = bugs.map((b) => board.addTask(project, "bug", withOrchestrationLabels("bug", b)));
+    const createdFeatures = features.map((f) => board.addTask(project, "feature", withOrchestrationLabels("feature", autoAssignSprintFields(board, project, f).fields)));
+    const createdBugs = bugs.map((b) => board.addTask(project, "bug", withOrchestrationLabels("bug", autoAssignSprintFields(board, project, b).fields)));
     // FBMCPF-137: wire dependsOn edges over the COMBINED created list (features
     // first, then bugs, in input order), then compute execution waves. A bad or
     // cycle-closing edge is skipped with a per-item warning, never failing the call.
@@ -1824,6 +1826,7 @@ server.registerTool(
       brandVoice: z.string().optional().describe("Brand voice/tone for generated media, e.g. 'confident, playful, plain-spoken'."),
       imageTool: z.string().optional().describe("Preferred image-generation tool/connector/skill name for generate_image (e.g. an image MCP or an 'imagegen' skill). If unset, generate_image uses any available image generator, else falls back to SVG."),
       requireReview: z.boolean().optional(),
+      sprintAutoAssign: z.enum(["off", "priority", "all"]).optional().describe("FBMCPF-219: auto-assign un-slotted new tickets to the active sprint — off (default), priority (priority <= 2 only), or all. An explicit sprint: label always wins."),
       doneGates: z.object({
         requireResolvedReview: z.boolean().optional(),
         requirePassingTest: z.boolean().optional(),

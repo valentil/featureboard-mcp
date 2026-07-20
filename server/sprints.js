@@ -192,3 +192,39 @@ export function applyRollover(board, project, sprintName, { nextSprint = null } 
 
   return { ...plan, applied: true, autoRolled, flaggedUpdated, droppedUpdated };
 }
+
+// ---------------------------------------------------------------------------
+// FBMCPF-219: sprint auto-assign — optional policy so tickets created without
+// an explicit sprint land in the active sprint (Plane-style "no manual
+// sorting"). Config key sprintAutoAssign: "off" (default) | "priority"
+// (priority <= 2 only) | "all". Explicit sprint: labels always win.
+// ---------------------------------------------------------------------------
+
+/** The registry sprint considered active today: a dated sprint spanning today
+ *  (latest wins), else the most recently created undated sprint. Null if none. */
+export function activeSprintName(board, project, todayStr = new Date().toISOString().slice(0, 10)) {
+  const sprints = readRegistry(board, project);
+  if (!sprints.length) return null;
+  const spanning = sprints.filter((s) => s.start && s.start <= todayStr && (!s.end || s.end >= todayStr));
+  if (spanning.length) return spanning[spanning.length - 1].name;
+  const undated = sprints.filter((s) => !s.start && !s.end);
+  return undated.length ? undated[undated.length - 1].name : null;
+}
+
+/** Apply the auto-assign policy to intake fields. Returns { fields, autoSprint }. */
+export function autoAssignSprintFields(board, project, fields) {
+  const f = fields || {};
+  let mode = "off";
+  try {
+    mode = meta.getProjectConfig(board, project).sprintAutoAssign || "off";
+  } catch {}
+  if (mode !== "priority" && mode !== "all") return { fields: f, autoSprint: null };
+  const labels = Array.isArray(f.labels) ? f.labels.slice() : [];
+  if (labels.some((l) => SPRINT_LABEL_RE.test(String(l)))) return { fields: f, autoSprint: null }; // explicit wins
+  const pr = f.priority != null && f.priority !== "" ? Number(f.priority) : null;
+  if (mode === "priority" && !(pr != null && pr <= 2)) return { fields: f, autoSprint: null };
+  const name = activeSprintName(board, project);
+  if (!name) return { fields: f, autoSprint: null };
+  labels.push(`sprint:${name}`);
+  return { fields: { ...f, labels }, autoSprint: name };
+}
