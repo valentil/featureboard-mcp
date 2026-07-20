@@ -1,6 +1,6 @@
 // Auto-extracted from server/index.js (FBMCPF-224). Registration blocks moved verbatim.
 export function registerAnalyticsTools(server, ctx) {
-  const { Board, addKbDoc, agentMonitorV2, appendEvent, appendHeartbeat, applyDriftRemediation, driftReport, existsSync, getBoard, getGitConfig, getHistoryMap, getKbDoc, getLiveActivity, getLatestUpdate, getPricing, lastDispatchForTicket, listKbDocs, listSprints, meta, nodePath, postProjectUpdate, predictDueDates, reconcileChurn, recordDriftScore, rollupCost, searchKb, setSite, startDriftRun, suggestHistoricalFiles, tryTool, writeTool, z } = ctx;
+  const { Board, addKbDoc, agentMonitorV2, appendEvent, appendHeartbeat, applyDriftRemediation, driftReport, existsSync, getBoard, getGitConfig, getHistoryMap, getKbDoc, getLiveActivity, getLatestUpdate, getPricing, lastDispatchForTicket, listKbDocs, listSprints, meta, nodePath, postProjectUpdate, predictDueDates, reconcileChurn, recordDriftScore, rollupCost, prepareResearch, ragSearch, searchKb, setSite, startDriftRun, suggestHistoricalFiles, tryTool, writeTool, z } = ctx;
 
 // analytics & metadata (v0.3) ----------------------------------------------
 
@@ -122,6 +122,9 @@ server.registerTool(
       }).optional().describe("FBMCPF-215: per-project preconditions on → Done — require no unresolved review comments, a passing logged test run, and/or a work-log entry for the ticket. Each toggle independent, all off by default; approve:true overrides."),
       requireCommitOnDone: z.boolean().optional().describe("When on and git is enabled for the project, set_status refuses to move a ticket to Done unless a commit references it (recorded via commit_feature or found via git log --grep); approve:true overrides. Default false — a plain non-blocking uncommitted/commitReminder warning otherwise."),
       requireChecksOnDone: z.boolean().optional().describe("FBMCPF-261: when on, set_status refuses to move a ticket to Done if its latest background static-check run FAILED (approve:true overrides). A still-running run does not block — it just adds a note. Default false."),
+      researchOnIntake: z.boolean().optional().describe("FBMCPF-263: run an optional research phase before implementing a ticket — cheap haiku/sonnet sub-agents collate approaches/prior-art/comparables/risks into a brief for the implementing model. Defaults ON when unset (resolved in code, not force-written). Per-ticket escape hatch: a research:off label skips it, research:on forces it."),
+      ragInPackets: z.boolean().optional().describe("FBMCPF-264: attach top-k local lexical RAG chunks (BM25 over KB/docs/ticket-history) to every work packet as ragChunks. Zero tokens, zero network. Default true."),
+      ragK: z.coerce.number().int().min(1).max(20).optional().describe("FBMCPF-264: how many RAG chunks to attach to a work packet (default 5)."),
       checks: z.object({
         autoOnCommit: z.boolean().optional().describe("Start checks automatically after every commit_feature (default true)."),
         syntaxCheckChangedFiles: z.boolean().optional().describe("node --check each changed .js/.mjs/.cjs file (default true)."),
@@ -481,12 +484,12 @@ server.registerTool(
     const dup = meta.findDuplicateWorkEntry(board, project, entry);
     const result = meta.logWork(board, project, entry);
     // FBMCPF-190: nudge for token telemetry when this event omits a token count.
-    if (entry.tokens == null) result.telemetryHint = "tokens not recorded \u2014 pass tokens for accurate velocity/eval";
+    if (entry.tokens == null) result.telemetryHint = "tokens not recorded — pass tokens for accurate velocity/eval";
     if (dup) {
       result.duplicateSuspected = true;
       result.warning =
         `A work-log entry for ${entry.ticket} already recorded +${dup.additions ?? 0}/\u2212${dup.deletions ?? 0} today` +
-        ` (likely from set_status Done metrics) \u2014 velocity may double-count this event. Not blocked; ignore if this was a separate work session.`;
+        ` (likely from set_status Done metrics) — velocity may double-count this event. Not blocked; ignore if this was a separate work session.`;
     }
     return result;
   })
@@ -673,6 +676,34 @@ server.registerTool(
     }
     return meta.getWorkPacket(board, project, ticket, { historicalFiles });
   })
+);
+
+server.registerTool(
+  "prepare_research",
+  {
+    title: "Prepare research request",
+    description:
+      "FBMCPF-263: deterministically assemble a research REQUEST packet for a ticket BEFORE implementation (no model calls). Returns the questions to answer — how to execute (approaches + tradeoffs), prior art IN THIS repo (files/tickets), comparables/competitors, risks/invariants — plus local sources to seed from (matching KB docs, docs/ paths, code hints, and prior-art hits from the local lexical RAG, FBMCPF-264), a deliverable spec (a collated markdown brief ≤ ~150 lines), a saveInstruction (orchestrator saves the returned brief via add_kb_doc as research/<ticket> so getWorkPacket auto-attaches it as researchBrief), and a suggested cheap model (haiku for effort:low/medium, else sonnet). When the research phase resolves OFF (config researchOnIntake:false or a research:off label) returns { skip:true, reason }; a research:on label forces it on.",
+    inputSchema: { project: z.string(), ticket: z.string() },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project, ticket }) => prepareResearch(getBoard(), project, ticket))
+);
+
+server.registerTool(
+  "rag_search",
+  {
+    title: "Local lexical RAG search",
+    description:
+      "FBMCPF-264: local lexical retrieval (BM25) over this board's KB docs (incl. research briefs), the code repo's docs/ + root README, and Done tickets' title+completionSummary — zero tokens, zero network. Returns top-k [{score, source, heading, text}]. Use it to ground research and find prior art in the repo. Honest scope: this is KEYWORD matching (shared vocabulary), not semantic/embedding search.",
+    inputSchema: {
+      project: z.string(),
+      query: z.string().describe("What to retrieve context for."),
+      k: z.coerce.number().int().min(1).max(20).optional().default(5).describe("How many chunks to return (default 5, max 20)."),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project, query, k }) => ({ results: ragSearch(getBoard(), project, query, { k }) }))
 );
 
 server.registerTool(

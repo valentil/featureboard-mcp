@@ -17,7 +17,8 @@ import path from "node:path";
 import { getRequirements } from "./requirements.js";
 import { decisionsForTicket } from "./decisions.js";
 import { handoffsFor } from "./handoffs.js";
-import { matchKbForTicket } from "./kb.js";
+import { matchKbForTicket, getKbDoc, slugify } from "./kb.js";
+import { ragSearch } from "./rag.js";
 import { unresolvedReviewComments } from "./reviews.js";
 import { worktreeForTicket } from "./worktrees.js";
 
@@ -47,7 +48,7 @@ function atomicWrite(p, content) {
 // ---------------------------------------------------------------------------
 
 // FBMCPF-120: "sprints" holds the sprint registry (name/start/end/goal)
-const CONFIG_KEYS = ["products", "codeLocation", "websiteLocation", "agentModel", "description", "website", "featurePrefix", "bugPrefix", "customPrompt", "brandTitle", "brandSubtitle", "brandWords", "brandVoice", "brandPrimary", "brandAccent", "brandLogo", "brandFont", "imageTool", "sprints", "stage", "gitTargets", "worktreeDir", "requireReview", "requireCommitOnDone", "slackWebhook", "slackEvents", "pricing", "rules", "slaThresholds", "autoStatusOnCommit", "doneGates", "sprintAutoAssign", "checks", "requireChecksOnDone"];
+const CONFIG_KEYS = ["products", "codeLocation", "websiteLocation", "agentModel", "description", "website", "featurePrefix", "bugPrefix", "customPrompt", "brandTitle", "brandSubtitle", "brandWords", "brandVoice", "brandPrimary", "brandAccent", "brandLogo", "brandFont", "imageTool", "sprints", "stage", "gitTargets", "worktreeDir", "requireReview", "requireCommitOnDone", "slackWebhook", "slackEvents", "pricing", "rules", "slaThresholds", "autoStatusOnCommit", "doneGates", "sprintAutoAssign", "checks", "requireChecksOnDone", "researchOnIntake", "ragInPackets", "ragK"];
 
 /** Merged view: managed config overlaid on legacy project_config.json. */
 export function getProjectConfig(board, project) {
@@ -815,6 +816,51 @@ export function getWorkPacket(board, project, ticket, opts = {}) {
     // branch and merge-back guidance so a parallel sub-agent edits there, not the repo.
     const wt = worktreeForTicket(board, project, task.ticketNumber);
     if (wt) packet.worktree = wt;
+    // FBMCPF-263: attach the ticket's research brief when one has been saved to
+    // the KB under the research-<ticket> convention (add_kb_doc title
+    // "research/<ticket>"). Capped at ~6KB so a long brief never bloats the packet.
+    const rslug = slugify(`research ${task.ticketNumber}`);
+    const brief = getKbDoc(board, project, rslug);
+    if (brief && brief.content && brief.content.trim()) {
+      const MAX_BRIEF = 6144;
+      let content = brief.content;
+      let truncated = false;
+      if (Buffer.byteLength(content, "utf8") > MAX_BRIEF) {
+        content = content.slice(0, MAX_BRIEF);
+        truncated = true;
+      }
+      packet.researchBrief = {
+        slug: rslug,
+        title: brief.title,
+        truncated,
+        content: truncated
+          ? content + "\n\n…[research brief truncated at ~6KB — read the full doc via get_kb_doc]"
+          : content,
+      };
+    }
+    // FBMCPF-264: attach top-k lexical RAG chunks (BM25, local + zero-token) for
+    // query = title + description. Config ragInPackets (default true) / ragK
+    // (default 5). The ticket's own research brief is excluded so it never shows
+    // up twice (already attached above as researchBrief). Total rag text ~4KB.
+    if (cfg.ragInPackets !== false) {
+      const ragK = Number.isInteger(cfg.ragK) && cfg.ragK > 0 ? cfg.ragK : 5;
+      const ragQuery = [task.title, task.description].filter(Boolean).join(" ");
+      const hits = ragSearch(board, project, ragQuery, {
+        k: ragK,
+        exclude: [`kb/${rslug}`],
+        codeLocation: cfg.codeLocation,
+      });
+      const RAG_CAP = 4096;
+      let used = 0;
+      const capped = [];
+      for (const h of hits) {
+        const len = Buffer.byteLength(h.text || "", "utf8");
+        if (used + len > RAG_CAP && capped.length) break;
+        capped.push(h);
+        used += len;
+      }
+      if (capped.length) packet.ragChunks = capped;
+    }
   } catch {}
   // FBMCPF-192: history-driven filesToRead hints — files that Done tickets
   // sharing this ticket's product/labels historically touched. Computed by the
