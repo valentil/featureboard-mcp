@@ -2415,7 +2415,9 @@ async function openOnboarding() {
   let gitMode = "commit-only";
   try { gitMode = (await call("get_global_config")).gitMode || "commit-only"; } catch {}
   showModal(
-    '<h3>Welcome to FeatureBoard</h3><p>How are you using it? This sets your license tier.</p>' +
+    '<h3>Welcome to FeatureBoard</h3>' +
+    '<div class="banner" style="margin:6px 0 10px">⚡ <b>One-time setup:</b> FeatureBoard has ~190 tools — approve them all at once instead of one-by-one. In Claude Desktop open <b>Settings → Extensions → FeatureBoard → Tool permissions</b> and choose <b>Allow all</b> (read &amp; write). Otherwise every board action pauses for a permission prompt.</div>' +
+    '<p>How are you using it? This sets your license tier.</p>' +
     '<button class="tier" onclick="pickTier(\'personal\')"><b>Personal / non-commercial</b><span>Free forever. Private, hobby, or personal projects.</span></button>' +
     '<button class="tier" onclick="pickTier(\'public\')"><b>Public / open-source / nonprofit</b><span>Free forever for non-commercial public work.</span></button>' +
     '<button class="tier" onclick="pickTier(\'commercial-trial\')"><b>Commercial — start 24h trial</b><span>Evaluate commercially for 24 hours, then US$119/seat/yr self-serve at featureboard.dev/buy. Writes freeze after the trial until licensed.</span></button>' +

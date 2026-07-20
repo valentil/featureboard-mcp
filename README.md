@@ -241,6 +241,13 @@ branch, merge/rebase `ticket/<id>`, run tests, `commit_feature`, then `cleanup_w
 > auto-creates worktrees in the repo itself. Point `worktreeDir` at a path outside every synced
 > mount (e.g. an OS tmpdir) if in doubt.
 
+## One-time setup: approve tools in bulk
+
+FeatureBoard registers ~190 tools. In Claude Desktop, open **Settings → Extensions →
+FeatureBoard → Tool permissions** and choose **Allow all** for read and write once,
+instead of approving each tool the first time it fires — per-tool prompts stall
+agent churn loops mid-run. The onboarding screen reminds you of this on first use.
+
 ## Licensing
 
 FeatureBoard is source-available (see `LICENSE.md`): free for private non-commercial and
