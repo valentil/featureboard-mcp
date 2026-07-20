@@ -26,6 +26,11 @@ code repo on disk) and makes no network call.
   URL you paste in — validated to that host) and the event is in the project's
   `slackEvents` allow-list. No webhook configured, or event not allow-listed → no
   network call (`sent:false`).
+- `open_pull_request` runs the local `gh` CLI (or, without it, only constructs a
+  compare URL — no network call) to open a pull request on the repo's `origin` host
+  for a ticket branch. It sends the ticket's title/description as the PR title/body,
+  using the machine's own gh credentials, and only when you invoke it. If the branch
+  isn't pushed yet it pushes first only when the project's git mode is commit-push.
 - `deploy_site` and `commit_feature` commit (and, if configured, push) the project's
   code/site repo to its configured git remote (default `origin`), using the machine's
   own ambient git credentials — no credentials are stored or transmitted by FeatureBoard

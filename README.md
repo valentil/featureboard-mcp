@@ -8,7 +8,7 @@ no lock-in. Your boards are plain `featurelist.md` / `buglist.md` files you own 
 
 It started as a hosted web app (OpenClaw). We rebuilt it as an MCP server by taking the
 original app's file list and porting it, tool by tool, **while learning MCP from scratch** —
-and it came together fast. What you get is ~189 tools spanning the entire product surface:
+and it came together fast. What you get is ~195 tools spanning the entire product surface:
 board and churn loop, analytics, testing, a media studio, CRM, leads, contracts, mail and
 marketing, a website builder with git deploys, and per-ticket commits. The board is the
 front door; everything the original app did is one sentence away in chat.
@@ -50,7 +50,7 @@ drift on open-ended asks. See [docs/EVAL-BOARD-VS-CHAT.md](docs/EVAL-BOARD-VS-CH
    - "How's velocity looking this week?"
 
 > **First-run tip:** the extension defaults to **Essential tools only** (~34 core board tools)
-> for a clean start. Turn that off in the extension settings to expose the full ~189-tool
+> for a clean start. Turn that off in the extension settings to expose the full ~195-tool
 > surface (CRM, media, website, marketing, and more). After installing or updating, fully
 > **restart Claude Desktop** so new tools load.
 
@@ -243,7 +243,7 @@ branch, merge/rebase `ticket/<id>`, run tests, `commit_feature`, then `cleanup_w
 
 ## One-time setup: approve tools in bulk
 
-FeatureBoard registers ~190 tools. In Claude Desktop, open **Settings → Extensions →
+FeatureBoard registers ~195 tools. In Claude Desktop, open **Settings → Extensions →
 FeatureBoard → Tool permissions** and choose **Allow all** for read and write once,
 instead of approving each tool the first time it fires — per-tool prompts stall
 agent churn loops mid-run. The onboarding screen reminds you of this on first use.

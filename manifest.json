@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "featureboard",
   "display_name": "FeatureBoard",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "A local, file-backed feature/bug board for agentic projects. Claude reads and writes your featurelist.md / buglist.md boards directly.",
   "long_description": "FeatureBoard turns your project's markdown task files into a first-class board that Claude can manage. It keeps the same `featurelist.md` / `buglist.md` format used by the original FeatureBoard app, with FBF-/FBB- ticket IDs, statuses (Todo / In Progress / Done), due dates, products, labels, linked issues and completion summaries. Because Claude is now the agent, workflow tools like brainstorm (bulk-add) and decompose fit naturally: Claude generates the ideas, the board persists them. Read-only analytics summarize velocity and open/closed counts.",
   "author": {
@@ -129,6 +129,10 @@
     {
       "name": "export_tasks",
       "description": "Export a board's tasks to json, csv, or markdown for use outside FeatureBoard (e.g. sharing with a PM tool). Round-trips through import_tasks. Read-only."
+    },
+    {
+      "name": "export_metrics",
+      "description": "Flat-file export of analytics for external BI/spreadsheet use, mirroring export_tasks: what:'worklog' exports the per-event work log (date, ticket, model, tokens, additions/deletions); what:'completions' exports status counts + completions-by-date. Formats: json or csv. Read-only."
     },
     {
       "name": "set_requirements",
@@ -771,6 +775,10 @@
       "description": "If git integration is enabled for the project, commit (and optionally push) the current changes in the project's code repo with a message like 'FBMCPF-##: title' — mirroring the original OpenClaw git flow. For graduated projects, also refreshes a read-only snapshot of the pad (featurelist.md, buglist.md, scratchpad.md, agent_work_log.md, config) into <codeRepo>/.featureboard/ and includes it in the same commit — the central pad stays authoritative, this is a one-way mirror. No-ops with a reason when disabled. When push is omitted, the effective push behavior is resolved from gitMode (project override via set_git_config, else the account-wide default via set_global_config, else \"commit-only\") — \"ask\" commits without pushing and returns a note asking you to confirm before pushing again with push:true; it never pushes silently. Passing push explicitly always overrides gitMode. When the autoStatusOnCommit config key is on, closing keywords in the commit message ('closes/fixes/resolves FBB-12') move that ticket to Done (or Review if requireReview is on) — same-project tickets only (FBMCPF-200). Runs on this machine using its git credentials."
     },
     {
+      "name": "open_pull_request",
+      "description": "Turn a ticket's pushed ticket/<id> branch into a pull request with a ticket-linked title and a closing-keyword body (Closes <id>) — the last step of the worktree→review loop after create_worktree + commit_feature. Uses the gh CLI when installed; otherwise returns a pre-filled compare URL to open manually. If the branch isn't on origin yet it is pushed first only when the resolved git mode is commit-push. Never throws for environmental gaps (no remote, no gh, unpushed branch) — returns opened:false with a reason."
+    },
+    {
       "name": "create_worktree",
       "description": "Create (or reuse) an isolated git worktree for a ticket so several tickets can be worked in PARALLEL - each sub-agent edits its own checked-out directory on branch ticket/<ticket>, sharing one .git object store, never the shared repo working tree. Created at <worktreeDir>/<ticket>. IMPORTANT SYNC CAVEAT: worktrees are placed OUTSIDE the code repo by default (sibling directory <codeLocation>-worktrees/), configurable via the project config key worktreeDir - under Cowork, a worktree created INSIDE a synced repo mount can corrupt git internals or fail to sync, so this tool REFUSES a worktreeDir inside the repo and never auto-creates worktrees in the repo itself. Reuses an existing worktree at the path; creates branch ticket/<ticket> off baseRef (or current HEAD) when absent. Returns the worktree path, branch, and merge-back guidance. Errors clearly when the project has no codeLocation, the path is not a git repo, git is too old (< 2.5), or a non-worktree directory squats the path."
     },
@@ -781,6 +789,10 @@
     {
       "name": "cleanup_worktree",
       "description": "Remove a ticket's git worktree once its branch has been merged back (git worktree remove + prune). REFUSES when the worktree has uncommitted changes unless force:true. No-ops with a message when no worktree is registered for the ticket, and never force-deletes a path git doesn't recognise as a worktree. Leaves the ticket/<ticket> branch intact (merge it back first with the merge-back guidance)."
+    },
+    {
+      "name": "capture_ask",
+      "description": "Structure ONE pasted external request — a Slack message, forwarded email body, chat snippet — into a feature or bug via the same heuristics as validate_feedback (type/product/priority keywords, model/cap intake guard), labeled ask:<source> with the requester recorded in the description. This is paste-to-structure, not a live intake listener."
     },
     {
       "name": "license_status",
