@@ -14,7 +14,7 @@
  *   POLAR_WEBHOOK_SECRET  required — from the Polar webhook settings ("whsec_...")
  *   POLAR_PRODUCT_IDS     optional comma-separated allowlist of product ids
  *   RESEND_API_KEY        optional — auto-email keys (from FEATUREBOARD_LICENSE_FROM,
- *                         default licensing@featureboard.dev)
+ *                         default licensing@featureboard.ai)
  *   PORT                  default 8790
  *
  * Run:  POLAR_WEBHOOK_SECRET=whsec_... node owner/polar-webhook-issuer.mjs
@@ -29,7 +29,7 @@ import { issueKey, yearsFromToday } from "./issue.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const issuedLogPath = () => process.env.FEATUREBOARD_ISSUED_LOG || path.join(__dirname, "issued-keys.json");
-const LICENSE_FROM = process.env.FEATUREBOARD_LICENSE_FROM || "licensing@featureboard.dev";
+const LICENSE_FROM = process.env.FEATUREBOARD_LICENSE_FROM || "licensing@featureboard.ai";
 
 /** Verify a standard-webhooks signature (Polar). secret: "whsec_"+base64. */
 export function verifyPolarSignature({ id, timestamp, signature, body, secret, nowMs = Date.now() }) {

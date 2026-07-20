@@ -18,8 +18,8 @@ test("published price is $119/seat/year", () => {
   assert.equal(PRICE_PER_SEAT_YEAR_USD, 119);
 });
 
-test("checkout URL defaults to the stable featureboard.dev/buy redirect", () => {
-  assert.equal(CHECKOUT_URL, "https://featureboard.dev/buy");
+test("checkout URL defaults to the stable featureboard.ai/buy redirect", () => {
+  assert.equal(CHECKOUT_URL, "https://featureboard.ai/buy");
   assert.ok(LICENSE_CONTACT_URL.startsWith("https://"));
 });
 

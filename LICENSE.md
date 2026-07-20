@@ -37,7 +37,7 @@ arising from the software or its use.
 
 ## Contact
 
-Commercial licensing: licensing@featureboard.dev · https://featureboard.dev/licensing
+Commercial licensing: licensing@featureboard.ai · https://featureboard.ai/licensing
 
 ---
 

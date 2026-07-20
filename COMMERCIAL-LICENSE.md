@@ -33,7 +33,7 @@ or circumventing enforcement terminates all rights immediately.
 ## Fees, term, renewal
 
 The published self-serve price is **US$119 per seat per year** via
-https://featureboard.dev/buy (checkout handled by our merchant of record). For
+https://featureboard.ai/buy (checkout handled by our merchant of record). For
 self-serve purchases, the checkout receipt plus this document form your commercial
 agreement. Custom terms (POs, enterprise, volume) are set in a signed agreement
 instead, where fees, seat counts, and term may differ. Perpetual keys
@@ -43,7 +43,7 @@ new key.
 
 ## How to obtain a license
 
-**Self-serve (fastest):** buy at https://featureboard.dev/buy — checkout is handled
+**Self-serve (fastest):** buy at https://featureboard.ai/buy — checkout is handled
 by our merchant of record (Polar), US$119 per seat per year. Your signed license key
 is issued automatically and emailed to you; activate it with the `activate_license`
 tool. The checkout receipt plus this document form your commercial agreement.
@@ -56,7 +56,7 @@ tool. The checkout receipt plus this document form your commercial agreement.
 3. On execution, the licensor issues your signed license key.
 4. Activate it with the `activate_license` tool.
 
-Contact: licensing@featureboard.dev · https://featureboard.dev/licensing
+Contact: licensing@featureboard.ai · https://featureboard.ai/licensing
 
 ## Warranty & liability
 

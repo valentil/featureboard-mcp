@@ -58,7 +58,7 @@ code repo on disk) and makes no network call.
   file so Lewis Valentine can follow up about a commercial agreement. It does not transmit
   data automatically; it returns a mailto/URL for you to contact the licensor.
 - Self-serve purchases happen entirely on Polar (our merchant of record) at
-  featureboard.dev/buy, in your browser — the product itself sends nothing to Polar.
+  featureboard.ai/buy, in your browser — the product itself sends nothing to Polar.
   Polar sees the data you give checkout (name, email, payment details) under its own
   privacy policy; the product only ever receives the resulting license key, which is
   verified offline. Purchase records (licensee, email, key) are kept by the licensor,

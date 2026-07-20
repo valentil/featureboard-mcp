@@ -32,15 +32,15 @@ const REQUESTS_FILE = "license_requests.json";
 export const USAGE_TYPES = ["personal", "public", "commercial-trial", "commercial"];
 // where a commercial licence should be requested
 export const LICENSE_CONTACT_URL =
-  process.env.FEATUREBOARD_LICENSE_URL || "https://featureboard.dev/licensing";
+  process.env.FEATUREBOARD_LICENSE_URL || "https://featureboard.ai/licensing";
 export const LICENSE_CONTACT_EMAIL =
-  process.env.FEATUREBOARD_LICENSE_EMAIL || "licensing@featureboard.dev";
+  process.env.FEATUREBOARD_LICENSE_EMAIL || "licensing@featureboard.ai";
 
 // Published self-serve pricing (FBMCPF-208). Seat-year USD; checkout is the Polar
-// storefront behind the stable featureboard.dev/buy redirect. Override for tests/staging.
+// storefront behind the stable featureboard.ai/buy redirect. Override for tests/staging.
 export const PRICE_PER_SEAT_YEAR_USD = 119;
 export const CHECKOUT_URL =
-  process.env.FEATUREBOARD_CHECKOUT_URL || "https://featureboard.dev/buy";
+  process.env.FEATUREBOARD_CHECKOUT_URL || "https://featureboard.ai/buy";
 
 function stateDir(dataDir) {
   return path.join(dataDir, STATE_DIR);
