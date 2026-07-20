@@ -198,7 +198,7 @@ const CORE_TOOLS = new Set([
   "get_board",
   "list_projects", "create_project", "get_project_config", "set_project_config",
   "add_product", "remove_product", "plan_work", "add_feature", "add_features_bulk",
-  "validate_feedback",
+  "validate_feedback", "capture_ask", "export_metrics",
   "decompose_feature", "log_bug", "list_tasks", "get_task", "get_metrics",
   "get_health", "get_work_log", "get_scratchpad", "set_scratchpad", "next_task",
   "set_status", "get_work_packet", "log_work", "update_task", "delete_task",
