@@ -3,7 +3,7 @@
 FeatureBoard is a plain **stdio MCP server** (`node server/index.js`, Node.js >= 18, deps:
 `@modelcontextprotocol/sdk` + `zod`). Nothing about the protocol surface is Claude-specific —
 verified against server v0.6.2 with a raw JSON-RPC client (`clientInfo: "cursor-test"`):
-clean `initialize` (protocol `2025-06-18`), **198 tools** in the default toolset, **67 tools**
+clean `initialize` (protocol `2025-06-18`), **201 tools** in the default toolset, **67 tools**
 with `FEATUREBOARD_CORE_ONLY=1`.
 
 ## Get the server
@@ -41,7 +41,7 @@ node /absolute/path/to/featureboard-mcp/server/index.js
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `FEATUREBOARD_DATA_DIR` | `~/FeatureBoard` | Folder holding your boards (each subfolder with `featurelist.md`/`buglist.md` is a board). |
-| `FEATUREBOARD_CORE_ONLY=1` | off (198 tools) | Trim to the 67 core board/task tools. Strongly recommended outside Claude — see the Cursor tool-limit note below. (`FEATUREBOARD_TOOLS=core` is the equivalent legacy spelling.) |
+| `FEATUREBOARD_CORE_ONLY=1` | off (201 tools) | Trim to the 67 core board/task tools. Strongly recommended outside Claude — see the Cursor tool-limit note below. (`FEATUREBOARD_TOOLS=core` is the equivalent legacy spelling.) |
 | `FEATUREBOARD_CLIENT_NEUTRAL=1` | off | Serve IDE-neutral server instructions. The default instructions are written for Claude Cowork (artifacts, sub-agent dispatch conventions); the neutral set drops those and describes `get_board` as an HTML file your IDE can save and open. Set this in any non-Claude host. |
 
 ## Cursor
@@ -76,7 +76,7 @@ interpolation supported. Source: [Cursor MCP docs](https://cursor.com/docs/mcp).
 > [threads](https://forum.cursor.com/t/mcp-server-40-tool-limit-in-cursor-is-this-frustrating-your-workflow/81627)
 > and [cursor/cursor#3369](https://github.com/cursor/cursor/issues/3369)), not stated on the
 > official MCP docs page — treat the exact number as subject to change. Practical upshot:
-> never run the full 198-tool surface in Cursor; set `FEATUREBOARD_CORE_ONLY=1` (67 tools)
+> never run the full 201-tool surface in Cursor; set `FEATUREBOARD_CORE_ONLY=1` (67 tools)
 > **and** switch off the tools you don't use from **Settings → MCP → featureboard** to get
 > under the ceiling. The board flow needs roughly: `list_projects`, `create_project`,
 > `plan_work`, `list_tasks`, `get_task`, `add_feature`, `log_bug`, `next_task`, `set_status`,
@@ -113,7 +113,7 @@ this repo**:
   `next_task` + `get_work_packet` feed the agent one focused brief at a time (scope, code
   location, definition of done); `set_status`/`log_work` keep an honest, human-readable
   record. Includes sprints, velocity metrics, requirements/acceptance checks, a knowledge
-  base, and an optional 198-tool extended surface (CRM, media, marketing-site, git
+  base, and an optional 201-tool extended surface (CRM, media, marketing-site, git
   integration). Local-first: your data is plain markdown in `FEATUREBOARD_DATA_DIR`. For
   Cursor, run with `FEATUREBOARD_CORE_ONLY=1` and `FEATUREBOARD_CLIENT_NEUTRAL=1`.
 - **Category/tags:** productivity, project-management, task-board, agile, MCP server
@@ -151,7 +151,7 @@ Useful to know:
 - **Claude/Cursor compat:** Grok Build also loads MCP config from `~/.claude.json`,
   `.cursor/mcp.json`, and project `.mcp.json` automatically — if you already set FeatureBoard
   up for Claude Code or Cursor, Grok Build picks it up with zero reconfiguration.
-- No documented hard tool cap like Cursor's 40, but 198 tool schemas still tax the context —
+- No documented hard tool cap like Cursor's 40, but 201 tool schemas still tax the context —
   `FEATUREBOARD_CORE_ONLY=1` is the sensible default here too, and
   `FEATUREBOARD_CLIENT_NEUTRAL=1` keeps the server's instructions from referencing Cowork
   artifacts that Grok can't render.
@@ -181,9 +181,9 @@ Generic stdio recipe — every value verified live against v0.6.2:
   (Node.js >= 18 per `package.json` engines; run `npm install` in the checkout first)
 - **Transport:** stdio only (no HTTP/SSE endpoint)
 - **Env:** `FEATUREBOARD_DATA_DIR` (defaults to `~/FeatureBoard` when unset),
-  `FEATUREBOARD_CORE_ONLY=1` for 67 tools instead of 198,
+  `FEATUREBOARD_CORE_ONLY=1` for 67 tools instead of 201,
   `FEATUREBOARD_CLIENT_NEUTRAL=1` for host-agnostic instructions
-- **Sanity check:** `initialize` → `tools/list` should return 198 tools (67 in core mode);
+- **Sanity check:** `initialize` → `tools/list` should return 201 tools (67 in core mode);
   `npm run smoke` in the checkout runs a fuller end-to-end pass.
 
 `get_board` outside Claude: it still returns the full board UI as one self-contained HTML
