@@ -16,6 +16,7 @@
  */
 
 import { withOrchestrationLabels } from "./orchestration.js";
+import { getProjectConfig } from "./metadata.js";
 
 // ---------------------------------------------------------------------------
 // Splitting raw feedback into candidate items
@@ -213,4 +214,44 @@ export function createFeedbackTickets(board, project, candidates) {
     };
     return board.addTask(project, type, withOrchestrationLabels(type, fields));
   });
+}
+
+// ---------------------------------------------------------------------------
+// FBMCPF-216: capture_ask — scoped-down Linear Asks. Structure ONE pasted
+// external request (a Slack message, forwarded email body, chat snippet) into
+// a ticket via the same heuristics as validate_feedback, tagged with its
+// source channel (ask:slack, ask:email, …). Deliberately NOT a live intake
+// listener — see docs/research/COMPETITOR-CONCEPTS-2026-07.md's rejection of
+// daemon-based routers; the orchestrator pastes, this structures.
+// ---------------------------------------------------------------------------
+
+/** Sanitize a source channel into an ask:<slug> label. */
+export function askLabel(source) {
+  const slug = String(source || "external").toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "external";
+  return `ask:${slug}`;
+}
+
+/**
+ * Capture a pasted external request as a single ticket. Returns the created
+ * ticket plus the heuristic signals so the caller can see why it classified
+ * the way it did. `from` (the original requester) is recorded in the
+ * description header, not lost.
+ */
+export function captureAsk(board, project, { source, text, from = null } = {}) {
+  if (!text || !String(text).trim()) throw new Error("text is required — paste the request to capture.");
+  let products = [];
+  try {
+    products = getProjectConfig(board, project).products || [];
+  } catch {}
+  const c = buildCandidate(text, 0, products);
+  const header = [`Source: ${source || "external"}`, from ? `From: ${from}` : null].filter(Boolean).join(" · ");
+  const fields = {
+    title: c.title,
+    description: `[${header}] ${c.description.replace(/\s+/g, " ")}`,
+    product: c.product || undefined,
+    priority: c.priority != null ? c.priority : undefined,
+    labels: [askLabel(source)],
+  };
+  const created = board.addTask(project, c.type, withOrchestrationLabels(c.type, fields));
+  return { ...created, ask: { source: source || "external", from, type: c.type, signals: c.signals } };
 }

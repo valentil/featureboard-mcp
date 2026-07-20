@@ -24,7 +24,7 @@ import { computeWaves } from "./planchain.js";
 import { evalReport } from "./eval.js";
 import { exportBoard, parsePmImport } from "./pmbridge.js";
 import { setRequirements, getRequirements, checkAcceptance } from "./requirements.js";
-import { parseFeedback, createFeedbackTickets } from "./feedback.js";
+import { parseFeedback, createFeedbackTickets, captureAsk } from "./feedback.js";
 import { withOrchestrationLabels, findUnlabeledTickets, applyTriage } from "./orchestration.js";
 import { notifySlack, notifyTicketEvent } from "./slack.js";
 import { registerEmail } from "./registration.js";
@@ -4599,6 +4599,27 @@ server.registerTool(
     const board = getBoard();
     if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
     return cleanupWorktree(board, project, ticket, { force });
+  })
+);
+
+server.registerTool(
+  "capture_ask",
+  {
+    title: "Capture an external request as a ticket",
+    description:
+      "Structure ONE pasted external request — a Slack message, forwarded email body, chat snippet — into a feature or bug via the same heuristics as validate_feedback (type/product/priority keywords, model/cap intake guard), labeled ask:<source> with the requester recorded in the description. This is paste-to-structure, not a live intake listener.",
+    inputSchema: {
+      project: z.string(),
+      text: z.string().describe("The pasted request text."),
+      source: z.string().optional().describe("Source channel, e.g. slack, email, meeting (label becomes ask:<source>)."),
+      from: z.string().optional().describe("Who asked (name/handle/email) — recorded in the description header."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  writeTool(({ project, text, source, from }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return captureAsk(board, project, { source, text, from });
   })
 );
 
