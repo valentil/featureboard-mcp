@@ -266,7 +266,8 @@ function writeTool(fn) {
               text:
                 `Write blocked — ${ev.message}\n\n` +
                 `License status: ${ev.status}. Reads still work. ` +
-                `Enter a key with activate_license, or start licensing with request_commercial_license.`,
+                `Buy a key (US$${license.PRICE_PER_SEAT_YEAR_USD}/seat/yr) at ${license.CHECKOUT_URL} and enter it with activate_license, ` +
+                `or start custom licensing with request_commercial_license.`,
             },
           ],
           isError: true,
@@ -4633,7 +4634,8 @@ server.registerTool(
     return {
       recorded: entry,
       next_steps:
-        "Your request was recorded. Complete a signed agreement via the URL or email below; the licensor will issue a key you can activate with activate_license.",
+        "Your request was recorded. Fastest path: buy self-serve at the checkout URL below and activate the emailed key with activate_license. For POs/enterprise terms, use the licensing URL or email instead and the licensor will issue a key after signature.",
+      buy_now: { url: license.CHECKOUT_URL, pricePerSeatPerYearUSD: license.PRICE_PER_SEAT_YEAR_USD },
       licensing_url: license.LICENSE_CONTACT_URL,
       email_to: license.LICENSE_CONTACT_EMAIL,
       mailto: `mailto:${license.LICENSE_CONTACT_EMAIL}?subject=${subject}&body=${body}`,

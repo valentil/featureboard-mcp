@@ -158,7 +158,8 @@ export function evaluate(dataDir) {
         status: "commercial-invalid",
         configured: true,
         allowWrites: false,
-        message: `Commercial license key invalid or expired (${v.error}). Writes are frozen; reads remain available.`,
+        checkoutUrl: CHECKOUT_URL,
+        message: `Commercial license key invalid or expired (${v.error}). Writes are frozen; reads remain available. Buy a new key (US$${PRICE_PER_SEAT_YEAR_USD}/seat/yr) at ${CHECKOUT_URL}, then activate_license.`,
       };
     }
   }
@@ -168,8 +169,9 @@ export function evaluate(dataDir) {
       status: "commercial-unlicensed",
       configured: true,
       allowWrites: false,
+      checkoutUrl: CHECKOUT_URL,
       message:
-        "Commercial use requires a license key. Use request_commercial_license to start the process, then activate_license once you receive a key. Writes are frozen; reads remain available.",
+        `Commercial use requires a license key. Buy one now (US$${PRICE_PER_SEAT_YEAR_USD}/seat/yr) at ${CHECKOUT_URL} and run activate_license — or use request_commercial_license for custom/enterprise terms. Writes are frozen; reads remain available.`,
     };
   }
 
@@ -191,8 +193,9 @@ export function evaluate(dataDir) {
     configured: true,
     allowWrites: false,
     trialEndedAt: new Date(start + TRIAL_MS).toISOString(),
+    checkoutUrl: CHECKOUT_URL,
     message:
-      "The 24-hour commercial trial has expired. Reads still work, but writes are frozen. " +
-      "Use request_commercial_license to begin licensing, then activate_license with your key.",
+      `The 24-hour commercial trial has expired. Reads still work, but writes are frozen. ` +
+      `Buy a key now (US$${PRICE_PER_SEAT_YEAR_USD}/seat/yr) at ${CHECKOUT_URL} and run activate_license — or use request_commercial_license for custom/enterprise terms.`,
   };
 }
