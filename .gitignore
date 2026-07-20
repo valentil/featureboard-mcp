@@ -21,3 +21,6 @@ autoresearch.config.json
 autoresearch_results.json
 autoresearch_results.json.bak
 autoresearch.log
+
+# FBMCPF-254: sub-agent live-progress scratch channel (get_live_activity) — not project history
+.fb-progress

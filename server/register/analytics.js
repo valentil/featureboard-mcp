@@ -1,6 +1,6 @@
 // Auto-extracted from server/index.js (FBMCPF-224). Registration blocks moved verbatim.
 export function registerAnalyticsTools(server, ctx) {
-  const { Board, addKbDoc, agentMonitorV2, appendHeartbeat, applyDriftRemediation, driftReport, existsSync, getBoard, getGitConfig, getHistoryMap, getKbDoc, getLatestUpdate, getPricing, listKbDocs, listSprints, meta, nodePath, postProjectUpdate, predictDueDates, reconcileChurn, recordDriftScore, rollupCost, searchKb, setSite, startDriftRun, suggestHistoricalFiles, tryTool, writeTool, z } = ctx;
+  const { Board, addKbDoc, agentMonitorV2, appendHeartbeat, applyDriftRemediation, driftReport, existsSync, getBoard, getGitConfig, getHistoryMap, getKbDoc, getLiveActivity, getLatestUpdate, getPricing, listKbDocs, listSprints, meta, nodePath, postProjectUpdate, predictDueDates, reconcileChurn, recordDriftScore, rollupCost, searchKb, setSite, startDriftRun, suggestHistoricalFiles, tryTool, writeTool, z } = ctx;
 
 // analytics & metadata (v0.3) ----------------------------------------------
 
@@ -628,6 +628,38 @@ server.registerTool(
     }
     return meta.getWorkPacket(board, project, ticket, { historicalFiles });
   })
+);
+
+server.registerTool(
+  "get_live_activity",
+  {
+    title: "Get live activity (sub-agent visibility)",
+    description:
+      "Read-only git/filesystem ground truth about what coding sub-agents are doing RIGHT NOW, for one project or " +
+      "(omit project) a rollup across every project with a codeLocation configured. Sub-agents deliberately never " +
+      "write the board mid-flight (only the orchestrator sets status/logs work/commits), so between a ticket going " +
+      "In Progress and coming back Done, the board itself has nothing new to say — the filesystem is the only " +
+      "truth. Per repo (code + website, when configured): dirty files (capped list + total count) and pending " +
+      "additions/deletions, commits in the last sinceMinutes, and OTHER git worktrees (a live sub-agent edit " +
+      "surface) with their branch + dirty-file count. Also surfaces each repo's (and each worktree's) `.fb-progress` " +
+      "file — the sanctioned sub-agent progress channel: tell sub-agents in their brief to append one-line " +
+      "timestamped notes there at each major step (created → tests written → suite green, etc.) — " +
+      "plus recently-modified files and the cheap board-side signals (In Progress count, last work-log age). Use " +
+      "this for stalled-ticket triage (get_agent_monitor flags a stall from board events; this answers 'but is " +
+      "anything actually moving?') and for a cross-project 'what's live right now' rollup on Mission Control. " +
+      "In all-projects mode, quiet projects (nothing within sinceMinutes) are returned as plain name strings " +
+      "instead of full objects, appended after the active ones.",
+    inputSchema: {
+      project: z.string().optional().describe("Limit to one project; omit for an all-projects rollup."),
+      sinceMinutes: z.coerce.number().int().min(1).max(1440).optional().default(30).describe("Activity window in minutes (commits, recently-modified files, freshness checks). Default 30."),
+      maxFiles: z.coerce.number().int().min(1).max(200).optional().default(15).describe("Cap on dirty-file and recently-modified-file lists per repo."),
+      maxCommits: z.coerce.number().int().min(1).max(200).optional().default(10).describe("Cap on recent commits returned per repo."),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project, sinceMinutes, maxFiles, maxCommits }) =>
+    getLiveActivity(getBoard(), project || null, { sinceMinutes, maxFiles, maxCommits })
+  )
 );
 
 }

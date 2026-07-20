@@ -355,6 +355,10 @@
       "description": "Assemble a focused brief for one ticket before you work it: scope, linked-issue details, code location + custom project prompt, scratchpad mentions, the ticket's recent work log, files to read, and a definition of done. Read the files it points to rather than dumping them."
     },
     {
+      "name": "get_live_activity",
+      "description": "Read-only git/filesystem ground truth about what coding sub-agents are doing RIGHT NOW, for one project or (omit project) a rollup across every project with a codeLocation configured. Sub-agents deliberately never write the board mid-flight (only the orchestrator sets status/logs work/commits), so between a ticket going In Progress and coming back Done, the board itself has nothing new to say — the filesystem is the only truth. Per repo (code + website, when configured): dirty files (capped list + total count) and pending additions/deletions, commits in the last sinceMinutes, and OTHER git worktrees (a live sub-agent edit surface) with their branch + dirty-file count. Also surfaces each repo's (and each worktree's) `.fb-progress` file — the sanctioned sub-agent progress channel: tell sub-agents in their brief to append one-line timestamped notes there at each major step (created → tests written → suite green, etc.) — plus recently-modified files and the cheap board-side signals (In Progress count, last work-log age). Use this for stalled-ticket triage (get_agent_monitor flags a stall from board events; this answers 'but is anything actually moving?') and for a cross-project 'what's live right now' rollup on Mission Control. In all-projects mode, quiet projects (nothing within sinceMinutes) are returned as plain name strings instead of full objects, appended after the active ones."
+    },
+    {
       "name": "suggest_test_stub",
       "description": "Generate a boilerplate test file (path + node:test content) for a ticket, derived from its title/description and the board's code location. Agent-native 'fixtest': call it when creating or starting a ticket, then write the returned file. Read-only — it returns the stub, it does not create the file."
     },
