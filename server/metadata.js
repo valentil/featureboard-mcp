@@ -48,7 +48,7 @@ function atomicWrite(p, content) {
 // ---------------------------------------------------------------------------
 
 // FBMCPF-120: "sprints" holds the sprint registry (name/start/end/goal)
-const CONFIG_KEYS = ["products", "codeLocation", "websiteLocation", "agentModel", "description", "website", "featurePrefix", "bugPrefix", "customPrompt", "brandTitle", "brandSubtitle", "brandWords", "brandVoice", "brandPrimary", "brandAccent", "brandLogo", "brandFont", "imageTool", "sprints", "stage", "gitTargets", "worktreeDir", "requireReview", "requireCommitOnDone", "slackWebhook", "slackEvents", "pricing", "rules", "slaThresholds", "autoStatusOnCommit", "doneGates", "sprintAutoAssign", "checks", "requireChecksOnDone", "researchOnIntake", "ragInPackets", "ragK", "voiceProfile", "voiceLint", "voiceLintMin"];
+const CONFIG_KEYS = ["products", "codeLocation", "websiteLocation", "agentModel", "description", "website", "featurePrefix", "bugPrefix", "customPrompt", "brandTitle", "brandSubtitle", "brandWords", "brandVoice", "brandPrimary", "brandAccent", "brandLogo", "brandFont", "imageTool", "sprints", "stage", "gitTargets", "worktreeDir", "requireReview", "requireCommitOnDone", "slackWebhook", "slackEvents", "pricing", "rules", "slaThresholds", "autoStatusOnCommit", "doneGates", "sprintAutoAssign", "checks", "requireChecksOnDone", "researchOnIntake", "ragInPackets", "ragK", "voiceProfile", "voiceLint", "voiceLintMin", "etaHints"];
 
 /** Merged view: managed config overlaid on legacy project_config.json. */
 export function getProjectConfig(board, project) {
@@ -668,14 +668,22 @@ export const DISPATCH_MODEL_RE = /^model:([a-z0-9._-]+)$/i;
 export const DISPATCH_CAP_RE = /^cap:(\d+(?:\.\d+)?)([km]?)$/i;
 export const DISPATCH_EFFORT_RE = /^effort:(low|medium|high)$/i;
 
+// FBMCPF-269: appended to the dispatch instruction whenever the project's
+// etaHints config resolves ON (default ON — see CONFIG_KEYS above), so
+// "surface the ETA before starting a slow step" is the default reading of
+// every dispatch, not something the orchestrator/sub-agent has to remember.
+const ETA_HINT_SENTENCE = "etaHints is on: before starting any step expected to exceed ~2 minutes, tell the human the expected duration.";
+
 /**
  * Pure directive builder: sonnet/haiku tickets are cheap enough to hand to a
  * sub-agent (which edits code and runs tests but never writes the board or
  * commits); opus/fable tickets are orchestrator-tier and run sequentially
  * with review. `blocked` (when known) forces parallelizable to false even
- * for an otherwise-dispatchable ticket.
+ * for an otherwise-dispatchable ticket. `etaHints` (default true — callers
+ * thread in the project's resolved etaHints config, defaulting ON) appends
+ * ETA_HINT_SENTENCE to the instruction.
  */
-export function buildDispatchDirective(task, { blocked = false } = {}) {
+export function buildDispatchDirective(task, { blocked = false, etaHints = true } = {}) {
   let model = null, cap = null, effort = null;
   for (const l of (task && task.labels) || []) {
     const ls = String(l);
@@ -695,9 +703,10 @@ export function buildDispatchDirective(task, { blocked = false } = {}) {
   if (!model) model = "sonnet";
   const subAgent = model === "sonnet" || model === "haiku";
   const parallelizable = subAgent && !blocked;
-  const instruction = subAgent
+  let instruction = subAgent
     ? `Dispatch this ticket to a ${model} sub-agent with this packet (cap ~${cap} tokens). The sub-agent edits code and runs tests but NEVER writes the board or commits — the orchestrator reviews, sets status, logs work, and commits.`
     : `Work this ticket in the orchestrator context (model tier ${model}); review carefully before close-out.`;
+  if (etaHints) instruction += ` ${ETA_HINT_SENTENCE}`;
   return { model, cap, effort, subAgent, parallelizable, instruction };
 }
 
@@ -793,7 +802,7 @@ export function getWorkPacket(board, project, ticket, opts = {}) {
     scratchpadMentions,
     recentWork,
     suggestedModel: suggestModelForPacket(task),
-    dispatch: buildDispatchDirective(task, { blocked: isTaskBlockedLocal(board, project, task) }),
+    dispatch: buildDispatchDirective(task, { blocked: isTaskBlockedLocal(board, project, task), etaHints: cfg.etaHints !== false }),
     definitionOfDone: effectiveDoD,
     closeOut:
       "When done: set_status Done with a one-line completionSummary, then log_work with additions/deletions (and model), and — when git is configured — commit per ticket (commit_feature, message referencing the ticket id). Only the orchestrator writes to the board; work one ticket at a time.",

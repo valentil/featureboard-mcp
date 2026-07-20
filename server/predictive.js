@@ -11,7 +11,15 @@
  * The heavy lifting is a pure function (`predictCompletion`) so it can be unit
  * tested without a Board or the filesystem; `predictDueDates` is the thin
  * wrapper that gathers the board's tasks and feeds the pure core.
+ *
+ * FBMCPF-269 also adds `estimateTicketMinutes` here (per-ticket wall-clock ETA,
+ * distinct from predictCompletion's board-wide due-date projection): it needs
+ * effortOfTask (budget.js) and eventsForTicket (events.js), and this module is
+ * only ever imported by index.js/register/*.js — never by metadata.js, budget.js,
+ * or events.js themselves — so pulling those two in here creates no import cycle.
  */
+import { effortOfTask } from "./budget.js";
+import { eventsForTicket } from "./events.js";
 
 // ---------------------------------------------------------------------------
 // date helpers (calendar days; no weekend/holiday modelling, matching original)
@@ -166,6 +174,93 @@ export function predictDueDates(board, project, opts = {}) {
     asOf: opts.asOf ? new Date(opts.asOf) : undefined,
   });
   return { project, type, ...result };
+}
+
+// ---------------------------------------------------------------------------
+// FBMCPF-269: ETA hints — per-ticket wall-clock estimate
+// ---------------------------------------------------------------------------
+
+// Static fallback ranges (minutes) used when a project has fewer than
+// ETA_MIN_SAMPLES measurable historical durations for a ticket's effort label.
+const ETA_DEFAULTS = {
+  low: { low: 5, high: 10 },
+  medium: { low: 10, high: 20 },
+  high: { low: 20, high: 40 },
+};
+const ETA_MIN_SAMPLES = 3;
+
+function etaPercentile(sorted, p) {
+  if (!sorted.length) return null;
+  if (sorted.length === 1) return sorted[0];
+  const idx = (sorted.length - 1) * p;
+  const lo = Math.floor(idx), hi = Math.ceil(idx);
+  if (lo === hi) return sorted[lo];
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
+}
+
+/**
+ * A Done ticket's measured wall-clock duration in minutes, from its most
+ * recent status->"In Progress" audit event to its most recent status->"Done"
+ * audit event (mirrors events.js's resolveStartedInProgress/resolveCompletedAt
+ * conventions: "most recent" because events are append-order and a ticket that
+ * bounced back through In Progress more than once should be measured by its
+ * final run, not a stale earlier one). Returns null when there's no usable
+ * In Progress -> Done pair, or when the pair doesn't resolve to a positive
+ * duration (e.g. clock skew, or a ticket whose events predate FBMCPF-142).
+ */
+function measuredMinutes(board, project, ticketNumber) {
+  const statusEvents = eventsForTicket(board, project, ticketNumber).filter((e) => e.field === "status");
+  const starts = statusEvents.filter((e) => e.to === "In Progress");
+  const ends = statusEvents.filter((e) => e.to === "Done");
+  if (!starts.length || !ends.length) return null;
+  const startMs = Date.parse(starts[starts.length - 1].ts);
+  const endMs = Date.parse(ends[ends.length - 1].ts);
+  if (Number.isNaN(startMs) || Number.isNaN(endMs)) return null;
+  const minutes = (endMs - startMs) / 60000;
+  return minutes > 0 ? minutes : null;
+}
+
+/**
+ * Estimate how long a ticket will take, in minutes (FBMCPF-269 "ETA hints").
+ *
+ * Basis (a): a historical median wall-clock duration for OTHER Done tickets
+ * in this project sharing the same effort:<low|medium|high> label — measured
+ * via measuredMinutes() above — when there are at least ETA_MIN_SAMPLES (3)
+ * usable samples. The range is the sample's 25th-75th percentile band, so
+ * it reflects genuine observed spread rather than a made-up multiplier.
+ *
+ * Basis (b): a documented static default per effort label (low ~5-10min,
+ * medium ~10-20min, high ~20-40min) when history is thin.
+ *
+ * `ticket`'s own effort:* label decides which bucket it's estimated against;
+ * a ticket with no effort label is treated as "medium" (same default budget.js
+ * uses for effort-less tickets elsewhere). Always honest about its basis:
+ * "history (n=X)" or "default" — never silently blends the two.
+ */
+export function estimateTicketMinutes(board, project, ticket) {
+  const task = board.getTask(project, ticket);
+  if (!task) throw new Error(`Ticket ${ticket} not found in "${project}".`);
+  const effort = effortOfTask(task) || "medium";
+
+  const samples = [];
+  for (const t of board.listTasks(project, {})) {
+    if (t.status !== "Done") continue;
+    if (t.ticketNumber === task.ticketNumber) continue; // never use a ticket as its own history
+    if (effortOfTask(t) !== effort) continue; // only same-label tickets count as history for this bucket
+    const minutes = measuredMinutes(board, project, t.ticketNumber);
+    if (minutes != null) samples.push(minutes);
+  }
+
+  if (samples.length >= ETA_MIN_SAMPLES) {
+    const sorted = samples.slice().sort((a, b) => a - b);
+    let low = Math.max(1, Math.round(etaPercentile(sorted, 0.25)));
+    let high = Math.round(etaPercentile(sorted, 0.75));
+    if (high <= low) high = low + Math.max(1, Math.round(low * 0.2));
+    return { estimatedMinutes: { low, high }, basis: `history (n=${samples.length})` };
+  }
+
+  const fallback = ETA_DEFAULTS[effort] || ETA_DEFAULTS.medium;
+  return { estimatedMinutes: { low: fallback.low, high: fallback.high }, basis: "default" };
 }
 
 // end of predictive.js

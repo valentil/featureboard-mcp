@@ -76,11 +76,11 @@
     },
     {
       "name": "plan_work",
-      "description": "Turn a user request into board items in one step. Optionally creates the project, then adds the features and bugs you list. Use this as the FIRST step when starting a substantive request, then work the tickets one at a time. Returns all created tickets."
+      "description": "Turn a user request into board items in one step. Optionally creates the project, then adds the features and bugs you list. Use this as the FIRST step when starting a substantive request, then work the tickets one at a time. Returns all created tickets. When the project config etaHints is on (default), each created ticket carries an `eta` estimate and the response carries a `totalEta` roll-up (FBMCPF-269)."
     },
     {
       "name": "next_task",
-      "description": "Return the next open ticket to work (status Todo or In Progress), so you can pull work one item at a time. Prefers In Progress, then earliest due date, then oldest ticket. Returns null when the board is clear."
+      "description": "Return the next open ticket to work (status Todo or In Progress), so you can pull work one item at a time. Prefers In Progress, then earliest due date, then oldest ticket. Returns null when the board is clear. When the project config etaHints is on (default), also carries an `eta` estimate for the returned ticket (FBMCPF-269)."
     },
     {
       "name": "update_task",
@@ -360,7 +360,7 @@
     },
     {
       "name": "get_work_packet",
-      "description": "Assemble a focused brief for one ticket before you work it: scope, linked-issue details, code location + custom project prompt, scratchpad mentions, the ticket's recent work log, files to read, and a definition of done. Read the files it points to rather than dumping them."
+      "description": "Assemble a focused brief for one ticket before you work it: scope, linked-issue details, code location + custom project prompt, scratchpad mentions, the ticket's recent work log, files to read, and a definition of done. Read the files it points to rather than dumping them. When the project config etaHints is on (default), also carries an `eta` ({estimatedMinutes:{low,high}, basis}) so you can tell the human how long this ticket is expected to take (FBMCPF-269)."
     },
     {
       "name": "prepare_research",

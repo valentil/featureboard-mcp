@@ -1,6 +1,6 @@
 // Auto-extracted from server/index.js (FBMCPF-224). Registration blocks moved verbatim.
 export function registerBoardTools(server, ctx) {
-  const { BOARD_HTML_PATH, Board, StatusEnum, applyTriage, autoAssignSprintFields, compactView, completedAtForTask, computeWaves, createFeedbackTickets, evaluateRules, extractBoardToolNames, fail, fullView, getBoard, isBlocked, meta, notifySlack, parseFeedback, parseImport, parsePmImport, readFileSync, sprintOfTask, suggestModel, ticketsWithUnresolvedReviews, tryTool, withOrchestrationLabels, writeTool, z } = ctx;
+  const { BOARD_HTML_PATH, Board, StatusEnum, applyTriage, autoAssignSprintFields, compactView, completedAtForTask, computeWaves, createFeedbackTickets, estimateTicketMinutes, evaluateRules, extractBoardToolNames, fail, fullView, getBoard, isBlocked, meta, notifySlack, parseFeedback, parseImport, parsePmImport, readFileSync, sprintOfTask, suggestModel, ticketsWithUnresolvedReviews, tryTool, withOrchestrationLabels, writeTool, z } = ctx;
 
 // projects -----------------------------------------------------------------
 
@@ -349,7 +349,7 @@ server.registerTool(
   {
     title: "Plan work (break a request onto the board)",
     description:
-      "Turn a user request into board items in one step. Optionally creates the project, then adds the features and bugs you list. Use this as the FIRST step when starting a substantive request, then work the tickets one at a time. Returns all created tickets.",
+      "Turn a user request into board items in one step. Optionally creates the project, then adds the features and bugs you list. Use this as the FIRST step when starting a substantive request, then work the tickets one at a time. Returns all created tickets. When the project config etaHints is on (default), each created ticket carries an `eta` estimate and the response carries a `totalEta` roll-up (FBMCPF-269).",
     inputSchema: {
       project: z.string().describe("Board to add to. If it does not exist and createProject is true, it is created."),
       createProject: z.boolean().optional().default(false),
@@ -436,7 +436,25 @@ server.registerTool(
     }
     const executionPlan = { waves: computeWaves(tickets, edges), edges };
     if (warnings.length) executionPlan.warnings = warnings;
-    return { project, created_project, features: createdFeatures, bugs: createdBugs, executionPlan };
+
+    // FBMCPF-269: etaHints defaults ON (see CONFIG_KEYS in metadata.js) — attach
+    // a per-ticket eta to every newly-created ticket plus a totalEta roll-up
+    // (sum of every ticket's low/high) so the human sees the size of the whole
+    // batch up front, not just ticket-by-ticket as next_task serves them.
+    const cfg = meta.getProjectConfig(board, project);
+    let resultFeatures = createdFeatures, resultBugs = createdBugs, totalEta;
+    if (cfg.etaHints !== false && createdAll.length) {
+      const etaByTicket = new Map(createdAll.map((t) => [t.ticketNumber, estimateTicketMinutes(board, project, t.ticketNumber)]));
+      resultFeatures = createdFeatures.map((t) => ({ ...t, eta: etaByTicket.get(t.ticketNumber) }));
+      resultBugs = createdBugs.map((t) => ({ ...t, eta: etaByTicket.get(t.ticketNumber) }));
+      const totals = [...etaByTicket.values()].reduce(
+        (acc, e) => ({ low: acc.low + e.estimatedMinutes.low, high: acc.high + e.estimatedMinutes.high }),
+        { low: 0, high: 0 }
+      );
+      totalEta = { estimatedMinutes: totals, ticketCount: etaByTicket.size };
+    }
+
+    return { project, created_project, features: resultFeatures, bugs: resultBugs, executionPlan, ...(totalEta ? { totalEta } : {}) };
   })
 );
 
@@ -445,7 +463,7 @@ server.registerTool(
   {
     title: "Next task to work",
     description:
-      "Return the next open ticket to work (status Todo or In Progress), so you can pull work one item at a time. Prefers In Progress, then earliest due date, then oldest ticket. Returns null when the board is clear.",
+      "Return the next open ticket to work (status Todo or In Progress), so you can pull work one item at a time. Prefers In Progress, then earliest due date, then oldest ticket. Returns null when the board is clear. When the project config etaHints is on (default), also carries an `eta` estimate for the returned ticket (FBMCPF-269).",
     inputSchema: {
       project: z.string(),
       type: z.enum(["all", "feature", "bug"]).optional().default("all"),
@@ -475,10 +493,16 @@ server.registerTool(
     const num = (t) => parseInt((t.ticketNumber || "").replace(/\D+/g, ""), 10) || 0;
     open.sort((a, b) => rank(a) - rank(b) || prio(a) - prio(b) || dueVal(a) - dueVal(b) || num(a) - num(b));
     const sm = suggestModel(open[0]); // FBMCPF-125: model tiering hint
+    // FBMCPF-269: etaHints defaults ON (see CONFIG_KEYS in metadata.js) —
+    // resolved once here so both the dispatch instruction sentence and the
+    // eta field it promises stay in sync.
+    const cfg = meta.getProjectConfig(board, project);
+    const etaHintsOn = cfg.etaHints !== false;
     // FBMCPF-236: dispatch directive — makes sub-agent fan-out the default
     // reading of next_task's result, same as get_work_packet.
-    const dispatch = meta.buildDispatchDirective(open[0], { blocked: isBlocked(board, project, open[0]) });
+    const dispatch = meta.buildDispatchDirective(open[0], { blocked: isBlocked(board, project, open[0]), etaHints: etaHintsOn });
     const res = { next: fullView(open[0]), remaining: openAll.length, suggestedModel: sm.model, modelBasis: sm.basis, dispatch };
+    if (etaHintsOn) res.eta = estimateTicketMinutes(board, project, open[0].ticketNumber);
     if (blockedSkipped) res.blockedSkipped = blockedSkipped;
     if (reviewSkipped) res.reviewSkipped = reviewSkipped;
     return res;

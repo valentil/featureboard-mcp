@@ -1,6 +1,6 @@
 // Auto-extracted from server/index.js (FBMCPF-224). Registration blocks moved verbatim.
 export function registerAnalyticsTools(server, ctx) {
-  const { Board, addKbDoc, agentMonitorV2, appendEvent, appendHeartbeat, applyDriftRemediation, driftReport, existsSync, getBoard, getGitConfig, getHistoryMap, getKbDoc, getLiveActivity, getLatestUpdate, getPricing, getVoiceProfile, lastDispatchForTicket, lintVoice, listKbDocs, listSprints, maybeLint, meta, nodePath, postProjectUpdate, predictDueDates, reconcileChurn, recordDriftScore, rollupCost, prepareResearch, ragSearch, searchKb, setSite, startDriftRun, suggestHistoricalFiles, tryTool, writeTool, z } = ctx;
+  const { Board, addKbDoc, agentMonitorV2, appendEvent, appendHeartbeat, applyDriftRemediation, driftReport, estimateTicketMinutes, existsSync, getBoard, getGitConfig, getHistoryMap, getKbDoc, getLiveActivity, getLatestUpdate, getPricing, getVoiceProfile, lastDispatchForTicket, lintVoice, listKbDocs, listSprints, maybeLint, meta, nodePath, postProjectUpdate, predictDueDates, reconcileChurn, recordDriftScore, rollupCost, prepareResearch, ragSearch, searchKb, setSite, startDriftRun, suggestHistoricalFiles, tryTool, writeTool, z } = ctx;
 
 // analytics & metadata (v0.3) ----------------------------------------------
 
@@ -695,7 +695,7 @@ server.registerTool(
   {
     title: "Get work packet",
     description:
-      "Assemble a focused brief for one ticket before you work it: scope, linked-issue details, code location + custom project prompt, scratchpad mentions, the ticket's recent work log, files to read, and a definition of done. Read the files it points to rather than dumping them.",
+      "Assemble a focused brief for one ticket before you work it: scope, linked-issue details, code location + custom project prompt, scratchpad mentions, the ticket's recent work log, files to read, and a definition of done. Read the files it points to rather than dumping them. When the project config etaHints is on (default), also carries an `eta` ({estimatedMinutes:{low,high}, basis}) so you can tell the human how long this ticket is expected to take (FBMCPF-269).",
     inputSchema: { project: z.string(), ticket: z.string() },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
@@ -714,7 +714,13 @@ server.registerTool(
     } catch {
       historicalFiles = [];
     }
-    return meta.getWorkPacket(board, project, ticket, { historicalFiles });
+    const packet = meta.getWorkPacket(board, project, ticket, { historicalFiles });
+    // FBMCPF-269: etaHints defaults ON (see CONFIG_KEYS in metadata.js) —
+    // attach a per-ticket wall-clock estimate alongside the packet's other
+    // scoping info.
+    const cfg = meta.getProjectConfig(board, project);
+    if (cfg.etaHints !== false) packet.eta = estimateTicketMinutes(board, project, ticket);
+    return packet;
   })
 );
 
