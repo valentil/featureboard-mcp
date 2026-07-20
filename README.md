@@ -241,6 +241,17 @@ branch, merge/rebase `ticket/<id>`, run tests, `commit_feature`, then `cleanup_w
 > auto-creates worktrees in the repo itself. Point `worktreeDir` at a path outside every synced
 > mount (e.g. an OS tmpdir) if in doubt.
 
+## 5-minute quickstart
+
+1. **Install:** Claude Desktop -> Settings -> Extensions -> Install from file -> `featureboard-mcp.mcpb`. Restart Claude Desktop.
+2. **Approve tools once:** Settings -> Extensions -> FeatureBoard -> Tool permissions -> **Allow all** (see next section).
+3. **Onboard:** say *"show my featureboard"* — pick a license tier on the onboarding screen.
+4. **Plan:** paste: *"Plan work for project MyApp: create it and add tickets for <paste your todo list>"* — `plan_work` files everything with model/cap labels.
+5. **Churn:** say *"work the board"* — Claude pulls `next_task`, implements, commits, and closes tickets one at a time.
+6. **Review:** *"show the board"* for the live Kanban; *"close the sprint"* for an audience-ready report.
+
+That's the whole loop. Everything below is depth.
+
 ## One-time setup: approve tools in bulk
 
 FeatureBoard registers ~195 tools. In Claude Desktop, open **Settings → Extensions →

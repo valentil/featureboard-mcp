@@ -1,3 +1,5 @@
+> **Current stats (0.6.1, 2026-07-19):** ~195 tools · 750 passing tests · self-serve commercial licensing live at featureboard.ai/buy.
+
 # Connectors Directory — submission checklist
 
 Preflight for submitting **FeatureBoard** (`featureboard-mcp`) to the Claude

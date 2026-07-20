@@ -93,6 +93,42 @@ Format the message:
 
 ---
 
+## Bootstrap a Backlog from an Unfamiliar Codebase
+
+**When:** Once, when pointing FeatureBoard at an existing repo it has never managed.
+
+**Prompt:**
+
+```
+Bootstrap a FeatureBoard backlog for the repo at <path>, project name <Name>.
+
+1. Create the project and point it at the code:
+   - create_project, then set_project_config with codeLocation:<path>.
+
+2. Survey the codebase:
+   - list_code_files for the layout and sizes.
+   - code_file_map with symbols:true for per-file functions/exports and split candidates.
+   - read_code_file on the entry point and any README/docs to learn intent.
+
+3. Derive the backlog (aim for 10-20 tickets):
+   - Obvious missing features or half-finished modules -> features.
+   - Oversized files flagged by code_file_map -> refactor tickets (use suggest_file_split).
+   - Absent tests for core modules -> testing tickets.
+   - Stale/missing docs -> doc tickets.
+
+4. File everything in one call with add_features_bulk (or plan_work), letting the
+   intake guard stamp model:/cap: labels and triage fill product/priority.
+
+5. Show me the board (get_board) and a daily_plan for the first day's churn.
+```
+
+**Why it works:** the intake guard (FBMCPF-159) labels every ticket with a
+model/cap decision at birth, and triage intelligence (FBMCPF-214) backfills
+product/priority from any tickets that already exist — so the bootstrapped
+backlog is immediately runnable by the churn loop.
+
+---
+
 ## How to Use These Recipes
 
 1. Open **Claude Code** and go to **Scheduled tasks** (or create a new scheduled task).
