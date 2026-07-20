@@ -47,7 +47,7 @@ function atomicWrite(p, content) {
 // ---------------------------------------------------------------------------
 
 // FBMCPF-120: "sprints" holds the sprint registry (name/start/end/goal)
-const CONFIG_KEYS = ["products", "codeLocation", "agentModel", "description", "website", "featurePrefix", "bugPrefix", "customPrompt", "brandTitle", "brandSubtitle", "brandWords", "brandVoice", "brandPrimary", "brandAccent", "brandLogo", "brandFont", "imageTool", "sprints", "stage", "gitTargets", "worktreeDir", "requireReview", "requireCommitOnDone", "slackWebhook", "slackEvents", "pricing", "rules", "slaThresholds", "autoStatusOnCommit", "doneGates", "sprintAutoAssign"];
+const CONFIG_KEYS = ["products", "codeLocation", "websiteLocation", "agentModel", "description", "website", "featurePrefix", "bugPrefix", "customPrompt", "brandTitle", "brandSubtitle", "brandWords", "brandVoice", "brandPrimary", "brandAccent", "brandLogo", "brandFont", "imageTool", "sprints", "stage", "gitTargets", "worktreeDir", "requireReview", "requireCommitOnDone", "slackWebhook", "slackEvents", "pricing", "rules", "slaThresholds", "autoStatusOnCommit", "doneGates", "sprintAutoAssign"];
 
 /** Merged view: managed config overlaid on legacy project_config.json. */
 export function getProjectConfig(board, project) {
@@ -60,6 +60,7 @@ export function getProjectConfig(board, project) {
       legacy = {
         products: Array.isArray(j.products) ? j.products : [],
         codeLocation: j.codeLocation || null,
+        websiteLocation: j.websiteLocation || null,
         agentModel: j.agentModel || null,
         website: j.website || null,
         featurePrefix: j.featurePrefix || null,
@@ -605,7 +606,13 @@ function suggestModelForPacket(t) {
  * ledgers that can live in different repos: the code (at codeLocation) and the
  * projectpad (the board's markdown files, in the boards data dir). Explicit
  * gitTargets config wins; otherwise we fall back to codeLocation / the project dir.
- * Returns { stage, codeRepo, padRepo, preflight }.
+ * Returns { stage, codeRepo, padRepo, websiteRepo?, preflight }.
+ *
+ * FBMCPF-249: a project's shipped website can live in a THIRD repo (outside the
+ * pad). Explicit gitTargets.websiteRepo wins; otherwise, when websiteLocation is
+ * set, walk UP from it to the nearest ancestor containing a `.git` (the assets
+ * dir may be a subdir of the repo, e.g. cloudflare/ under website/). Absent when
+ * neither is configured.
  */
 export function resolveGitTargets(board, project) {
   let cfg = {};
@@ -618,8 +625,38 @@ export function resolveGitTargets(board, project) {
   const gt = cfg.gitTargets || {};
   const codeRepo = gt.codeRepo || { path: cfg.codeLocation || null };
   const padRepo = gt.padRepo || { path: board.projectDir(project), note: "projectpad — the board's markdown files" };
-  const preflight = `stage=${stage} · code commits → ${codeRepo.path || "(none)"} · pad commits → ${padRepo.path || "(none)"}`;
-  return { stage, codeRepo, padRepo, preflight };
+  let websiteRepo = null;
+  if (gt.websiteRepo) {
+    websiteRepo = gt.websiteRepo;
+  } else if (cfg.websiteLocation) {
+    const root = findGitRootUp(cfg.websiteLocation);
+    if (root) websiteRepo = { path: root, note: "website repo — walked up from websiteLocation to its .git root" };
+  }
+  let preflight = `stage=${stage} · code commits → ${codeRepo.path || "(none)"} · pad commits → ${padRepo.path || "(none)"}`;
+  if (websiteRepo && websiteRepo.path) preflight += ` · website commits → ${websiteRepo.path}`;
+  const out = { stage, codeRepo, padRepo, preflight };
+  if (websiteRepo) out.websiteRepo = websiteRepo;
+  return out;
+}
+
+/**
+ * FBMCPF-249: walk up from a directory to the nearest ancestor (inclusive) that
+ * contains a `.git` entry. Returns that directory, or null if none is found.
+ */
+function findGitRootUp(startDir) {
+  let dir;
+  try {
+    dir = path.resolve(String(startDir));
+  } catch {
+    return null;
+  }
+  for (let i = 0; i < 64; i++) {
+    if (fs.existsSync(path.join(dir, ".git"))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
 }
 
 // FBMCPF-236: dispatch directive — makes sub-agent fan-out the default reading

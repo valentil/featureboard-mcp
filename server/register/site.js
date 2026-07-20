@@ -193,7 +193,7 @@ server.registerTool(
   {
     title: "Scaffold a whole website from one spec",
     description:
-      "Generate a whole site in one shot from a single spec instead of set_site field-by-field: sets the home page (title, tagline, theme, sections) and creates each initial sub-page. Persisted through the website store and rendered to site/. Pair with the generate_site prompt, which has Claude produce the spec.",
+      "Generate a whole site in one shot from a single spec instead of set_site field-by-field: sets the home page (title, tagline, theme, sections) and creates each initial sub-page. Persisted through the website store and rendered to the site location (<project>/site/ by default, or the project's websiteLocation when set). Pass initGit:true to give the scaffolded site its own git repo (git init + a first \"site: scaffold\" commit) when it is not already inside one — the repo path is returned. Pair with the generate_site prompt, which has Claude produce the spec.",
     inputSchema: {
       project: z.string(),
       title: z.string().describe("Site / home page title."),
@@ -210,13 +210,14 @@ server.registerTool(
         )
         .optional()
         .describe("Initial sub-pages to create."),
+      initGit: z.boolean().optional().describe("Give the scaffolded site its own git repo (git init + first commit) when it isn't already inside one."),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
-  writeTool(({ project, title, tagline, theme, sections, pages }) => {
+  writeTool(({ project, title, tagline, theme, sections, pages, initGit }) => {
     const board = getBoard();
     if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
-    return scaffoldSite(board, project, { title, tagline, theme, sections, pages });
+    return scaffoldSite(board, project, { title, tagline, theme, sections, pages }, { initGit });
   })
 );
 
@@ -361,7 +362,7 @@ server.registerTool(
   {
     title: "Deploy the website",
     description:
-      "Re-render the project's site and publish it by committing (and optionally pushing) its site/ folder through the git integration — the MCP equivalent of the old website deploy. Requires git integration enabled (set_git_config) with the site folder as a git repo; no-ops with a reason otherwise. When push is omitted, the effective push behavior is resolved from gitMode the same way as commit_feature (project override, else account-wide default, else \"commit-only\"); \"ask\" never pushes silently. Runs on this machine using its git credentials.",
+      "Re-render the project's site and publish it by committing (and optionally pushing) it through the git integration — the MCP equivalent of the old website deploy. The site lives at <project>/site/ by default, or at the project's websiteLocation when set (a shipped site outside the pad, in its own repo — see set_project_config). When websiteLocation / gitTargets.websiteRepo is configured the commit runs in that website repo; otherwise it runs where the pad site lives. Requires git integration enabled (set_git_config); no-ops with a reason otherwise. When push is omitted, the effective push behavior is resolved from gitMode the same way as commit_feature (project override, else account-wide default, else \"commit-only\"); \"ask\" never pushes silently. Runs on this machine using its git credentials.",
     inputSchema: {
       project: z.string(),
       message: z.string().optional().describe("Custom deploy commit message."),
@@ -373,11 +374,19 @@ server.registerTool(
     const board = getBoard();
     if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
     const rendered = renderSite(board, project);
+    // FBMCPF-249: when a shipped-website repo is configured (websiteLocation or an
+    // explicit gitTargets.websiteRepo), run the git steps there; otherwise behave
+    // exactly as before (commit where the pad's code/site lives).
+    const targets = meta.resolveGitTargets(board, project);
+    const websiteRepoPath = targets.websiteRepo && targets.websiteRepo.path ? targets.websiteRepo.path : null;
+    const gitOpts = websiteRepoPath
+      ? { cwd: siteRoot(board, project), repoOverride: websiteRepoPath }
+      : { cwd: siteRoot(board, project) };
     const deploy = commitFeature(
       board,
       project,
       { title: `Deploy ${project} site`, message, push },
-      { cwd: siteRoot(board, project) }
+      gitOpts
     );
     return { rendered, deploy };
   })

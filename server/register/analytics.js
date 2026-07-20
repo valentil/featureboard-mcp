@@ -97,11 +97,12 @@ server.registerTool(
   {
     title: "Set project config",
     description:
-      "Update a board's settings (only provided fields change). Writes to the MCP-managed config; never mutates legacy project_config.json.",
+      "Update a board's settings (only provided fields change). Writes to the MCP-managed config; never mutates legacy project_config.json. codeLocation points the code tools at the project's source repo; websiteLocation points the website tools (get_site/set_site/add_page/deploy_site/scaffold_site/...) at the project's SHIPPED site, which may live outside the pad in its own repo (absolute path to the assets dir) — leave it unset to keep the site under <project>/site/.",
     inputSchema: {
       project: z.string(),
       products: z.array(z.string()).optional(),
       codeLocation: z.string().optional(),
+      websiteLocation: z.string().optional().describe("Absolute path to the project's SHIPPED website assets dir (may be outside the pad, in its own git repo). When set, all website tools operate there instead of <project>/site/ (FBMCPF-249)."),
       agentModel: z.string().optional(),
       description: z.string().optional(),
       website: z.string().optional(),
@@ -126,7 +127,8 @@ server.registerTool(
       gitTargets: z.object({
         codeRepo: z.object({ path: z.string().optional(), remote: z.string().optional(), branch: z.string().optional() }).optional(),
         padRepo: z.object({ path: z.string().optional(), remote: z.string().optional(), branch: z.string().optional() }).optional(),
-      }).optional().describe("Explicit commit destinations: code and projectpad can live in different repos (FBMCPF-149)."),
+        websiteRepo: z.object({ path: z.string().optional(), remote: z.string().optional(), branch: z.string().optional() }).optional(),
+      }).optional().describe("Explicit commit destinations: code, projectpad, and the shipped website can each live in different repos (FBMCPF-149, FBMCPF-249). websiteRepo is otherwise inferred by walking up from websiteLocation to its .git root."),
       pricing: z.record(
         z.string(),
         z.object({

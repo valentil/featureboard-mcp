@@ -600,7 +600,7 @@ export function autoStatusFromCommit(board, project, message) {
  * a clear reason when git integration is disabled for the project. Stops at the
  * first failing step and reports it. `exec(args, cwd)` is injectable for testing.
  */
-export function commitFeature(board, project, opts = {}, { exec = defaultExec, cwd } = {}) {
+export function commitFeature(board, project, opts = {}, { exec = defaultExec, cwd, repoOverride } = {}) {
   const config = getGitConfig(board, project);
   if (!config.enabled) {
     return { skipped: true, reason: "git integration is disabled for this project (enable it with set_git_config)" };
@@ -609,7 +609,10 @@ export function commitFeature(board, project, opts = {}, { exec = defaultExec, c
   // in gitTargets.codeRepo.path when set, otherwise fall back to the passed cwd
   // (codeLocation). Explicit config wins.
   const targets = resolveGitTargets(board, project);
-  const codeCwd = (targets.codeRepo && targets.codeRepo.path) || cwd;
+  // FBMCPF-249: deploy_site can force the commit to run in the shipped-website
+  // repo by passing repoOverride; it wins over the code-repo resolution. All
+  // other callers omit it, so their behavior is unchanged.
+  const codeCwd = repoOverride || (targets.codeRepo && targets.codeRepo.path) || cwd;
   if (!codeCwd) throw new Error("no code repo path — set the project's codeLocation in project config");
 
   // FBMCPF-151: for graduated projects, refresh the .featureboard/ pad mirror in the

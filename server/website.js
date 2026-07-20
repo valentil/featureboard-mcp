@@ -18,6 +18,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { getProjectConfig } from "./metadata.js";
 
 export const SITE_DIR = "site";
 export const SITE_CONFIG = "site.json";
@@ -218,6 +219,14 @@ function atomicWrite(filePath, data) {
   fs.renameSync(tmp, filePath);
 }
 function siteDir(board, project) {
+  // FBMCPF-249: a project's shipped website can live outside the pad. When
+  // websiteLocation is configured (non-empty), site tools operate on that
+  // absolute path; otherwise fall back to the pad's <project>/site/ folder.
+  try {
+    const cfg = getProjectConfig(board, project);
+    const loc = cfg && cfg.websiteLocation ? String(cfg.websiteLocation).trim() : "";
+    if (loc) return path.resolve(loc);
+  } catch { /* fall through to the default pad location */ }
   return path.join(board.projectDir(project), SITE_DIR);
 }
 

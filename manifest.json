@@ -264,7 +264,7 @@
     },
     {
       "name": "set_project_config",
-      "description": "Update a board's settings (only provided fields change). Writes to the MCP-managed config; never mutates legacy project_config.json."
+      "description": "Update a board's settings (only provided fields change). Writes to the MCP-managed config; never mutates legacy project_config.json. codeLocation points the code tools at the project's source repo; websiteLocation points the website tools (get_site/set_site/add_page/deploy_site/scaffold_site/...) at the project's SHIPPED site, which may live outside the pad in its own repo (absolute path to the assets dir) — leave it unset to keep the site under <project>/site/."
     },
     {
       "name": "set_branding",
@@ -676,7 +676,7 @@
     },
     {
       "name": "scaffold_site",
-      "description": "Generate a whole site in one shot from a single spec instead of set_site field-by-field: sets the home page (title, tagline, theme, sections) and creates each initial sub-page. Persisted through the website store and rendered to site/. Pair with the generate_site prompt, which has Claude produce the spec."
+      "description": "Generate a whole site in one shot from a single spec instead of set_site field-by-field: sets the home page (title, tagline, theme, sections) and creates each initial sub-page. Persisted through the website store and rendered to the site location (<project>/site/ by default, or the project's websiteLocation when set). Pass initGit:true to give the scaffolded site its own git repo (git init + a first \"site: scaffold\" commit) when it is not already inside one — the repo path is returned. Pair with the generate_site prompt, which has Claude produce the spec."
     },
     {
       "name": "edit_site_section",
@@ -708,7 +708,7 @@
     },
     {
       "name": "deploy_site",
-      "description": "Re-render the project's site and publish it by committing (and optionally pushing) its site/ folder through the git integration — the MCP equivalent of the old website deploy. Requires git integration enabled (set_git_config) with the site folder as a git repo; no-ops with a reason otherwise. When push is omitted, the effective push behavior is resolved from gitMode the same way as commit_feature (project override, else account-wide default, else \"commit-only\"); \"ask\" never pushes silently. Runs on this machine using its git credentials."
+      "description": "Re-render the project's site and publish it by committing (and optionally pushing) it through the git integration — the MCP equivalent of the old website deploy. The site lives at <project>/site/ by default, or at the project's websiteLocation when set (a shipped site outside the pad, in its own repo — see set_project_config). When websiteLocation / gitTargets.websiteRepo is configured the commit runs in that website repo; otherwise it runs where the pad site lives. Requires git integration enabled (set_git_config); no-ops with a reason otherwise. When push is omitted, the effective push behavior is resolved from gitMode the same way as commit_feature (project override, else account-wide default, else \"commit-only\"); \"ask\" never pushes silently. Runs on this machine using its git credentials."
     },
     {
       "name": "upload_site_asset",
