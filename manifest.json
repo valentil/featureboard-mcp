@@ -172,7 +172,7 @@
     },
     {
       "name": "get_ticket_diff",
-      "description": "Capture the code changes made for a ticket: find commits in the project's code repo (codeLocation / gitTargets.codeRepo) whose message mentions the ticket id and return, per commit, a summary (hash/author/date/subject) plus a size-capped unified diff (git show). Read-only — never writes or fetches. `context` sets the unified context-line count; `maxBytes` caps the total diff bytes returned (over-cap diffs are truncated with a notice, later commits omitted). Returns a warning (not an error) when the project has no codeLocation, the path is not a git repo, or no commits mention the ticket."
+      "description": "Capture the code changes made for a ticket: find commits in the project's code repo (codeLocation / gitTargets.codeRepo) whose message mentions the ticket id and return, per commit, a summary (hash/author/date/subject) plus a size-capped unified diff (git show). Read-only — never writes or fetches. `context` sets the unified context-line count; `maxBytes` caps the total diff bytes returned (over-cap diffs are truncated with a notice, later commits omitted). Returns a warning (not an error) when the project has no codeLocation, the path is not a git repo, or no commits mention the ticket. Pass semantic:true to also get a deterministic semantic view (no LLM): formatting-only hunks stripped, files ordered core \\u2192 tests \\u2192 docs/config, mechanical renames flagged, plus a ready-to-use review-summary prompt \\u2014 assistive, verify against the raw diff."
     },
     {
       "name": "add_review_comment",

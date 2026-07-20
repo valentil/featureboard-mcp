@@ -23,6 +23,7 @@ import { spawnSync } from "node:child_process";
 import { resolveGitTargets, logWork, getProjectConfig, readWorkLog } from "./metadata.js";
 import { PAD_FILES } from "./graduate.js";
 import { appendEvent, recordedCommitsForTicket, readEvents } from "./events.js";
+import { buildSemanticView } from "./semanticdiff.js";
 
 // git's well-known empty-tree object — diffing a root commit against this
 // (instead of a nonexistent HEAD^) is the standard way to get its stats.
@@ -415,7 +416,7 @@ export function captureCommitInfo(exec, cwd) {
  * never throws): no codeLocation configured, the path is not a git repo, git
  * log failing, and no matching commits (returns an empty list with a `message`).
  *
- * opts: { maxCommits=20, context=3, maxBytes=60000 } — `context` is git's
+ * opts: { maxCommits=20, context=3, maxBytes=60000, semantic=false } — `context` is git's
  * unified context-line count; `maxBytes` caps the TOTAL emitted diff across all
  * commits (each over-cap diff is truncated with a notice, later commits omitted).
  * exec(args, cwd) is injectable for tests (defaults to git via spawnSync).
@@ -499,7 +500,11 @@ export function getTicketDiff(board, project, ticket, opts = {}, { exec = defaul
     commits.push({ hash, shortHash: (hash || "").slice(0, 8), author: author || null, date: date || null, subject: subject || null, diff, diffTruncated });
   }
 
-  return { ticket: tk, repo, context, maxBytes, maxCommits, count: commits.length, truncated, commits, source };
+  const result = { ticket: tk, repo, context, maxBytes, maxCommits, count: commits.length, truncated, commits, source };
+  // FBMCPF-220: optional deterministic semantic view (noise-stripped, ordered,
+  // renames flagged, review prompt) — assistive, raw diff stays authoritative.
+  if (opts.semantic) result.semantic = buildSemanticView(commits);
+  return result;
 }
 
 /**

@@ -1257,20 +1257,21 @@ server.registerTool(
   {
     title: "Get ticket diff",
     description:
-      "Capture the code changes made for a ticket: find commits in the project's code repo (codeLocation / gitTargets.codeRepo) whose message mentions the ticket id and return, per commit, a summary (hash/author/date/subject) plus a size-capped unified diff (git show). Read-only — never writes or fetches. `context` sets the unified context-line count; `maxBytes` caps the total diff bytes returned (over-cap diffs are truncated with a notice, later commits omitted). Returns a warning (not an error) when the project has no codeLocation, the path is not a git repo, or no commits mention the ticket.",
+      "Capture the code changes made for a ticket: find commits in the project's code repo (codeLocation / gitTargets.codeRepo) whose message mentions the ticket id and return, per commit, a summary (hash/author/date/subject) plus a size-capped unified diff (git show). Read-only — never writes or fetches. `context` sets the unified context-line count; `maxBytes` caps the total diff bytes returned (over-cap diffs are truncated with a notice, later commits omitted). Returns a warning (not an error) when the project has no codeLocation, the path is not a git repo, or no commits mention the ticket. Pass semantic:true to also get a deterministic semantic view (no LLM): formatting-only hunks stripped, files ordered core \u2192 tests \u2192 docs/config, mechanical renames flagged, plus a ready-to-use review-summary prompt \u2014 assistive, verify against the raw diff.",
     inputSchema: {
       project: z.string(),
       ticket: z.string(),
       maxCommits: z.coerce.number().int().min(1).max(100).optional().describe("Max commits to inspect (default 20)."),
       context: z.coerce.number().int().min(0).max(20).optional().describe("Unified diff context lines (default 3)."),
       maxBytes: z.coerce.number().int().min(1000).max(500000).optional().describe("Total diff byte cap across commits (default 60000)."),
+      semantic: z.coerce.boolean().optional().describe("Add a deterministic semantic view: formatting-only hunks stripped, files ordered core \u2192 tests \u2192 docs/config, mechanical renames flagged, plus a review-summary prompt (assistive \u2014 verify against the raw diff)."),
     },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
-  tryTool(({ project, ticket, maxCommits, context, maxBytes }) => {
+  tryTool(({ project, ticket, maxCommits, context, maxBytes, semantic }) => {
     const board = getBoard();
     if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
-    return getTicketDiff(board, project, ticket, { maxCommits, context, maxBytes });
+    return getTicketDiff(board, project, ticket, { maxCommits, context, maxBytes, semantic });
   })
 );
 
