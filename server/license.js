@@ -36,6 +36,12 @@ export const LICENSE_CONTACT_URL =
 export const LICENSE_CONTACT_EMAIL =
   process.env.FEATUREBOARD_LICENSE_EMAIL || "licensing@featureboard.dev";
 
+// Published self-serve pricing (FBMCPF-208). Seat-year USD; checkout is the Polar
+// storefront behind the stable featureboard.dev/buy redirect. Override for tests/staging.
+export const PRICE_PER_SEAT_YEAR_USD = 119;
+export const CHECKOUT_URL =
+  process.env.FEATUREBOARD_CHECKOUT_URL || "https://featureboard.dev/buy";
+
 function stateDir(dataDir) {
   return path.join(dataDir, STATE_DIR);
 }

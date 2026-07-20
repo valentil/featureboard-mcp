@@ -32,7 +32,11 @@ or circumventing enforcement terminates all rights immediately.
 
 ## Fees, term, renewal
 
-Fees, seat counts, and term are set in your commercial agreement. Perpetual keys
+The published self-serve price is **US$119 per seat per year** via
+https://featureboard.dev/buy (checkout handled by our merchant of record). For
+self-serve purchases, the checkout receipt plus this document form your commercial
+agreement. Custom terms (POs, enterprise, volume) are set in a signed agreement
+instead, where fees, seat counts, and term may differ. Perpetual keys
 remain valid indefinitely; time-limited keys stop authorizing writes after `expires`
 (a one-day grace period applies). Renewals and seat changes are handled by issuing a
 new key.

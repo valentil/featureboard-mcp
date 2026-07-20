@@ -4569,7 +4569,11 @@ server.registerTool(
   },
   tryTool(() => {
     const ev = license.evaluate(DATA_DIR);
-    return { ...ev, contact: { url: license.LICENSE_CONTACT_URL, email: license.LICENSE_CONTACT_EMAIL } };
+    return {
+      ...ev,
+      pricing: { perSeatPerYearUSD: license.PRICE_PER_SEAT_YEAR_USD, checkoutUrl: license.CHECKOUT_URL },
+      contact: { url: license.LICENSE_CONTACT_URL, email: license.LICENSE_CONTACT_EMAIL },
+    };
   })
 );
 
