@@ -223,6 +223,55 @@ what the tools actually returned in the verification run, not aspirational behav
 
 ---
 
+## Nightly Auto-Research Outer Loop (Karpathy-style)
+
+**What it is:** the strengthen recipe's bigger sibling, modeled on Karpathy's autoresearch:
+an agent modifies the code, a fixed-budget run measures ONE objective metric, and the change
+is kept only if the metric improved — otherwise reverted. Repeat unattended, all night;
+accepted changes stack on an integration branch (never main).
+
+**The division of labor:**
+
+- **The runner lives OUTSIDE Cowork.** `node scripts/autoresearch.mjs` is a standalone
+  script: per experiment it makes a git worktree off `autoresearch/nightly`, has headless
+  `claude -p` implement the hypothesis, gates on the FULL test suite staying green, measures
+  the objective (`scripts/autoresearch-metric.mjs`, median board hot-path ms by default),
+  then merges (accept) or discards (revert) and appends to `autoresearch_results.json`.
+- **Claude is the nightly CONFIGURATOR.** A Cowork scheduled task refreshes
+  `autoresearch.config.json` (hypothesis queue, budgets) each evening and triages results
+  each morning. Claude never has to be awake while experiments run.
+
+**Schedule the runner with the OS (once):**
+
+- Windows: `schtasks /create /tn FeatureBoardAutoResearch /tr "node <repo>\scripts\autoresearch.mjs" /sc daily /st 02:30`
+- macOS/Linux cron: `30 2 * * * cd <repo> && node scripts/autoresearch.mjs >> autoresearch.log 2>&1`
+- First time: `cp autoresearch.config.example.json autoresearch.config.json`, then `node scripts/autoresearch.mjs --dry-run` to sanity-check.
+
+**Prompt (Cowork scheduled task, nightly ~01:30 — the configurator):**
+
+```
+Configure tonight's auto-research run for <repo>.
+
+1. Read autoresearch_results.json and autoresearch.config.json (repo root).
+2. Triage last night: for each accepted experiment, review `git log main..autoresearch/nightly`;
+   file a feature ticket to graduate good changes into main (with the metric delta in the
+   description); for suspicious accepts, file a bug. Mark reviewed entries.
+3. Refresh the queue: replace consumed experiments (status done/accepted) with 5-10 NEW
+   single-idea hypotheses targeting the objective metric (board hot-path time). Derive them
+   from: profiler intuition about server/storage.js parsing, accepted-experiment follow-ups,
+   strengthen_findings.json perf warnings, and code_file_map hotspots. One idea per
+   experiment, each with id / hypothesis / hint / status:"todo".
+4. Keep budgets sane (maxExperiments <= 12, stopAfterMinutes <= 420); write the config back.
+5. Reply with the queue you set and yesterday's accept rate.
+```
+
+**Why the rails hold:** main is never written; the suite must stay green for any accept
+(objective can't be gamed by deleting behavior — the agent contract also forbids weakening
+tests); every experiment is worktree-isolated and budget-capped; `--once` and `--dry-run`
+exist for supervised trial runs. Verified logic is unit-tested in test/autoresearch.test.js.
+
+---
+
 ## How to Use These Recipes
 
 1. Open **Claude Code** and go to **Scheduled tasks** (or create a new scheduled task).

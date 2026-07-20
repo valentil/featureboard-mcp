@@ -1,0 +1,37 @@
+{
+  "_comment": "Copy to autoresearch.config.json (gitignored). Claude's nightly configurator scheduled task refreshes the experiments queue and budgets; the standalone runner (node scripts/autoresearch.mjs) consumes it unattended. See docs/RECIPES.md → 'Nightly Auto-Research Outer Loop'.",
+  "integrationBranch": "autoresearch/nightly",
+  "baseBranch": "main",
+  "objective": {
+    "command": "node scripts/autoresearch-metric.mjs",
+    "parse": "METRIC ([0-9.]+)",
+    "direction": "min",
+    "minDelta": 2,
+    "samples": 3
+  },
+  "constraint": {
+    "command": "node scripts/run-tests.mjs",
+    "mustMatch": "# fail 0",
+    "timeoutMinutes": 5
+  },
+  "agent": {
+    "command": "claude",
+    "args": ["-p", "--permission-mode", "acceptEdits"],
+    "timeoutMinutes": 12
+  },
+  "budget": { "maxExperiments": 12, "stopAfterMinutes": 420 },
+  "experiments": [
+    {
+      "id": "cache-label-parse",
+      "hypothesis": "Parsing the [Labels: ...] block with a precompiled regex (instead of re-creating it per ticket line) speeds up Board.listTasks on large boards.",
+      "hint": "server/storage.js — the per-line ticket parser",
+      "status": "todo"
+    },
+    {
+      "id": "lazy-description",
+      "hypothesis": "Deferring full description string assembly until a ticket is actually returned (compact path skips it) reduces listTasks time.",
+      "hint": "server/storage.js listTasks + the compact view in server/register/tasks.js",
+      "status": "todo"
+    }
+  ]
+}

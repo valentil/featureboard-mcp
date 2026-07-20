@@ -15,3 +15,9 @@ strengthen_findings.json
 # plugin build staging + built .plugin bundles (FBMCPF-244)
 dist/
 releases/
+
+# auto-research outer loop (FBMCPF-246) — machine-local config + results
+autoresearch.config.json
+autoresearch_results.json
+autoresearch_results.json.bak
+autoresearch.log
