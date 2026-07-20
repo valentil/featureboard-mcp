@@ -77,21 +77,22 @@ server.registerTool(
   {
     title: "Commit a finished feature",
     description:
-      "If git integration is enabled for the project, commit (and optionally push) the current changes in the project's code repo with a message like 'FBMCPF-##: title' — mirroring the original OpenClaw git flow. For graduated projects, also refreshes a read-only snapshot of the pad (featurelist.md, buglist.md, scratchpad.md, agent_work_log.md, config) into <codeRepo>/.featureboard/ and includes it in the same commit — the central pad stays authoritative, this is a one-way mirror. No-ops with a reason when disabled. When push is omitted, the effective push behavior is resolved from gitMode (project override via set_git_config, else the account-wide default via set_global_config, else \"commit-only\") — \"ask\" commits without pushing and returns a note asking you to confirm before pushing again with push:true; it never pushes silently. Passing push explicitly always overrides gitMode. When the autoStatusOnCommit config key is on, closing keywords in the commit message ('closes/fixes/resolves FBB-12') move that ticket to Done (or Review if requireReview is on) — same-project tickets only (FBMCPF-200). Runs on this machine using its git credentials.",
+      "If git integration is enabled for the project, commit (and optionally push) the current changes in the project's code repo with a message like 'FBMCPF-##: title' — mirroring the original OpenClaw git flow. For graduated projects, also refreshes a read-only snapshot of the pad (featurelist.md, buglist.md, scratchpad.md, agent_work_log.md, config) into <codeRepo>/.featureboard/ and includes it in the same commit — the central pad stays authoritative, this is a one-way mirror. No-ops with a reason when disabled. When push is omitted, the effective push behavior is resolved from gitMode (project override via set_git_config, else the account-wide default via set_global_config, else \"commit-only\") — \"ask\" commits without pushing and returns a note asking you to confirm before pushing again with push:true; it never pushes silently. Passing push explicitly always overrides gitMode. When the autoStatusOnCommit config key is on, closing keywords in the commit message ('closes/fixes/resolves FBB-12') move that ticket to Done (or Review if requireReview is on) — same-project tickets only (FBMCPF-200). Runs on this machine using its git credentials. Without an explicit paths param, staging is 'git add .' — ALL pending changes in the tree land in this ticket's commit, so pass paths when other tickets' edits may be pending.",
     inputSchema: {
       project: z.string(),
       ticket: z.string().optional(),
       title: z.string().optional(),
       message: z.string().optional().describe("Explicit commit message (overrides ticket/title)."),
       push: z.boolean().optional().describe("Override the resolved gitMode for this commit (always wins over gitMode)."),
+      paths: z.array(z.string()).optional().describe("Stage only these paths (git add -- <paths>) so concurrent tickets' pending edits aren't swept into this ticket's commit (FBMCPB-22). Omit to stage the whole repo ('.'). Graduated projects' .featureboard/ pad mirror is still included automatically."),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
-  writeTool(({ project, ticket, title, message, push }) => {
+  writeTool(({ project, ticket, title, message, push, paths }) => {
     const board = getBoard();
     if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
     const cwd = meta.getProjectConfig(board, project).codeLocation;
-    return commitFeature(board, project, { ticket, title, message, push }, { cwd });
+    return commitFeature(board, project, { ticket, title, message, push, paths }, { cwd });
   })
 );
 

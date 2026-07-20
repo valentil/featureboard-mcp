@@ -641,7 +641,15 @@ export function commitFeature(board, project, opts = {}, { exec = defaultExec, c
     }
   }
 
-  const plan = buildCommitPlan(config, { ...opts, push: effectivePush });
+  // FBMCPB-22: explicit paths limit staging to this ticket's files. When the
+  // graduated pad mirror just refreshed, keep .featureboard/ riding along in
+  // the same commit even under an explicit-paths call (documented behavior).
+  let planOpts = { ...opts, push: effectivePush };
+  if (Array.isArray(planOpts.paths) && planOpts.paths.length &&
+      padMirror && Array.isArray(padMirror.mirrored) && padMirror.mirrored.length) {
+    planOpts = { ...planOpts, paths: [...planOpts.paths, ".featureboard"] };
+  }
+  const plan = buildCommitPlan(config, planOpts);
   const results = [];
   for (const step of plan.steps) {
     const r = exec(step.args, codeCwd);
