@@ -2699,12 +2699,31 @@ async function submitOnboardingEmail() {
     toast(res.stored ? "Email saved" : (res.reason || "Could not save email"));
   } catch (e) { toast(e.message.slice(0, 140)); }
 }
-function openActivate() {
-  showModal(
-    '<h3>Activate license key</h3><p>Paste the commercial license key you received.</p>' +
+function openActivate(mode) {
+  mode = mode === "key" ? "key" : "order";
+  const seg =
+    '<div class="seg" style="margin-bottom:12px">' +
+    '<button class="' + (mode === "order" ? "on" : "") + '" onclick="openActivate(\'order\')">From your Polar receipt</button>' +
+    '<button class="' + (mode === "key" ? "on" : "") + '" onclick="openActivate(\'key\')">Paste a key</button>' +
+    '</div>';
+  const orderBody =
+    '<p>Enter the email and order id from your Polar receipt — FeatureBoard fetches your signed key automatically.</p>' +
+    '<label>Receipt email</label><input id="claimEmail" type="email" placeholder="you@example.com">' +
+    '<label>Order id</label><input id="claimOrderId" placeholder="order id from your receipt">' +
+    '<p class="hint">Prefer to fetch it yourself? Visit <a href="https://featureboard.ai/claim" target="_blank" rel="noopener">featureboard.ai/claim</a> and paste the key below instead.</p>' +
+    '<div class="actions"><button class="ghost" onclick="closeModal()">Cancel</button><button class="primary" onclick="doActivateByOrder()">Activate</button></div>';
+  const keyBody =
+    '<p>Paste the commercial license key you received.</p>' +
     '<label>License key</label><textarea id="keyIn" rows="4" placeholder="paste key…"></textarea>' +
-    '<div class="actions"><button class="ghost" onclick="closeModal()">Cancel</button><button class="primary" onclick="doActivate()">Activate</button></div>'
-  );
+    '<div class="actions"><button class="ghost" onclick="closeModal()">Cancel</button><button class="primary" onclick="doActivate()">Activate</button></div>';
+  showModal('<h3>Activate license key</h3>' + seg + (mode === "order" ? orderBody : keyBody));
+}
+async function doActivateByOrder() {
+  const email = $("#claimEmail").value.trim();
+  const orderId = $("#claimOrderId").value.trim();
+  if (!email || !orderId) { toast("Email and order id are both required"); return; }
+  try { state.license = await call("activate_license", { email, orderId }); closeModal(); renderLicense(); refresh(); toast("License activated"); }
+  catch (e) { toast(e.message.slice(0, 140)); }
 }
 async function doActivate() {
   const key = $("#keyIn").value.trim(); if (!key) return;

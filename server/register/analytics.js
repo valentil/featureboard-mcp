@@ -101,7 +101,7 @@ server.registerTool(
   {
     title: "Set project config",
     description:
-      "Update a board's settings (only provided fields change). Writes to the MCP-managed config; never mutates legacy project_config.json. codeLocation points the code tools at the project's source repo; websiteLocation points the website tools (get_site/set_site/add_page/deploy_site/scaffold_site/...) at the project's SHIPPED site, which may live outside the pad in its own repo (absolute path to the assets dir) — leave it unset to keep the site under <project>/site/.",
+      "Update a board's settings (only provided fields change). Writes to the MCP-managed config; never mutates legacy project_config.json. codeLocation points the code tools at the project's source repo; websiteLocation points the website tools (get_site/set_site/add_page/deploy_site/scaffold_site/...) at the project's SHIPPED site, which may live outside the pad in its own repo (absolute path to the assets dir) — leave it unset to keep the site under <project>/site/. Also configures voiceLint/voiceLintMin/voiceProfile (AI-writing-tell self-checks on drafting tools) and the etaHints dispatch toggle.",
     inputSchema: {
       project: z.string(),
       products: z.array(z.string()).optional(),
@@ -156,6 +156,14 @@ server.registerTool(
       ).optional().describe(
         "FBMCPF-157: per-model $/MTok overrides merged over the built-in defaults (server/pricing.js DEFAULT_PRICING, sourced from current Anthropic API pricing). Keyed by model tier (\"fable\" | \"opus\" | \"sonnet\" | \"haiku\" | \"default\"); only the fields you provide change, the rest keep their default. blendedPerMTok is used as a fallback rate for work-log entries that only logged a single total token count (no input/output split)."
       ),
+      voiceLint: z.boolean().optional().describe("FBMCPF-267/268: turn on AI-writing-tell self-checks (voice lint) for drafting tools like draft_share and post_project_update; results attach as a warn-only `voice` key on the response. Default off."),
+      voiceLintMin: z.number().optional().describe("FBMCPF-267/268: voiceScore threshold above which a voice-lint warning is attached (default 25). Only used when voiceLint is on."),
+      voiceProfile: z.object({
+        extraBannedPhrases: z.array(z.string()).optional().describe("Extra phrases to flag as AI-sounding tells, on top of the built-in list."),
+        allowedTells: z.array(z.string()).optional().describe("Built-in tells to allow (won't be flagged) for this project's voice."),
+        samplesNote: z.string().optional().describe("Free-text note describing the project's target voice/samples, surfaced alongside lint results."),
+      }).optional().describe("FBMCPF-267: project-specific tuning for the voice-lint ruleset used when voiceLint is on."),
+      etaHints: z.boolean().optional().describe("Append an ETA reminder to dispatch instructions for steps expected to exceed ~2 minutes. Default on."),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },

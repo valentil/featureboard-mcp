@@ -264,7 +264,7 @@
     },
     {
       "name": "set_project_config",
-      "description": "Update a board's settings (only provided fields change). Writes to the MCP-managed config; never mutates legacy project_config.json. codeLocation points the code tools at the project's source repo; websiteLocation points the website tools (get_site/set_site/add_page/deploy_site/scaffold_site/...) at the project's SHIPPED site, which may live outside the pad in its own repo (absolute path to the assets dir) — leave it unset to keep the site under <project>/site/."
+      "description": "Update a board's settings (only provided fields change). Writes to the MCP-managed config; never mutates legacy project_config.json. codeLocation points the code tools at the project's source repo; websiteLocation points the website tools (get_site/set_site/add_page/deploy_site/scaffold_site/...) at the project's SHIPPED site, which may live outside the pad in its own repo (absolute path to the assets dir) — leave it unset to keep the site under <project>/site/. Also configures voiceLint/voiceLintMin/voiceProfile (AI-writing-tell self-checks on drafting tools) and the etaHints dispatch toggle."
     },
     {
       "name": "set_branding",
