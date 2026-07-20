@@ -116,7 +116,7 @@
     },
     {
       "name": "plan_budget",
-      "description": "Map a token budget onto the priority-ordered open queue BEFORE spending it: assigns tickets to days (greedy load-balance), draws the cutline where the budget runs out, and reports the Opus/Sonnet split with blended cost units. Optionally restrict to one sprint. Read-only — apply model choices with update_task labels if you want them stuck."
+      "description": "Map a token budget onto the priority-ordered open queue BEFORE spending it: assigns tickets to days (greedy load-balance), draws the cutline where the budget runs out, and reports the Opus/Sonnet split with blended cost units. Optionally restrict to one sprint. When account-wide planLimits is captured (set_global_config), also returns an additive blendPlan (FBMCPF-279): days to reset, the fable/non-fable percent-per-day pace that converges both weekly meters, and concrete parallel-wave suggestions sized from the open backlog's effort and the board's historical tokens-per-ticket. The token budgeting is unchanged. Read-only — apply model choices with update_task labels if you want them stuck."
     },
     {
       "name": "daily_plan",
@@ -788,11 +788,11 @@
     },
     {
       "name": "get_global_config",
-      "description": "Read FeatureBoard's account-wide settings that apply across every project unless a project overrides them via set_git_config. Currently just gitMode (default \"commit-only\"). Stored at <boardsRoot>/.featureboard.global.json."
+      "description": "Read FeatureBoard's account-wide settings that apply across every project unless a project overrides them via set_git_config. gitMode (default \"commit-only\") plus, when captured, planLimits — the two weekly Claude-Max usage meters ({fablePct, allModelsPct, capturedAt, resetAt, targetRatio}) that drive blend tracking on get_health/get_metrics/plan_budget (FBMCPF-278/279). Stored at <boardsRoot>/.featureboard.global.json."
     },
     {
       "name": "set_global_config",
-      "description": "Set FeatureBoard's account-wide settings, applied to every project that doesn't set its own override via set_git_config. Currently: gitMode — \"commit-only\" (never push automatically; the original default behavior), \"commit-push\" (push after every commit_feature/deploy_site that doesn't pass an explicit push param), or \"ask\" (commit only, and return a note asking the caller to confirm with the user before pushing — never pushes silently). Ask the user which they want during onboarding."
+      "description": "Set FeatureBoard's account-wide settings, applied to every project that doesn't set its own override via set_git_config. gitMode — \"commit-only\" (never push automatically; the original default behavior), \"commit-push\" (push after every commit_feature/deploy_site that doesn't pass an explicit push param), or \"ask\" (commit only, and return a note asking the caller to confirm with the user before pushing — never pushes silently). planLimits — the two weekly Claude-Max usage meters that reset together ({fablePct, allModelsPct, capturedAt (ISO), resetAt (ISO), targetRatio (default 1.0)}); pass it after reading the usage tab so the board can steer both meters to exhaust at the same reset (blend tracking, FBMCPF-278/279). Pass planLimits:null to clear it. Ask the user about gitMode during onboarding."
     },
     {
       "name": "commit_feature",

@@ -51,7 +51,7 @@ server.registerTool(
   {
     title: "Get account-wide config",
     description:
-      "Read FeatureBoard's account-wide settings that apply across every project unless a project overrides them via set_git_config. Currently just gitMode (default \"commit-only\"). Stored at <boardsRoot>/.featureboard.global.json.",
+      "Read FeatureBoard's account-wide settings that apply across every project unless a project overrides them via set_git_config. gitMode (default \"commit-only\") plus, when captured, planLimits — the two weekly Claude-Max usage meters ({fablePct, allModelsPct, capturedAt, resetAt, targetRatio}) that drive blend tracking on get_health/get_metrics/plan_budget (FBMCPF-278/279). Stored at <boardsRoot>/.featureboard.global.json.",
     inputSchema: {},
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
@@ -63,13 +63,25 @@ server.registerTool(
   {
     title: "Configure account-wide settings",
     description:
-      "Set FeatureBoard's account-wide settings, applied to every project that doesn't set its own override via set_git_config. Currently: gitMode — \"commit-only\" (never push automatically; the original default behavior), \"commit-push\" (push after every commit_feature/deploy_site that doesn't pass an explicit push param), or \"ask\" (commit only, and return a note asking the caller to confirm with the user before pushing — never pushes silently). Ask the user which they want during onboarding.",
+      "Set FeatureBoard's account-wide settings, applied to every project that doesn't set its own override via set_git_config. gitMode — \"commit-only\" (never push automatically; the original default behavior), \"commit-push\" (push after every commit_feature/deploy_site that doesn't pass an explicit push param), or \"ask\" (commit only, and return a note asking the caller to confirm with the user before pushing — never pushes silently). planLimits — the two weekly Claude-Max usage meters that reset together ({fablePct, allModelsPct, capturedAt (ISO), resetAt (ISO), targetRatio (default 1.0)}); pass it after reading the usage tab so the board can steer both meters to exhaust at the same reset (blend tracking, FBMCPF-278/279). Pass planLimits:null to clear it. Ask the user about gitMode during onboarding.",
     inputSchema: {
       gitMode: z.enum(["commit-only", "commit-push", "ask"]).optional(),
+      // FBMCPF-278: the two weekly Claude-Max usage meters (percent used) + when
+      // they were captured and when they reset together. null clears it.
+      planLimits: z
+        .object({
+          fablePct: z.number().describe("Fable weekly meter, percent used (0-100)."),
+          allModelsPct: z.number().describe("All-models weekly meter, percent used (0-100)."),
+          capturedAt: z.string().describe("ISO timestamp the usage tab was read."),
+          resetAt: z.string().describe("ISO timestamp both meters reset."),
+          targetRatio: z.number().optional().describe("Target fable:all-models convergence ratio (default 1.0)."),
+        })
+        .nullable()
+        .optional(),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  writeTool(({ gitMode }) => setGlobalConfig(getBoard(), { gitMode }))
+  writeTool(({ gitMode, planLimits }) => setGlobalConfig(getBoard(), { gitMode, planLimits }))
 );
 
 server.registerTool(

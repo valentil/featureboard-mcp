@@ -28,6 +28,7 @@ const TRIAL_MS = 24 * 60 * 60 * 1000;
 const STATE_DIR = ".featureboard";
 const STATE_FILE = "license.json";
 const REQUESTS_FILE = "license_requests.json";
+const REVOCATIONS_FILE = "revocations.json";
 
 export const USAGE_TYPES = ["personal", "public", "commercial-trial", "commercial"];
 // where a commercial licence should be requested
@@ -56,6 +57,9 @@ function stateDir(dataDir) {
 function statePath(dataDir) {
   return path.join(stateDir(dataDir), STATE_FILE);
 }
+function revocationsPath(dataDir) {
+  return path.join(stateDir(dataDir), REVOCATIONS_FILE);
+}
 
 export function readState(dataDir) {
   try {
@@ -69,6 +73,53 @@ export function writeState(dataDir, s) {
   fs.mkdirSync(stateDir(dataDir), { recursive: true });
   fs.writeFileSync(statePath(dataDir), JSON.stringify(s, null, 2), "utf8");
   return s;
+}
+
+/**
+ * Local revocation list (FBMCPF-276 — refunds should be able to kill a key,
+ * without breaking the offline no-phone-home validation model). Lives
+ * alongside license.json in the same data dir. Entirely optional: missing or
+ * malformed file is a no-op (nothing is ever revoked by accident because the
+ * file couldn't be read). Populated by owner/revoke.mjs; copy the file to any
+ * machine you control to enforce it there (see owner/README.md's "Refunds"
+ * section) — this check is local, there is no phone-home lookup.
+ */
+export function readRevocations(dataDir) {
+  try {
+    const data = JSON.parse(fs.readFileSync(revocationsPath(dataDir), "utf8"));
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return [];
+  }
+}
+
+export function writeRevocations(dataDir, list) {
+  fs.mkdirSync(stateDir(dataDir), { recursive: true });
+  fs.writeFileSync(revocationsPath(dataDir), JSON.stringify(list, null, 2), "utf8");
+  return list;
+}
+
+// Fields a revocation matcher may specify. A matcher revokes a payload when
+// EVERY field it specifies (non-empty) equals the same field on the payload;
+// unspecified fields are ignored, and a matcher that specifies nothing is
+// treated as malformed (skipped, never a blanket match).
+const REVOCATION_MATCH_FIELDS = ["orderId", "licensee", "issued"];
+
+/** Does `payload` match any matcher in `list`? See REVOCATION_MATCH_FIELDS above. */
+export function isRevoked(payload, list) {
+  if (!payload || typeof payload !== "object" || !Array.isArray(list) || list.length === 0) return false;
+  for (const entry of list) {
+    if (!entry || typeof entry !== "object") continue;
+    const specified = REVOCATION_MATCH_FIELDS.filter(
+      (f) => entry[f] !== undefined && entry[f] !== null && entry[f] !== ""
+    );
+    if (specified.length === 0) continue; // malformed matcher: nothing to match on
+    const allMatch = specified.every(
+      (f) => payload[f] !== undefined && payload[f] !== null && String(payload[f]) === String(entry[f])
+    );
+    if (allMatch) return true;
+  }
+  return false;
 }
 
 /** Verify a license key's signature and expiry. */
@@ -104,6 +155,11 @@ export function setUsageType(dataDir, type) {
 export function activate(dataDir, key) {
   const v = verifyKey(key);
   if (!v.valid) throw new Error(`Invalid license key: ${v.error}`);
+  if (isRevoked(v.payload, readRevocations(dataDir))) {
+    throw new Error(
+      `This license key has been revoked (e.g. following a refund). Contact ${LICENSE_CONTACT_EMAIL} if you believe this is an error.`
+    );
+  }
   const s = readState(dataDir) || {};
   s.usageType = "commercial";
   s.licenseKey = key.trim();
@@ -178,6 +234,14 @@ export async function fetchKeyByOrder({ email, orderId, fetchImpl } = {}) {
   } catch {
     throw new Error(`Claim API returned an unreadable response. Claim your key manually at ${MANUAL_CLAIM_URL}.`);
   }
+  // FBMCPF-276: the claim API flags refunded/cancelled orders with revoked:true
+  // (server-side, tracked against the order/claim KV record) -- refuse before
+  // ever handing back a key, rather than letting a revoked order still claim one.
+  if (body && body.revoked) {
+    throw new Error(
+      `This order's license has been revoked (e.g. following a refund). Contact ${LICENSE_CONTACT_EMAIL} if you believe this is an error.`
+    );
+  }
   if (!body || !body.key) {
     throw new Error(`Claim API response did not include a key. Claim your key manually at ${MANUAL_CLAIM_URL}.`);
   }
@@ -227,10 +291,21 @@ export function evaluate(dataDir) {
     return { status: type, configured: true, allowWrites: true, tier: type };
   }
 
-  // A valid key always grants full commercial access.
+  // A valid key always grants full commercial access -- unless it's been revoked.
   if (s.licenseKey) {
     const v = verifyKey(s.licenseKey);
     if (v.valid) {
+      if (isRevoked(v.payload, readRevocations(dataDir))) {
+        return {
+          status: "commercial-revoked",
+          configured: true,
+          allowWrites: false,
+          license: v.payload,
+          message:
+            `This license has been revoked (e.g. following a refund). Writes are frozen; reads remain available. ` +
+            `Contact ${LICENSE_CONTACT_EMAIL} if you believe this is an error.`,
+        };
+      }
       return { status: "commercial-licensed", configured: true, allowWrites: true, license: v.payload };
     }
     if (type === "commercial") {

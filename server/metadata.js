@@ -682,8 +682,14 @@ const ETA_HINT_SENTENCE = "etaHints is on: before starting any step expected to 
  * for an otherwise-dispatchable ticket. `etaHints` (default true — callers
  * thread in the project's resolved etaHints config, defaulting ON) appends
  * ETA_HINT_SENTENCE to the instruction.
+ *
+ * FBMCPF-278: `blend` (the blendStatus result, or null) steers the instruction
+ * toward the meter that's running hot — when fable is hot, push the ticket to a
+ * sonnet/opus sub-agent and keep the orchestrator terse; when fable is cold,
+ * inline work on the orchestrator is acceptable. Nothing is appended when the
+ * verdict is balanced or blend is unset.
  */
-export function buildDispatchDirective(task, { blocked = false, etaHints = true } = {}) {
+export function buildDispatchDirective(task, { blocked = false, etaHints = true, blend = null } = {}) {
   let model = null, cap = null, effort = null;
   for (const l of (task && task.labels) || []) {
     const ls = String(l);
@@ -707,6 +713,11 @@ export function buildDispatchDirective(task, { blocked = false, etaHints = true 
     ? `Dispatch this ticket to a ${model} sub-agent with this packet (cap ~${cap} tokens). The sub-agent edits code and runs tests but NEVER writes the board or commits — the orchestrator reviews, sets status, logs work, and commits.`
     : `Work this ticket in the orchestrator context (model tier ${model}); review carefully before close-out.`;
   if (etaHints) instruction += ` ${ETA_HINT_SENTENCE}`;
+  if (blend && blend.verdict === "fable-hot") {
+    instruction += ` Fable meter is running hot (${blend.fablePct}% vs ${blend.allModelsPct}%): dispatch this ticket to a sonnet/opus sub-agent, keep orchestrator turns terse, and batch board ops.`;
+  } else if (blend && blend.verdict === "fable-cold") {
+    instruction += ` Fable meter is running cold (${blend.fablePct}% vs ${blend.allModelsPct}%): this ticket can stay inline in the orchestrator — spend fable on planning and review, and let sonnet/opus volume ease until the meters even out.`;
+  }
   return { model, cap, effort, subAgent, parallelizable, instruction };
 }
 
@@ -802,7 +813,7 @@ export function getWorkPacket(board, project, ticket, opts = {}) {
     scratchpadMentions,
     recentWork,
     suggestedModel: suggestModelForPacket(task),
-    dispatch: buildDispatchDirective(task, { blocked: isTaskBlockedLocal(board, project, task), etaHints: cfg.etaHints !== false }),
+    dispatch: buildDispatchDirective(task, { blocked: isTaskBlockedLocal(board, project, task), etaHints: cfg.etaHints !== false, blend: opts.blend || null }),
     definitionOfDone: effectiveDoD,
     closeOut:
       "When done: set_status Done with a one-line completionSummary, then log_work with additions/deletions (and model), and — when git is configured — commit per ticket (commit_feature, message referencing the ticket id). Only the orchestrator writes to the board; work one ticket at a time.",

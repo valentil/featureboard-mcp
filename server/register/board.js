@@ -1,6 +1,6 @@
 // Auto-extracted from server/index.js (FBMCPF-224). Registration blocks moved verbatim.
 export function registerBoardTools(server, ctx) {
-  const { BOARD_HTML_PATH, Board, StatusEnum, applyTriage, autoAssignSprintFields, compactView, completedAtForTask, computeWaves, createFeedbackTickets, estimateTicketMinutes, evaluateRules, extractBoardToolNames, fail, fullView, getBoard, isBlocked, meta, notifySlack, parseFeedback, parseImport, parsePmImport, readFileSync, sprintOfTask, suggestModel, ticketsWithUnresolvedReviews, tryTool, withOrchestrationLabels, writeTool, z } = ctx;
+  const { BOARD_HTML_PATH, Board, StatusEnum, applyTriage, autoAssignSprintFields, blendStatus, compactView, completedAtForTask, computeWaves, createFeedbackTickets, estimateTicketMinutes, evaluateRules, extractBoardToolNames, fail, fullView, getBoard, getGlobalConfig, isBlocked, meta, notifySlack, parseFeedback, parseImport, parsePmImport, readFileSync, sprintOfTask, suggestModel, ticketsWithUnresolvedReviews, tryTool, withOrchestrationLabels, writeTool, z } = ctx;
 
 // projects -----------------------------------------------------------------
 
@@ -498,9 +498,13 @@ server.registerTool(
     // eta field it promises stay in sync.
     const cfg = meta.getProjectConfig(board, project);
     const etaHintsOn = cfg.etaHints !== false;
+    // FBMCPF-278: account-wide plan-meter blend, when captured — steers the
+    // dispatch sentence toward the hotter meter. Best-effort; never blocks.
+    let blend = null;
+    try { blend = blendStatus(getGlobalConfig(board), new Date()); } catch { blend = null; }
     // FBMCPF-236: dispatch directive — makes sub-agent fan-out the default
     // reading of next_task's result, same as get_work_packet.
-    const dispatch = meta.buildDispatchDirective(open[0], { blocked: isBlocked(board, project, open[0]), etaHints: etaHintsOn });
+    const dispatch = meta.buildDispatchDirective(open[0], { blocked: isBlocked(board, project, open[0]), etaHints: etaHintsOn, blend });
     const res = { next: fullView(open[0]), remaining: openAll.length, suggestedModel: sm.model, modelBasis: sm.basis, dispatch };
     if (etaHintsOn) res.eta = estimateTicketMinutes(board, project, open[0].ticketNumber);
     if (blockedSkipped) res.blockedSkipped = blockedSkipped;

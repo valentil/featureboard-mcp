@@ -1,6 +1,6 @@
 // Auto-extracted from server/index.js (FBMCPF-224). Registration blocks moved verbatim.
 export function registerWorkflowTools(server, ctx) {
-  const { addDecision, addReviewComment, appendEvent, assignSprint, checkAcceptance, closeSprint, createSprint, dailyPlan, decisionsForTicket, estimateWork, evalReport, evaluateRules, exportBoard, exportMetricsSeries, exportWorkLog, getBoard, getRequirements, getSprintReport, getTicketDiff, getTicketHistory, getTimelineData, graduateProject, listDecisions, listReviewComments, listSprints, meta, notifySlack, planBudget, resolveReviewComment, setRequirements, sprintOfTask, tryTool, writeHandoff, writeTool, z } = ctx;
+  const { addDecision, addReviewComment, appendEvent, assignSprint, blendPlan, checkAcceptance, closeSprint, createSprint, dailyPlan, decisionsForTicket, estimateWork, evalReport, evaluateRules, exportBoard, exportMetricsSeries, exportWorkLog, getBoard, getGlobalConfig, getRequirements, getSprintReport, getTicketDiff, getTicketHistory, getTimelineData, graduateProject, listDecisions, listReviewComments, listSprints, meta, notifySlack, planBudget, resolveReviewComment, setRequirements, sprintOfTask, tryTool, writeHandoff, writeTool, z } = ctx;
 
 // sprints (FBMCPF-120) -------------------------------------------------------
 server.registerTool(
@@ -183,7 +183,10 @@ server.registerTool(
     description:
       "Map a token budget onto the priority-ordered open queue BEFORE spending it: assigns tickets to days (greedy load-balance), " +
       "draws the cutline where the budget runs out, and reports the Opus/Sonnet split with blended cost units. " +
-      "Optionally restrict to one sprint. Read-only — apply model choices with update_task labels if you want them stuck.",
+      "Optionally restrict to one sprint. When account-wide planLimits is captured (set_global_config), also returns an additive blendPlan " +
+      "(FBMCPF-279): days to reset, the fable/non-fable percent-per-day pace that converges both weekly meters, and concrete parallel-wave " +
+      "suggestions sized from the open backlog's effort and the board's historical tokens-per-ticket. The token budgeting is unchanged. " +
+      "Read-only — apply model choices with update_task labels if you want them stuck.",
     inputSchema: {
       project: z.string(),
       budgetTokens: z.number().int().positive().optional().default(25000000).describe("Weekly token budget (default 25M)."),
@@ -192,7 +195,17 @@ server.registerTool(
     },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
-  tryTool(({ project, budgetTokens, days, sprint }) => planBudget(getBoard(), project, { budgetTokens, days, sprint }))
+  tryTool(({ project, budgetTokens, days, sprint }) => {
+    const board = getBoard();
+    const result = planBudget(board, project, { budgetTokens, days, sprint });
+    // FBMCPF-279: additive blend plan when account-wide planLimits is captured.
+    // Existing token budgeting is untouched — blend rides alongside it.
+    try {
+      const bp = blendPlan(board, project, getGlobalConfig(board), new Date());
+      if (bp) result.blendPlan = bp;
+    } catch { /* blend plan is additive/best-effort */ }
+    return result;
+  })
 );
 
 server.registerTool(

@@ -96,3 +96,48 @@ kept in `issued-keys.json` — deliver it manually and you've lost nothing.
 Keys expire 1 year after purchase (+1 grace day). Polar subscriptions renew →
 each renewal `order.paid` re-fires the webhook → a fresh key is issued and emailed
 automatically. Lapsed customers keep read access; writes freeze until they renew.
+
+## Refunds (FBMCPF-276)
+
+A refund needs to kill a key that's already been activated (or stop an order
+from ever being claimed) without adding any phone-home lookup to the offline
+verification path. Two independent steps, both required:
+
+1. **Revoke locally.** Run:
+
+   ```
+   node owner/revoke.mjs --orderId ord_x --licensee "Acme"
+   ```
+
+   This appends a matcher `{ orderId?, licensee?, issued? }` to
+   `owner/revocations.json` (gitignore-worthy the same way `issued-keys.json`
+   is — it's owner bookkeeping, not something to ship). `server/license.js`'s
+   `isRevoked()` treats a license payload as revoked when **every field a
+   matcher specifies** matches the same field on the payload; fields you leave
+   off are ignored, and a matcher with nothing specified is malformed and
+   never matches anything. `evaluate()` and `activate()` both check this list:
+   an already-activated key flips to status `commercial-revoked` (writes
+   freeze, reads keep working) the next time the server evaluates licensing,
+   and a revoked key can no longer be (re-)activated at all — either way the
+   customer sees a message pointing them at `licensing@featureboard.ai`.
+
+   This check is **local and file-based** — there is still no phone-home
+   lookup. That means it only takes effect on machines that have this file.
+   If the customer's server-side install lives on infrastructure you control,
+   copy `owner/revocations.json` into that install's
+   `<boards>/.featureboard/revocations.json` (same convention as
+   `license.json`) to enforce it there too.
+
+2. **Revoke the order, server-side.** For customers who haven't activated yet
+   (or to stop the order being claimed again after a refund), set
+   `revoked: true` on both the worker KV `claim:` and `order:` records for
+   that order. The claim API checks this and returns `revoked: true` in its
+   response body, which `fetchKeyByOrder` maps to a clear refusal — so
+   `activate_license`'s email+orderId mode stops handing out a key for that
+   order immediately, with no local file needed on the customer's end. That
+   worker logic itself is **tracked and implemented in the website repo**, not
+   here — this README only documents the KV convention (`claim:` / `order:`
+   keys, `revoked: true`) so the two sides stay in sync.
+
+Do both: step 1 covers keys already out in the wild (and any offline install
+you can still reach), step 2 stops the order from being claimed again.

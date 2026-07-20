@@ -117,12 +117,44 @@ export function setGitConfig(board, project, patch = {}) {
   return cfg;
 }
 
+/** FBMCPF-278: validate/normalize an account-wide planLimits patch (the two
+ *  weekly Claude-Max meters + when they were captured/reset). Throws on bad
+ *  input; returns null to clear. Kept here so it guards BOTH the config write
+ *  and the read path (the account-config allowlist for this key). */
+export function normalizePlanLimits(pl) {
+  if (pl == null) return null;
+  if (typeof pl !== "object") throw new Error("planLimits must be an object (or null to clear)");
+  const num = (v, name) => {
+    const n = Number(v);
+    if (!Number.isFinite(n)) throw new Error(`planLimits.${name} must be a number`);
+    return n;
+  };
+  const iso = (v, name) => {
+    if (typeof v !== "string" || Number.isNaN(Date.parse(v))) {
+      throw new Error(`planLimits.${name} must be an ISO date string`);
+    }
+    return v;
+  };
+  return {
+    fablePct: num(pl.fablePct, "fablePct"),
+    allModelsPct: num(pl.allModelsPct, "allModelsPct"),
+    capturedAt: iso(pl.capturedAt, "capturedAt"),
+    resetAt: iso(pl.resetAt, "resetAt"),
+    targetRatio: pl.targetRatio == null ? 1.0 : num(pl.targetRatio, "targetRatio"),
+  };
+}
+
 /** Read the account-wide git config (tolerant of a missing/corrupt file — always
  *  returns a valid object, defaulting gitMode to "commit-only"). */
 export function getGlobalConfig(board) {
   const raw = readGlobalConfigRaw(board);
   const cfg = { ...DEFAULT_GLOBAL_CONFIG };
   if (raw && GIT_MODES.includes(raw.gitMode)) cfg.gitMode = raw.gitMode;
+  // FBMCPF-278: account-wide plan-meter limits, when captured. Re-normalized on
+  // read so a hand-edited/legacy file can't surface a malformed planLimits.
+  if (raw && raw.planLimits != null) {
+    try { cfg.planLimits = normalizePlanLimits(raw.planLimits); } catch { /* ignore malformed */ }
+  }
   return cfg;
 }
 
@@ -137,6 +169,12 @@ export function setGlobalConfig(board, patch = {}) {
       throw new Error(`gitMode must be one of: ${GIT_MODES.join(", ")}`);
     }
     cfg.gitMode = patch.gitMode;
+  }
+  // FBMCPF-278: planLimits — undefined leaves it untouched; null clears it.
+  if (patch.planLimits !== undefined) {
+    const norm = normalizePlanLimits(patch.planLimits);
+    if (norm == null) delete cfg.planLimits;
+    else cfg.planLimits = norm;
   }
   atomicWrite(p, JSON.stringify(cfg, null, 2) + "\n");
   return cfg;

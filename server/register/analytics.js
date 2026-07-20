@@ -1,6 +1,6 @@
 // Auto-extracted from server/index.js (FBMCPF-224). Registration blocks moved verbatim.
 export function registerAnalyticsTools(server, ctx) {
-  const { Board, addKbDoc, agentMonitorV2, appendEvent, appendHeartbeat, applyDriftRemediation, driftReport, estimateTicketMinutes, existsSync, getBoard, getGitConfig, getHistoryMap, getKbDoc, getLiveActivity, getLatestUpdate, getPricing, getVoiceProfile, lastDispatchForTicket, lintVoice, listKbDocs, listSprints, maybeLint, meta, nodePath, postProjectUpdate, predictDueDates, reconcileChurn, recordDriftScore, rollupCost, prepareResearch, ragSearch, searchKb, setSite, startDriftRun, suggestHistoricalFiles, tryTool, writeTool, z } = ctx;
+  const { Board, addKbDoc, agentMonitorV2, appendEvent, appendHeartbeat, applyDriftRemediation, blendStatus, driftReport, estimateTicketMinutes, existsSync, getBoard, getGitConfig, getGlobalConfig, getHistoryMap, getKbDoc, getLiveActivity, getLatestUpdate, getPricing, getVoiceProfile, lastDispatchForTicket, lintVoice, listKbDocs, listSprints, maybeLint, meta, nodePath, postProjectUpdate, predictDueDates, reconcileChurn, recordDriftScore, rollupCost, prepareResearch, ragSearch, searchKb, setSite, startDriftRun, suggestHistoricalFiles, tryTool, writeTool, z } = ctx;
 
 // analytics & metadata (v0.3) ----------------------------------------------
 
@@ -25,6 +25,9 @@ server.registerTool(
     // FBMCPF-199: surface the latest narrative project update (+ staleness hint).
     let projectUpdate = null;
     try { projectUpdate = getLatestUpdate(board, project); } catch { projectUpdate = null; }
+    // FBMCPF-278: plan-meter blend, when planLimits is captured (best-effort).
+    let blend = null;
+    try { blend = blendStatus(getGlobalConfig(board), new Date()); } catch { blend = null; }
     return {
       ...base,
       ...(sp.sprints.length ? { sprints: sp.sprints, backlogOpen: sp.backlogOpen } : {}),
@@ -37,6 +40,7 @@ server.registerTool(
         totalCost: costRollup.totalCost,
       },
       ...(projectUpdate && projectUpdate.latest ? { projectUpdate } : {}),
+      ...(blend ? { blend } : {}),
     };
   })
 );
@@ -646,6 +650,11 @@ server.registerTool(
       const pu = getLatestUpdate(board, project);
       if (pu && pu.latest) health.projectUpdate = pu;
     } catch { /* project-update surfacing is best-effort */ }
+    // FBMCPF-278: surface plan-meter blend when planLimits is captured.
+    try {
+      const blend = blendStatus(getGlobalConfig(board), new Date());
+      if (blend) health.blend = blend;
+    } catch { /* blend surfacing is best-effort */ }
     return health;
   })
 );
@@ -722,7 +731,11 @@ server.registerTool(
     } catch {
       historicalFiles = [];
     }
-    const packet = meta.getWorkPacket(board, project, ticket, { historicalFiles });
+    // FBMCPF-278: thread the account-wide blend into the packet so the dispatch
+    // directive can steer toward the hotter meter. Best-effort.
+    let blend = null;
+    try { blend = blendStatus(getGlobalConfig(board), new Date()); } catch { blend = null; }
+    const packet = meta.getWorkPacket(board, project, ticket, { historicalFiles, blend });
     // FBMCPF-269: etaHints defaults ON (see CONFIG_KEYS in metadata.js) —
     // attach a per-ticket wall-clock estimate alongside the packet's other
     // scoping info.
