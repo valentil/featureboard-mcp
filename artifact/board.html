@@ -162,6 +162,23 @@
   .chip.cap.over { background: #fde8e8; color: #b3261e; }
   html[data-theme="dark"] .chip.cap { background: #263329; color: #a7d3b0; }
   html[data-theme="dark"] .chip.cap.over { background: #3a2e2a; color: #e88f7a; }
+  /* FBMCPF-257: orchestration chip line for In Progress cards (get_agent_monitor's
+     lastDispatch + spendRatio, folded into state.monitor by refresh()) — who's
+     actively working the ticket, its planned model:/effort: labels, and a slim
+     spend-vs-cap bar. Reuses the existing .chip look; the worker/spend bits are
+     the only new visual elements. */
+  .orchStrip { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin: -2px 0 6px; }
+  .chip.worker { font-weight: 600; }
+  .chip.worker.sub { background: #eaf3ff; color: #2b6cb0; }
+  .chip.worker.orch { background: #fdeee6; color: #b3591e; }
+  html[data-theme="dark"] .chip.worker.sub { background: #26333a; color: #9cc4db; }
+  html[data-theme="dark"] .chip.worker.orch { background: #3a2e26; color: #e0a58a; }
+  .spendBar { flex: 1 1 46px; min-width: 40px; max-width: 90px; height: 5px; border-radius: 999px; background: #eef0f5; overflow: hidden; }
+  .spendBar .spendBarFill { height: 100%; background: #1a7d47; border-radius: 999px; }
+  .spendBar.over .spendBarFill { background: #b3261e; }
+  html[data-theme="dark"] .spendBar { background: #3a3830; }
+  html[data-theme="dark"] .spendBar .spendBarFill { background: #a7d3b0; }
+  html[data-theme="dark"] .spendBar.over .spendBarFill { background: #e88f7a; }
   /* FBMCPF-159: intake orchestration guard — open ticket with no model:/cap: label */
   .chip.unlabeled { background: #fde8e8; color: #b3261e; font-weight: 600; }
   html[data-theme="dark"] .chip.unlabeled { background: #3a2e2a; color: #e88f7a; }
@@ -1142,7 +1159,21 @@ function renderProgressStrip() {
     const ts = Date.parse(latest.date + "T" + latest.time);
     if (!isNaN(ts)) ago = "last activity " + fmtMinutes(Math.max(0, Math.round((Date.now() - ts) / 60000))) + " ago";
   }
-  el.innerHTML = '<span><span class="pulseDot"></span><b>' + n + '</b> in progress · ' + ago + '</span>';
+  // FBMCPF-257: "k on sub-agents · j stalled" from get_agent_monitor's summary
+  // (state.monitor, folded into the existing refresh() cycle) — omitted
+  // entirely when state.monitor is null (older server, or the get_agent_monitor
+  // call in refresh() failed) or a count is zero, so the strip degrades
+  // cleanly to the original "N in progress · last activity" text rather than
+  // showing "0 on sub-agents · 0 stalled" noise.
+  const mon = state.monitor;
+  let extra = "";
+  if (mon) {
+    const bits = [];
+    if (mon.subAgentCount) bits.push('<b>' + mon.subAgentCount + '</b> on sub-agents');
+    if (mon.stalledCount) bits.push('<b>' + mon.stalledCount + '</b> stalled');
+    if (bits.length) extra = ' · ' + bits.join(' · ');
+  }
+  el.innerHTML = '<span><span class="pulseDot"></span><b>' + n + '</b> in progress · ' + ago + extra + '</span>';
 }
 
 // FBMCPF-134: show a Review column when the gate is on OR any ticket sits in Review.
@@ -1269,8 +1300,12 @@ function cardHTML(t, opts) {
   const MDL_RE = /^model:(.+)$/i, EFF_RE = /^effort:(low|medium|high)$/i;
   let _m, _e;
   (t.labels || []).forEach((l) => { const m = String(l).match(MDL_RE); if (m) _m = m[1]; const e2 = String(l).match(EFF_RE); if (e2) _e = e2[1].toLowerCase(); });
-  if (_m) meta.push('<span class="chip model" title="Planned model">\ud83e\udd16 ' + esc(_m) + '</span>');
-  if (_e) meta.push('<span class="chip eff-' + _e + '" title="Effort level">' + _e + '</span>');
+  // FBMCPF-257: for In Progress cards, model:/effort: move down into the new
+  // orchStrip line below (built after this block) instead of the general meta
+  // row, so they sit alongside the worker chip + spend bar instead of being
+  // shown twice. Every other card keeps them in meta exactly as before.
+  if (_m && !inProgress) meta.push('<span class="chip model" title="Planned model">\ud83e\udd16 ' + esc(_m) + '</span>');
+  if (_e && !inProgress) meta.push('<span class="chip eff-' + _e + '" title="Effort level">' + _e + '</span>');
   // FBMCPF-159: intake orchestration guard — flag open tickets that reached the
   // board with no model: and no cap: label (should be rare now that intake fills
   // them in; catches tickets created before this guard, or via a raw markdown edit).
@@ -1296,10 +1331,51 @@ function cardHTML(t, opts) {
   const next = opts.upNext ? '<span class="upnext">UP NEXT</span>' : "";
   const pulse = inProgress ? '<span class="pulseDot" title="In progress"></span>' : "";
   const cardCls = "card" + (inProgress ? " inprogress" : "");
+  // FBMCPF-257: orchestration chip line, In Progress cards only — worker
+  // (sub-agent vs orchestrator, from get_agent_monitor's lastDispatch via
+  // state.monitor, folded into the existing refresh() cycle), the ticket's
+  // own model:/effort: labels (moved down from meta above for these cards),
+  // and a slim spend-vs-cap bar from the monitor ticket's spendRatio.
+  // Degrades to "" whenever state.monitor is null (older server that doesn't
+  // have get_agent_monitor, or the refresh call failed) or has no entry for
+  // this ticket — everything else on the card renders exactly as before.
+  const orchHTML = orchStripHTML(t, inProgress, _m, _e);
   return '<div class="' + cardCls + '" data-ticket="' + t.ticket + '" data-col="' + opts.col + '"' + dragAttrs + '>' + del + split + sprintBtn + reviewBtns + histBtn +
     '<div class="top"><span class="tk ' + t.type + '">' + esc(t.ticket) + '</span>' + pulse + next + '</div>' +
-    '<div class="title">' + esc(t.title) + '</div>' +
+    '<div class="title">' + esc(t.title) + '</div>' + orchHTML +
     (meta.length ? '<div class="meta">' + meta.join("") + '</div>' : "") + '</div>';
+}
+
+// FBMCPF-257: build the orchestration chip line for one In Progress card.
+// mon is this ticket's entry in state.monitor.tickets (get_agent_monitor's
+// per-ticket snapshot); ld is its lastDispatch. Returns "" when there's
+// nothing to show (no monitor data and no model/effort labels) so a card
+// with none of this never gets an empty <div>.
+function orchStripHTML(t, inProgress, _m, _e) {
+  if (!inProgress) return "";
+  const mon = state.monitor && Array.isArray(state.monitor.tickets)
+    ? state.monitor.tickets.find((m) => m.ticket === t.ticket) : null;
+  const ld = mon && mon.lastDispatch;
+  const chips = [];
+  if (ld && ld.worker === "sub-agent") {
+    const bits = ["\ud83e\udd16 sub-agent"];
+    if (ld.model) bits.push(esc(ld.model));
+    if (ld.ageMinutes != null) bits.push(fmtMinutes(Math.max(0, Math.round(ld.ageMinutes))) + " ago");
+    chips.push('<span class="chip worker sub" title="Dispatched to a sub-agent">' + bits.join(" \u00b7 ") + '</span>');
+  } else if (ld && ld.worker === "orchestrator") {
+    chips.push('<span class="chip worker orch" title="Orchestrator is working this ticket">\ud83c\udf9b orchestrator' +
+      (ld.ageMinutes != null ? ' <span style="opacity:.75">\u00b7 ' + fmtMinutes(Math.max(0, Math.round(ld.ageMinutes))) + '</span>' : "") + '</span>');
+  }
+  if (_m) chips.push('<span class="chip model" title="Planned model">\ud83e\udd16 ' + esc(_m) + '</span>');
+  if (_e) chips.push('<span class="chip eff-' + _e + '" title="Effort level">' + _e + '</span>');
+  let bar = "";
+  if (mon && mon.spendRatio != null) {
+    const pct = Math.max(0, Math.min(100, Math.round(mon.spendRatio * 100)));
+    bar = '<div class="spendBar' + (mon.spendRatio >= 1 ? ' over' : '') + '" title="Spend vs cap: ' + pct + '%">' +
+      '<div class="spendBarFill" style="width:' + pct + '%"></div></div>';
+  }
+  if (!chips.length && !bar) return "";
+  return '<div class="orchStrip">' + chips.join("") + bar + '</div>';
 }
 
 /* ---------- ticket history / audit timeline (FBMCPF-142) ---------- */
