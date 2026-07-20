@@ -35,6 +35,12 @@ Sub-agents NEVER write the board and NEVER commit. Only the orchestrator:
 3. Sets status to `Done` with a one-line `completionSummary`.
 4. Calls `log_work` with tokens/additions/deletions/model.
 5. Calls `commit_feature` for that ticket before pulling the next one.
+6. After `commit_feature`, background static checks (syntax, lint, any configured
+   commands) start AUTOMATICALLY and DETACHED — pure CPU, zero tokens. Don't wait:
+   pull the next ticket immediately. Between tickets, and before ending the session,
+   call `get_check_results` for any uncollected runs (by ticket or the newest run).
+   A failed run means fix it now or file a bug before closing out — a syntax error
+   caught here is one that would otherwise have shipped.
 
 ## 4. Live visibility
 

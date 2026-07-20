@@ -1,6 +1,6 @@
 // Auto-extracted from server/index.js (FBMCPF-224). Registration blocks moved verbatim.
 export function registerTaskTools(server, ctx) {
-  const { StatusEnum, codeFileMap, dismissCleanupFinding, evaluateCommitGate, evaluateDoneGates, evaluateRules, existsSync, getBoard, listCodeTree, meta, mirrorGraduatedPad, nodePath, notifySlack, notifyTicketEvent, pruneBoard, readCodeFile, readFileSync, readdirSync, scanBoardCleanup, suggestFileSplit, tryTool, writeHandoff, writeTool, z } = ctx;
+  const { StatusEnum, codeFileMap, dismissCleanupFinding, evaluateChecksGate, evaluateCommitGate, evaluateDoneGates, evaluateRules, existsSync, getBoard, listCodeTree, meta, mirrorGraduatedPad, nodePath, notifySlack, notifyTicketEvent, pruneBoard, readCodeFile, readFileSync, readdirSync, scanBoardCleanup, suggestFileSplit, tryTool, writeHandoff, writeTool, z } = ctx;
 
 // duplicate-id repair (FBMCPB-11) --------------------------------------------
 server.registerTool(
@@ -72,11 +72,26 @@ server.registerTool(
       const gate = evaluateDoneGates(board, project, ticket);
       if (gate.refuse) throw new Error(gate.error);
     }
+    // FBMCPF-261: requireChecksOnDone gate — refuse Done when the ticket's
+    // latest background static-check run FAILED (approve:true overrides). A
+    // still-running run does NOT block (don't stall the loop on pending checks) —
+    // it surfaces a note instead. Mirrors evaluateCommitGate: any config/read
+    // hiccup resolves to "no gate", so this never breaks set_status.
+    let checksGate = { refuse: false };
+    if (status === "Done") {
+      try {
+        checksGate = evaluateChecksGate(board, project, ticket, { approve: approve === true });
+      } catch {
+        checksGate = { refuse: false };
+      }
+    }
+    if (checksGate.refuse) throw new Error(checksGate.error);
     const result = board.setStatus(project, ticket, status, completionSummary, { approve });
     if (commitGate.missingCommit) {
       result.uncommitted = true;
       result.commitReminder = `${ticket} moved to Done with no commit found for it yet — consider commit_feature.`;
     }
+    if (checksGate.note) result.checksNote = checksGate.note;
     if (status === "Done" && handoff) writeHandoff(board, project, ticket, handoff); // FBMCPF-144
     // FBMCPF-155: non-blocking Slack notification on Done/Review (never throws).
     if (status === "Done" || status === "Review") {

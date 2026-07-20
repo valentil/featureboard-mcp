@@ -37,4 +37,5 @@ Only the orchestrator writes to the board. As each sub-agent finishes:
 ## 5. Guardrails and close-out
 
 - Respect `cap:<tokens>` labels — wrap up and requeue any ticket about to exceed its cap.
+- `commit_feature` starts background static checks automatically (pure CPU, no tokens) — keep dispatching, then collect them with `get_check_results` between tickets and before ending the session; a failed run is a fix-now or file-a-bug before closing out.
 - When the plan is exhausted or the budget is spent, post a day summary to the scratchpad (`append_scratchpad`) and report to the user.

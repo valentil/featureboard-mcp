@@ -1,6 +1,6 @@
 // Auto-extracted from server/index.js (FBMCPF-224). Registration blocks moved verbatim.
 export function registerGitTools(server, ctx) {
-  const { captureAsk, cleanupWorktree, commitFeature, createWorktree, fail, getBoard, getGitConfig, getGlobalConfig, listWorktrees, meta, openPullRequest, resolveGitMode, setGitConfig, setGlobalConfig, tryTool, writeTool, z } = ctx;
+  const { captureAsk, cleanupWorktree, commitFeature, createWorktree, fail, getBoard, getCheckResults, getGitConfig, getGlobalConfig, listWorktrees, meta, openPullRequest, resolveChecksConfig, resolveGitMode, setGitConfig, setGlobalConfig, startChecks, tryTool, writeTool, z } = ctx;
 
 // Git integration (optional, opt-in) ---------------------------------------
 
@@ -92,7 +92,67 @@ server.registerTool(
     const board = getBoard();
     if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
     const cwd = meta.getProjectConfig(board, project).codeLocation;
-    return commitFeature(board, project, { ticket, title, message, push, paths }, { cwd });
+    const r = commitFeature(board, project, { ticket, title, message, push, paths }, { cwd });
+    // FBMCPF-261: after a successful commit, kick off async background static
+    // checks scoped to the new commit hash — pure CPU, zero tokens, detached so
+    // it never blocks the orchestrator. Done here (not inside commitFeature,
+    // which stays pure + exec-injectable for tests) because spawning a detached
+    // process is a tool-boundary side-effect and we have the resulting commit
+    // hash to scope changed-file detection to. Never fail/delay the commit if
+    // spawning stumbles — attach a warning instead.
+    if (r && r.committed) {
+      try {
+        const checksCfg = resolveChecksConfig(board, project);
+        if (checksCfg && checksCfg.autoOnCommit !== false) {
+          const revision = r.commit && r.commit.hash ? r.commit.hash : undefined;
+          const started = startChecks(board, project, { ticket, revision, checks: checksCfg });
+          if (started && started.started) r.checks = { runId: started.runId };
+        }
+      } catch (e) {
+        r.checks = { warning: `could not start background checks: ${e.message}` };
+      }
+    }
+    return r;
+  })
+);
+
+server.registerTool(
+  "start_checks",
+  {
+    title: "Start background static checks",
+    description:
+      "Fire-and-forget: spawn a DETACHED background run of the project's static checks (syntax-check of changed .js/.mjs/.cjs via node --check, plus any configured commands — lint, a fast test subset, etc.) and return a runId IMMEDIATELY. Pure CPU, zero model tokens, never blocks — the runner survives this call and writes its results to <project>/checks/<runId>.json. Scope it to a commit with revision (else it uses the last commit / dirty tree). Poll results later with get_check_results. commit_feature already starts checks automatically on every commit (checks.autoOnCommit); use this to run them on demand. Returns started:false with a reason when the project has no checks config and no package.json in its code repo.",
+    inputSchema: {
+      project: z.string(),
+      ticket: z.string().optional().describe("Ticket to associate the run with (so get_check_results can find it by ticket)."),
+      revision: z.string().optional().describe("Commit hash to scope changed-file detection to (git show); defaults to the last commit / dirty tree."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  },
+  writeTool(({ project, ticket, revision }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return startChecks(board, project, { ticket, revision });
+  })
+);
+
+server.registerTool(
+  "get_check_results",
+  {
+    title: "Get background check results",
+    description:
+      "Collect the results of a background static-check run: by runId, else the newest run for a ticket, else the newest run overall. Returns the run's status (running | passed | failed | error), per-check results (name, status, captured output) and ageSeconds. This closes the async loop: commit_feature starts checks in the background so the orchestrator can commit and immediately keep working; between tickets (and before ending the session) collect any uncollected runs here — a failed run means fix it now or file a bug before closing out. Read-only, zero tokens. The first time a FAILED run is collected for a ticket it's recorded as a 'checks' audit event on that ticket.",
+    inputSchema: {
+      project: z.string(),
+      runId: z.string().optional(),
+      ticket: z.string().optional().describe("Return the newest run associated with this ticket."),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project, runId, ticket }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    return getCheckResults(board, project, { runId, ticket });
   })
 );
 

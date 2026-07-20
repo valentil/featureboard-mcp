@@ -122,6 +122,11 @@ export function appendEvent(board, project, event) {
   if (event.model != null) rec.model = String(event.model);
   if (event.parallel != null) rec.parallel = Boolean(event.parallel);
   if (event.note != null) rec.note = String(event.note);
+  // FBMCPF-261: checks events (field:"checks", appended by get_check_results when
+  // a failed background-check run is first collected) carry the run id and the
+  // names of the checks that failed alongside the usual from/to/source shape.
+  if (event.runId != null) rec.runId = String(event.runId);
+  if (Array.isArray(event.failedChecks)) rec.failedChecks = event.failedChecks.map(String);
   try {
     const p = eventsPath(board, project);
     fs.mkdirSync(path.dirname(p), { recursive: true });

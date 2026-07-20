@@ -121,6 +121,16 @@ server.registerTool(
         requirePullRequest: z.boolean().optional(),
       }).optional().describe("FBMCPF-215: per-project preconditions on → Done — require no unresolved review comments, a passing logged test run, and/or a work-log entry for the ticket. Each toggle independent, all off by default; approve:true overrides."),
       requireCommitOnDone: z.boolean().optional().describe("When on and git is enabled for the project, set_status refuses to move a ticket to Done unless a commit references it (recorded via commit_feature or found via git log --grep); approve:true overrides. Default false — a plain non-blocking uncommitted/commitReminder warning otherwise."),
+      requireChecksOnDone: z.boolean().optional().describe("FBMCPF-261: when on, set_status refuses to move a ticket to Done if its latest background static-check run FAILED (approve:true overrides). A still-running run does not block — it just adds a note. Default false."),
+      checks: z.object({
+        autoOnCommit: z.boolean().optional().describe("Start checks automatically after every commit_feature (default true)."),
+        syntaxCheckChangedFiles: z.boolean().optional().describe("node --check each changed .js/.mjs/.cjs file (default true)."),
+        commands: z.array(z.object({
+          name: z.string(),
+          command: z.string().describe("Shell command run in the code repo cwd."),
+          timeoutMinutes: z.number().optional().describe("Per-command timeout in minutes (default 5)."),
+        })).optional().describe("Configured static-check commands (lint, a fast test subset, impact scan, ...)."),
+      }).optional().describe("FBMCPF-261: async background static-check config. Checks run DETACHED on every commit (pure CPU, zero model tokens) so the orchestrator can commit and immediately keep working, then collect results with get_check_results. When absent but the code repo has a package.json, a cheap syntax-only default applies."),
       slackWebhook: z.string().url().optional().nullable().describe("Project's https://hooks.slack.com/... webhook; null clears. Opt-in egress."),
       slackEvents: z.array(z.enum(["done", "review", "summary"])).optional().describe("Which events may post to Slack (default all three).").describe("When on, a ticket must pass through Review before it can be marked Done (set_status enforces the gate; approve:true overrides)."),
       stage: z.enum(["incubating", "graduated"]).optional().describe("Project lifecycle stage (FBMCPF-149)."),

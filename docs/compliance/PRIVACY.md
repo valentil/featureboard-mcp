@@ -42,6 +42,15 @@ code repo on disk) and makes no network call.
   the call itself always overrides `gitMode`. `commit-only` is the default, matching
   the original no-push-unless-asked behavior. Disabled by default; no-ops with a
   reason when git integration is off.
+- `start_checks` (and the automatic checks that `commit_feature` starts after a
+  commit) carries `openWorldHint:true` because it runs the project's configured
+  static-check commands via a shell in the code repo (plus `node --check` on
+  changed `.js/.mjs/.cjs` files). These are pure CPU and use no model tokens; they
+  make no network call of their own, though a command YOU configure (e.g. a test
+  suite) could. Detached and fire-and-forget; results are written under
+  `<project>/checks/` and read back with `get_check_results`. Only runs when a
+  `checks` config is present, or the code repo has a `package.json` (a cheap
+  syntax-only default).
 - `get_site_traffic` is a read proxy: it fetches traffic stats from the site's
   configured external analytics provider (Plausible at `plausible.io`, a self-hosted
   umami instance at the host you configured, or a custom endpoint) via
