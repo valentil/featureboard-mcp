@@ -1831,6 +1831,7 @@ server.registerTool(
         requireResolvedReview: z.boolean().optional(),
         requirePassingTest: z.boolean().optional(),
         requireWorkLog: z.boolean().optional(),
+        requirePullRequest: z.boolean().optional(),
       }).optional().describe("FBMCPF-215: per-project preconditions on → Done — require no unresolved review comments, a passing logged test run, and/or a work-log entry for the ticket. Each toggle independent, all off by default; approve:true overrides."),
       requireCommitOnDone: z.boolean().optional().describe("When on and git is enabled for the project, set_status refuses to move a ticket to Done unless a commit references it (recorded via commit_feature or found via git log --grep); approve:true overrides. Default false — a plain non-blocking uncommitted/commitReminder warning otherwise."),
       slackWebhook: z.string().url().optional().nullable().describe("Project's https://hooks.slack.com/... webhook; null clears. Opt-in egress."),
@@ -4559,13 +4560,19 @@ server.registerTool(
     const board = getBoard();
     if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
     const t = board.getTask(project, ticket);
-    return openPullRequest(board, project, {
+    const r = openPullRequest(board, project, {
       ticket,
       title: t ? t.title : "",
       description: t ? t.description || "" : "",
       base,
       draft,
     });
+    // FBMCPF-234: record the PR URL on the ticket so board cards can link it
+    // and doneGates.requirePullRequest can verify it.
+    if (r.opened && r.url) {
+      try { board.updateTask(project, ticket, { website: r.url }, { source: "open_pull_request" }); } catch {}
+    }
+    return r;
   })
 );
 

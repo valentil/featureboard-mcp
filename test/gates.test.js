@@ -59,3 +59,12 @@ test("multiple gates report every missing precondition", () => {
   assert.equal(g.refuse, true);
   assert.equal(g.missing.length, 2);
 });
+
+test("requirePullRequest blocks until a PR URL is recorded on the ticket", () => {
+  const b = tmpBoard();
+  setProjectConfig(b, "Proj", { doneGates: { requirePullRequest: true } });
+  const t = b.addTask("Proj", "feature", { title: "PR-gated work" });
+  assert.equal(evaluateDoneGates(b, "Proj", t.ticketNumber).refuse, true);
+  b.updateTask("Proj", t.ticketNumber, { website: "https://github.com/acme/widget/pull/7" }, { source: "open_pull_request" });
+  assert.equal(evaluateDoneGates(b, "Proj", t.ticketNumber).refuse, false);
+});

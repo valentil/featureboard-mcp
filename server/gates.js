@@ -46,6 +46,17 @@ export function evaluateDoneGates(board, project, ticket) {
     } catch {}
   }
 
+  if (gates.requirePullRequest) {
+    try {
+      const t = board.getTask(project, tk);
+      const url = t && t.website ? String(t.website) : "";
+      const isPr = /[/](pull|pulls|merge_requests)[/]/.test(url);
+      if (!isPr) missing.push("no pull request recorded for this ticket - open_pull_request first");
+    } catch {
+      missing.push("no pull request recorded for this ticket - open_pull_request first");
+    }
+  }
+
   if (gates.requireWorkLog) {
     try {
       const hasWork = readWorkLog(board, project).some((e) => e.ticket === tk);
