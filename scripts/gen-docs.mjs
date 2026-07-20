@@ -10,7 +10,20 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const src = fs.readFileSync(path.join(root, "server", "index.js"), "utf8");
+// FBMCPF-224: registerTool/registerPrompt calls were split out of index.js
+// into server/register/*.js. Concatenate index.js with each register module
+// IN IMPORT ORDER (= registration order) so the same split-on-register
+// parsing sees every tool/prompt and preserves the original ordering.
+const src = (() => {
+  const indexSrc = fs.readFileSync(path.join(root, "server", "index.js"), "utf8");
+  const parts = [indexSrc];
+  const re = /from\s+["\']\.\/register\/([^"\']+)["\']/g;
+  let m;
+  while ((m = re.exec(indexSrc))) {
+    parts.push(fs.readFileSync(path.join(root, "server", "register", m[1]), "utf8"));
+  }
+  return parts.join("\n");
+})();
 
 // Split into per-tool chunks on registerTool( boundaries.
 const chunks = src.split(/server\.registerTool\(/).slice(1);

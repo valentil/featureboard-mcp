@@ -12,7 +12,20 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const serverSrc = fs.readFileSync(path.join(root, "server", "index.js"), "utf8");
+// FBMCPF-224: registerTool/registerPrompt calls were split out of index.js
+// into server/register/*.js. Concatenate index.js with each register module
+// IN IMPORT ORDER (= registration order) so the same split-on-register
+// parsing sees every tool/prompt and preserves the original ordering.
+const serverSrc = (() => {
+  const indexSrc = fs.readFileSync(path.join(root, "server", "index.js"), "utf8");
+  const parts = [indexSrc];
+  const re = /from\s+["\']\.\/register\/([^"\']+)["\']/g;
+  let m;
+  while ((m = re.exec(indexSrc))) {
+    parts.push(fs.readFileSync(path.join(root, "server", "register", m[1]), "utf8"));
+  }
+  return parts.join("\n");
+})();
 const privacyDoc = fs.readFileSync(path.join(root, "docs", "compliance", "PRIVACY.md"), "utf8");
 
 /** Every tool name registered with `openWorldHint: true` in server/index.js. */
