@@ -69,6 +69,7 @@ import {
 import { getGitConfig, setGitConfig, commitFeature, mirrorGraduatedPad, getTicketDiff, getGlobalConfig, setGlobalConfig, resolveGitMode, evaluateCommitGate, reconcileChurn, getHistoryMap, suggestHistoricalFiles, openPullRequest } from "./git.js";
 import { createWorktree, listWorktrees, cleanupWorktree, mergeBackGuidance } from "./worktrees.js";
 import { addReviewComment, listReviewComments, resolveReviewComment, ticketsWithUnresolvedReviews } from "./reviews.js";
+import { evaluateDoneGates } from "./gates.js";
 import { scaffoldSite } from "./sitegen.js";
 import { setAnalyticsConfig, autoConfigureAnalytics, getSiteTraffic } from "./analytics.js";
 import { suggestPackaging, savePackagingConfig, getPackagingConfig, validatePackaging } from "./packaging.js";
@@ -1376,6 +1377,11 @@ server.registerTool(
       }
     }
     if (commitGate.refuse) throw new Error(commitGate.error);
+    // FBMCPF-215: configurable Done gates (resolved review / passing test / work log).
+    if (status === "Done" && approve !== true) {
+      const gate = evaluateDoneGates(board, project, ticket);
+      if (gate.refuse) throw new Error(gate.error);
+    }
     const result = board.setStatus(project, ticket, status, completionSummary, { approve });
     if (commitGate.missingCommit) {
       result.uncommitted = true;
@@ -1795,6 +1801,11 @@ server.registerTool(
       brandVoice: z.string().optional().describe("Brand voice/tone for generated media, e.g. 'confident, playful, plain-spoken'."),
       imageTool: z.string().optional().describe("Preferred image-generation tool/connector/skill name for generate_image (e.g. an image MCP or an 'imagegen' skill). If unset, generate_image uses any available image generator, else falls back to SVG."),
       requireReview: z.boolean().optional(),
+      doneGates: z.object({
+        requireResolvedReview: z.boolean().optional(),
+        requirePassingTest: z.boolean().optional(),
+        requireWorkLog: z.boolean().optional(),
+      }).optional().describe("FBMCPF-215: per-project preconditions on → Done — require no unresolved review comments, a passing logged test run, and/or a work-log entry for the ticket. Each toggle independent, all off by default; approve:true overrides."),
       requireCommitOnDone: z.boolean().optional().describe("When on and git is enabled for the project, set_status refuses to move a ticket to Done unless a commit references it (recorded via commit_feature or found via git log --grep); approve:true overrides. Default false — a plain non-blocking uncommitted/commitReminder warning otherwise."),
       slackWebhook: z.string().url().optional().nullable().describe("Project's https://hooks.slack.com/... webhook; null clears. Opt-in egress."),
       slackEvents: z.array(z.enum(["done", "review", "summary"])).optional().describe("Which events may post to Slack (default all three).").describe("When on, a ticket must pass through Review before it can be marked Done (set_status enforces the gate; approve:true overrides)."),
