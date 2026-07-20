@@ -1,6 +1,6 @@
 // Auto-extracted from server/index.js (FBMCPF-224). Registration blocks moved verbatim.
 export function registerMediaTools(server, ctx) {
-  const { Board, addComment, annotateMedia, draftShare, editMediaText, getBoard, getMedia, listComments, listMedia, listShares, listUploads, listVariations, meta, removeAnnotation, removeComment, removeShare, revertMedia, saveMedia, saveUpload, searchMedia, tagMedia, tryTool, writeTool, z } = ctx;
+  const { Board, addComment, annotateMedia, draftShare, editMediaText, getBoard, getMedia, listComments, listMedia, listShares, listUploads, listVariations, maybeLint, meta, removeAnnotation, removeComment, removeShare, revertMedia, saveMedia, saveUpload, searchMedia, tagMedia, tryTool, writeTool, z } = ctx;
 
 server.registerTool(
   "list_media",
@@ -308,7 +308,7 @@ server.registerTool(
   {
     title: "Draft a social share",
     description:
-      "Save a reviewable social-share draft for a gallery item — you write the copy, this persists it (never posts). Platform 'x' (≤280 chars) or 'linkedin' (longer); over-limit copy is rejected. There is no live-publish connector: drafts are for the user to review and post. Use list_shares to review.",
+      "Save a reviewable social-share draft for a gallery item — you write the copy, this persists it (never posts). Platform 'x' (≤280 chars) or 'linkedin' (longer); over-limit copy is rejected. There is no live-publish connector: drafts are for the user to review and post. Use list_shares to review. When the project config voiceLint is on, the draft text is scored for AI-writing tells and the result is attached as `voice` (warn-only, never blocks the draft).",
     inputSchema: {
       project: z.string(),
       platform: z.enum(["x", "linkedin"]),
@@ -320,7 +320,11 @@ server.registerTool(
   writeTool(({ project, platform, text, asset }) => {
     const board = getBoard();
     if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
-    return draftShare(board, project, { platform, text, asset });
+    const result = draftShare(board, project, { platform, text, asset });
+    // FBMCPF-268: warn-only voice-lint self-check (opt-in via project config voiceLint).
+    const voice = maybeLint(board, project, text);
+    if (voice) result.voice = voice;
+    return result;
   })
 );
 

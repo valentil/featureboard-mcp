@@ -317,3 +317,76 @@ export function lintVoice(text, opts = {}) {
   if (note) result.profileNote = note;
   return result;
 }
+
+// ---------------------------------------------------------------------------
+// FBMCPF-268: automatic self-check wiring for outbound/content-drafting tools
+// ---------------------------------------------------------------------------
+
+/** Minimum word count before maybeLint bothers scoring a draft (short copy
+ * like a one-line X post is too noisy for the metric rules to say anything
+ * useful, and burstiness/tricolon-density both require real sentence counts). */
+const MIN_LINT_WORDS = 40;
+
+/**
+ * Per-project opt-in wrapper around lintVoice() for tool handlers that draft
+ * outbound copy (draft_share, draft_email, create_campaign, post_project_update,
+ * ...). Warn-only: this NEVER throws and NEVER blocks the caller's normal
+ * action — it just attaches a compact lint summary the drafting agent can use
+ * to self-correct before a human sees AI-sounding copy.
+ *
+ * Returns null when:
+ *   - the project's config has voiceLint off (default OFF, see CONFIG_KEYS in
+ *     metadata.js), or the project/config can't be read;
+ *   - text is empty/whitespace-only;
+ *   - text is shorter than MIN_LINT_WORDS (40) words — too short to score
+ *     meaningfully.
+ *
+ * Otherwise returns { voiceScore, topFindings, verdict, warning? }:
+ *   - voiceScore: lintVoice's aiScore (0-100, 0 = clean).
+ *   - topFindings: up to 5 findings, trimmed to { id, suggestion, excerpt? }
+ *     (excerpt is only present for regex-kind findings; metric-kind findings
+ *     have no excerpt).
+ *   - verdict: lintVoice's summary string.
+ *   - warning: only present when voiceScore exceeds the project's
+ *     voiceLintMin (default 25) — an instruction telling the caller to
+ *     rewrite the draft using topFindings' suggestions BEFORE showing it to
+ *     the human.
+ */
+export function maybeLint(board, project, text) {
+  let cfg = {};
+  try {
+    cfg = getProjectConfig(board, project) || {};
+  } catch {
+    return null;
+  }
+  if (!cfg.voiceLint) return null;
+
+  const words = wordsOf(text);
+  if (words.length < MIN_LINT_WORDS) return null;
+
+  const profile = getVoiceProfile(board, project);
+  const result = lintVoice(text, {
+    extraBannedPhrases: profile.extraBannedPhrases,
+    allowedTells: profile.allowedTells,
+    samplesNote: profile.samplesNote,
+  });
+
+  const min = typeof cfg.voiceLintMin === "number" ? cfg.voiceLintMin : 25;
+  const topFindings = result.findings.slice(0, 5).map((f) => ({
+    id: f.id,
+    suggestion: f.suggestion,
+    ...(f.excerpt !== undefined ? { excerpt: f.excerpt } : {}),
+  }));
+
+  const out = {
+    voiceScore: result.aiScore,
+    topFindings,
+    verdict: result.summary,
+  };
+  if (result.aiScore > min) {
+    out.warning =
+      `AI-writing-tell score ${result.aiScore} exceeds this project's voiceLintMin (${min}) — ` +
+      `rewrite this draft using the suggestions in topFindings BEFORE showing it to the human.`;
+  }
+  return out;
+}

@@ -252,7 +252,7 @@
     },
     {
       "name": "post_project_update",
-      "description": "Append a dated narrative status update (Linear-style) to the project's updates.md pad — a lightweight health check-in that lives between the heavier sprint close-out reports. Takes a health flag (on-track | at-risk | off-track) and a free-text narrative. The latest update (and a staleness hint when it's more than 7 days old) is surfaced on get_metrics and get_health."
+      "description": "Append a dated narrative status update (Linear-style) to the project's updates.md pad — a lightweight health check-in that lives between the heavier sprint close-out reports. Takes a health flag (on-track | at-risk | off-track) and a free-text narrative. The latest update (and a staleness hint when it's more than 7 days old) is surfaced on get_metrics and get_health. When the project config voiceLint is on, the narrative is scored for AI-writing tells and the result is attached as `voice` (warn-only, never blocks the update)."
     },
     {
       "name": "predict_due_dates",
@@ -500,7 +500,7 @@
     },
     {
       "name": "draft_share",
-      "description": "Save a reviewable social-share draft for a gallery item — you write the copy, this persists it (never posts). Platform 'x' (≤280 chars) or 'linkedin' (longer); over-limit copy is rejected. There is no live-publish connector: drafts are for the user to review and post. Use list_shares to review."
+      "description": "Save a reviewable social-share draft for a gallery item — you write the copy, this persists it (never posts). Platform 'x' (≤280 chars) or 'linkedin' (longer); over-limit copy is rejected. There is no live-publish connector: drafts are for the user to review and post. Use list_shares to review. When the project config voiceLint is on, the draft text is scored for AI-writing tells and the result is attached as `voice` (warn-only, never blocks the draft)."
     },
     {
       "name": "list_shares",
@@ -656,7 +656,7 @@
     },
     {
       "name": "draft_email",
-      "description": "Compose and save an email draft in the project mail center (does not send — there is no mail connector; the user or a future connector sends). Recipients are validated. Optionally tie it to a CRM company."
+      "description": "Compose and save an email draft in the project mail center (does not send — there is no mail connector; the user or a future connector sends). Recipients are validated. Optionally tie it to a CRM company. When the project config voiceLint is on, the body text is scored for AI-writing tells and the result is attached as `voice` (warn-only, never blocks the draft)."
     },
     {
       "name": "list_mail",
@@ -672,7 +672,7 @@
     },
     {
       "name": "create_campaign",
-      "description": "Create a marketing campaign with a recipient list and a send batch size. Recipients are validated + de-duplicated; sending is left to the user/a connector (this tracks the campaign and computes send batches). Returns the campaign + stats."
+      "description": "Create a marketing campaign with a recipient list and a send batch size. Recipients are validated + de-duplicated; sending is left to the user/a connector (this tracks the campaign and computes send batches). Returns the campaign + stats. When the project config voiceLint is on, the body copy is scored for AI-writing tells and the result is attached as `voice` (warn-only, never blocks the draft)."
     },
     {
       "name": "list_campaigns",

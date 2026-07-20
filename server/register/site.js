@@ -1,6 +1,6 @@
 // Auto-extracted from server/index.js (FBMCPF-224). Registration blocks moved verbatim.
 export function registerSiteTools(server, ctx) {
-  const { addPage, addRawPage, applySiteTemplate, autoConfigureAnalytics, commitFeature, createCampaign, draftEmail, editSection, getBoard, getCampaign, getEmail, getMedia, getPackagingConfig, getSite, getSiteTraffic, listAssets, listCampaigns, listMail, listPages, listSiteTemplates, markSent, meta, recordOpen, removePage, renderSite, saveAsset, savePackagingConfig, scaffoldSite, setAnalyticsConfig, setLoginGate, setPageSeo, setSite, setSiteAnalytics, siteRoot, suggestPackaging, tryTool, validatePackaging, writeTool, z } = ctx;
+  const { addPage, addRawPage, applySiteTemplate, autoConfigureAnalytics, commitFeature, createCampaign, draftEmail, editSection, getBoard, getCampaign, getEmail, getMedia, getPackagingConfig, getSite, getSiteTraffic, listAssets, listCampaigns, listMail, listPages, listSiteTemplates, markSent, maybeLint, meta, recordOpen, removePage, renderSite, saveAsset, savePackagingConfig, scaffoldSite, setAnalyticsConfig, setLoginGate, setPageSeo, setSite, setSiteAnalytics, siteRoot, suggestPackaging, tryTool, validatePackaging, writeTool, z } = ctx;
 
 // Mail ---------------------------------------------------------------------
 
@@ -9,7 +9,7 @@ server.registerTool(
   {
     title: "Draft an email",
     description:
-      "Compose and save an email draft in the project mail center (does not send — there is no mail connector; the user or a future connector sends). Recipients are validated. Optionally tie it to a CRM company.",
+      "Compose and save an email draft in the project mail center (does not send — there is no mail connector; the user or a future connector sends). Recipients are validated. Optionally tie it to a CRM company. When the project config voiceLint is on, the body text is scored for AI-writing tells and the result is attached as `voice` (warn-only, never blocks the draft).",
     inputSchema: {
       project: z.string(),
       to: z.union([z.string(), z.array(z.string())]).describe("Recipient address(es)."),
@@ -23,7 +23,11 @@ server.registerTool(
   writeTool(({ project, to, subject, body, cc, company }) => {
     const board = getBoard();
     if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
-    return draftEmail(board, project, { to, subject, body, cc, company });
+    const result = draftEmail(board, project, { to, subject, body, cc, company });
+    // FBMCPF-268: warn-only voice-lint self-check (opt-in via project config voiceLint).
+    const voice = maybeLint(board, project, body);
+    if (voice) result.voice = voice;
+    return result;
   })
 );
 
@@ -84,7 +88,7 @@ server.registerTool(
   {
     title: "Create a marketing campaign",
     description:
-      "Create a marketing campaign with a recipient list and a send batch size. Recipients are validated + de-duplicated; sending is left to the user/a connector (this tracks the campaign and computes send batches). Returns the campaign + stats.",
+      "Create a marketing campaign with a recipient list and a send batch size. Recipients are validated + de-duplicated; sending is left to the user/a connector (this tracks the campaign and computes send batches). Returns the campaign + stats. When the project config voiceLint is on, the body copy is scored for AI-writing tells and the result is attached as `voice` (warn-only, never blocks the draft).",
     inputSchema: {
       project: z.string(),
       name: z.string(),
@@ -98,7 +102,11 @@ server.registerTool(
   writeTool(({ project, name, recipients, subject, body, batchSize }) => {
     const board = getBoard();
     if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
-    return createCampaign(board, project, { name, recipients, subject, body, batchSize });
+    const result = createCampaign(board, project, { name, recipients, subject, body, batchSize });
+    // FBMCPF-268: warn-only voice-lint self-check (opt-in via project config voiceLint).
+    const voice = maybeLint(board, project, body);
+    if (voice) result.voice = voice;
+    return result;
   })
 );
 

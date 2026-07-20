@@ -1,6 +1,6 @@
 // Auto-extracted from server/index.js (FBMCPF-224). Registration blocks moved verbatim.
 export function registerAnalyticsTools(server, ctx) {
-  const { Board, addKbDoc, agentMonitorV2, appendEvent, appendHeartbeat, applyDriftRemediation, driftReport, existsSync, getBoard, getGitConfig, getHistoryMap, getKbDoc, getLiveActivity, getLatestUpdate, getPricing, getVoiceProfile, lastDispatchForTicket, lintVoice, listKbDocs, listSprints, meta, nodePath, postProjectUpdate, predictDueDates, reconcileChurn, recordDriftScore, rollupCost, prepareResearch, ragSearch, searchKb, setSite, startDriftRun, suggestHistoricalFiles, tryTool, writeTool, z } = ctx;
+  const { Board, addKbDoc, agentMonitorV2, appendEvent, appendHeartbeat, applyDriftRemediation, driftReport, existsSync, getBoard, getGitConfig, getHistoryMap, getKbDoc, getLiveActivity, getLatestUpdate, getPricing, getVoiceProfile, lastDispatchForTicket, lintVoice, listKbDocs, listSprints, maybeLint, meta, nodePath, postProjectUpdate, predictDueDates, reconcileChurn, recordDriftScore, rollupCost, prepareResearch, ragSearch, searchKb, setSite, startDriftRun, suggestHistoricalFiles, tryTool, writeTool, z } = ctx;
 
 // analytics & metadata (v0.3) ----------------------------------------------
 
@@ -46,7 +46,7 @@ server.registerTool(
   {
     title: "Post project update",
     description:
-      "Append a dated narrative status update (Linear-style) to the project's updates.md pad — a lightweight health check-in that lives between the heavier sprint close-out reports. Takes a health flag (on-track | at-risk | off-track) and a free-text narrative. The latest update (and a staleness hint when it's more than 7 days old) is surfaced on get_metrics and get_health.",
+      "Append a dated narrative status update (Linear-style) to the project's updates.md pad — a lightweight health check-in that lives between the heavier sprint close-out reports. Takes a health flag (on-track | at-risk | off-track) and a free-text narrative. The latest update (and a staleness hint when it's more than 7 days old) is surfaced on get_metrics and get_health. When the project config voiceLint is on, the narrative is scored for AI-writing tells and the result is attached as `voice` (warn-only, never blocks the update).",
     inputSchema: {
       project: z.string(),
       health: z.enum(["on-track", "at-risk", "off-track"]),
@@ -57,7 +57,11 @@ server.registerTool(
   writeTool(({ project, health, narrative }) => {
     const board = getBoard();
     if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
-    return postProjectUpdate(board, project, { health, narrative });
+    const result = postProjectUpdate(board, project, { health, narrative });
+    // FBMCPF-268: warn-only voice-lint self-check (opt-in via project config voiceLint).
+    const voice = maybeLint(board, project, narrative);
+    if (voice) result.voice = voice;
+    return result;
   })
 );
 
