@@ -1,0 +1,18 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "ai.featureboard/featureboard",
+  "title": "FeatureBoard",
+  "description": "A local, file-backed feature/bug board an AI agent runs for you: markdown featurelist.md / buglist.md boards that Claude or any MCP client plans, prioritizes, works, and commits per ticket.",
+  "version": "0.6.2",
+  "websiteUrl": "https://featureboard.ai",
+  "packages": [
+    {
+      "registryType": "mcpb",
+      "identifier": "https://featureboard.ai/downloads/featureboard.plugin",
+      "fileSha256": "075b4ad4edcd837a13ec331bc980aa8963787d73c6f50077f0b9192bd0460fe3",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

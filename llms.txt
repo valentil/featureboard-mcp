@@ -1,0 +1,31 @@
+# FeatureBoard
+
+> FeatureBoard is a local, file-backed feature/bug board that an AI agent runs for you. It turns a project's `featurelist.md` / `buglist.md` files into a live board that Claude — or any MCP client — plans, prioritizes, and *works*: it pulls the next ticket, writes the code, logs the diff, and commits per ticket. No SaaS, no login, no lock-in. Your boards are plain markdown you own forever. FeatureBoard ships as a stdio MCP (Model Context Protocol) server and a Claude Cowork plugin.
+
+Point FeatureBoard at a folder; each subfolder that contains a `featurelist.md` or `buglist.md` is a board. The agent reads and writes those files directly and can render the whole board as an interactive HTML artifact with a live analytics dashboard (velocity, timeline, bug health, work-log feed). The default surface is ~201 tools spanning the board and churn loop, analytics, testing, a media studio, CRM, leads, contracts, mail & marketing, a website builder with git deploys, and per-ticket commits. `FEATUREBOARD_CORE_ONLY=1` trims to the 67 core board/task tools (recommended outside Claude); `FEATUREBOARD_CLIENT_NEUTRAL=1` serves IDE-neutral instructions for non-Claude hosts.
+
+## Install
+
+- [Claude Cowork / Desktop plugin (v0.6.2)](https://featureboard.ai/downloads/featureboard.plugin): download and open it in Claude Cowork, then press Save to activate the MCP server plus the featureboarding skills.
+- [MCP server zip for other IDEs](https://featureboard.ai/downloads/featureboard-mcp.zip): unzip and point your MCP config at `server/index.js` (requires Node.js >= 18, dependencies `@modelcontextprotocol/sdk` + `zod`). For Cursor, Grok Build, and other non-Claude hosts, set `FEATUREBOARD_CORE_ONLY=1` and `FEATUREBOARD_CLIENT_NEUTRAL=1`.
+- The command every MCP client runs is the same: `node /absolute/path/to/featureboard-mcp/server/index.js` over stdio.
+
+## Quickstart
+
+- Install the plugin or server; on first run it asks for your boards folder (defaults to `~/FeatureBoard`).
+- Say "open the FeatureBoard board" to render the live board as an artifact.
+- Then just talk to it: "log a bug: gallery modal won't dismiss on mouse-out", "brainstorm five onboarding features and add them", "ship the next ticket", "how's velocity looking this week?"
+
+## Use cases (what to ask your agent)
+
+- "Run FeatureBoard on this repo" — bootstrap a board from an existing codebase, then pull and work tickets one at a time.
+- "Break FBF-300 into subtasks and work the first one" — decompose a feature, implement it, and commit against the ticket.
+- "Plan today under a token budget" — daily_plan assigns each ticket a model tier and effort level and returns a parallel dispatch plan.
+- "What's on my plate / how are we looking?" — render the board with Todo / In Progress / Done columns and an analytics dashboard.
+- "Reconcile logged churn vs git-actual churn" — correlate work-log diffs against real commit numstat to keep estimates honest.
+- "Build and deploy a marketing site for this project" — the website builder ships pages with git deploys.
+
+## Optional
+
+- [FeatureBoard home](https://featureboard.ai) — overview, interactive demo, and the roadmap.
+- Measured result: a paired agent trial (n=10) showed the work packet cuts diff churn ~1.76x at equal correctness, with modestly lower token spend.
