@@ -76,8 +76,12 @@ import { suggestPackaging, savePackagingConfig, getPackagingConfig, validatePack
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import nodePath from "node:path";
+import os from "node:os";
 
-const DATA_DIR = process.env.FEATUREBOARD_DATA_DIR;
+// FBMCPF-244: default the data dir when the host doesn't provide one — Cowork
+// plugin installs have no user_config prompt (unlike the .mcpb flow), so
+// boards land in ~/FeatureBoard unless FEATUREBOARD_DATA_DIR overrides it.
+const DATA_DIR = process.env.FEATUREBOARD_DATA_DIR || nodePath.join(os.homedir(), "FeatureBoard");
 
 // Absolute path to the shipped board UI. index.js lives in server/, the UI in
 // artifact/board.html — so the packaged install always resolves it, regardless

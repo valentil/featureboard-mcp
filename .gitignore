@@ -11,3 +11,7 @@ owner/issued-keys.json
 
 # strengthen mode findings (FBMCPF-242)
 strengthen_findings.json
+
+# plugin build staging + built .plugin bundles (FBMCPF-244)
+dist/
+releases/
