@@ -123,28 +123,65 @@ fs.rmSync(outFile, { force: true });
 
 // Zip into the OS temp dir first, then copy into releases/ — synced/mounted
 // folders often refuse zip's in-place tempfile+rename dance.
-const tmpZip = path.join(os.tmpdir(), "featureboard.plugin.zip");
-fs.rmSync(tmpZip, { force: true });
-
-function zip() {
+function zipTo(dest) {
+  const tmpZip = path.join(os.tmpdir(), path.basename(dest) + ".tmpzip");
+  fs.rmSync(tmpZip, { force: true });
+  let ok;
   if (process.platform === "win32") {
     const r = spawnSync(
       "powershell.exe",
       ["-NoProfile", "-Command", `Compress-Archive -Path '${stage}\\*' -DestinationPath '${tmpZip}' -Force`],
       { stdio: "inherit" }
     );
-    return r.status === 0;
+    ok = r.status === 0;
+  } else {
+    const r = spawnSync("zip", ["-qr", tmpZip, "."], { cwd: stage, stdio: "inherit" });
+    ok = r.status === 0;
   }
-  const r = spawnSync("zip", ["-qr", tmpZip, "."], { cwd: stage, stdio: "inherit" });
-  return r.status === 0;
+  if (!ok) {
+    console.error("✗ zip failed — is `zip` (POSIX) or PowerShell (Windows) available?");
+    process.exit(1);
+  }
+  fs.copyFileSync(tmpZip, dest);
+  fs.rmSync(tmpZip, { force: true });
 }
 
-if (!zip()) {
-  console.error("✗ zip failed — is `zip` (POSIX) or PowerShell (Windows) available?");
-  process.exit(1);
-}
-fs.copyFileSync(tmpZip, outFile);
-fs.rmSync(tmpZip, { force: true });
+zipTo(outFile);
+
+// --- IDE variant (FBMCPF-259): same server + deps, minus Claude-only bits ---
+// featureboard-mcp.zip is for Cursor / Grok Build / any MCP client: strip the
+// Claude plugin manifest + skills, swap .mcp.json to a plain relative config,
+// and ship an IDE-oriented README. Same code, different wrapper.
+const ideOut = path.join(outDir, "featureboard-mcp.zip");
+fs.rmSync(ideOut, { force: true });
+fs.rmSync(path.join(stage, ".claude-plugin"), { recursive: true, force: true });
+fs.rmSync(path.join(stage, "skills"), { recursive: true, force: true });
+fs.rmSync(path.join(stage, "icon.png"), { force: true });
+fs.writeFileSync(
+  path.join(stage, ".mcp.json"),
+  `${JSON.stringify({ mcpServers: { FeatureBoard: { command: "node", args: ["server/index.js"], env: { FEATUREBOARD_CORE_ONLY: "1", FEATUREBOARD_CLIENT_NEUTRAL: "1" } } } }, null, 2)}\n`
+);
+fs.writeFileSync(
+  path.join(stage, "README.md"),
+  [
+    `# FeatureBoard MCP server v${pkg.version} — IDE release`,
+    "",
+    "For Cursor, Grok Build, and any MCP client. Dependencies included — no npm needed.",
+    "",
+    "Launch command (stdio): `node /absolute/path/to/this/folder/server/index.js`",
+    "",
+    "- Cursor: add the command to `.cursor/mcp.json` with env `FEATUREBOARD_CORE_ONLY=1` (67 core tools — Cursor caps active tools) and `FEATUREBOARD_CLIENT_NEUTRAL=1`.",
+    "- Grok Build: `grok mcp add featureboard -- node .../server/index.js`, or open this folder — Grok auto-loads the bundled `.mcp.json`.",
+    "- Boards live in `~/FeatureBoard` (override: `FEATUREBOARD_DATA_DIR`). Node.js >= 18.",
+    "",
+    "Full instructions: https://featureboard.ai/install.html · https://github.com/valentil/featureboard-mcp",
+    "Licensing: free for personal & public work; commercial use US$119/seat/yr — https://featureboard.ai/buy.html. See LICENSE.md.",
+    "",
+  ].join("\n")
+);
+zipTo(ideOut);
+const ideMb = (fs.statSync(ideOut).size / (1024 * 1024)).toFixed(1);
+console.log(`✓ built ${path.relative(root, ideOut)} (${ideMb} MB) — IDE release (Cursor/Grok/any MCP client)`);
 
 const mb = (fs.statSync(outFile).size / (1024 * 1024)).toFixed(1);
 console.log(`✓ built ${path.relative(root, outFile)} (${mb} MB, v${pkg.version})`);
