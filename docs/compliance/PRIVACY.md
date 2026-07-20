@@ -52,6 +52,12 @@ code repo on disk) and makes no network call.
 - `request_commercial_license` records the name/email/company you supply to a local
   file so Lewis Valentine can follow up about a commercial agreement. It does not transmit
   data automatically; it returns a mailto/URL for you to contact the licensor.
+- Self-serve purchases happen entirely on Polar (our merchant of record) at
+  featureboard.dev/buy, in your browser — the product itself sends nothing to Polar.
+  Polar sees the data you give checkout (name, email, payment details) under its own
+  privacy policy; the product only ever receives the resulting license key, which is
+  verified offline. Purchase records (licensee, email, key) are kept by the licensor,
+  not inside your installation.
 - `register_email`: the tier-picker onboarding screen has an optional email field. It is
   stored locally (`.featureboard/registration.json`) only when you explicitly click
   "Save email" — that click is the only consent signal used, and there is no usage

@@ -43,6 +43,13 @@ new key.
 
 ## How to obtain a license
 
+**Self-serve (fastest):** buy at https://featureboard.dev/buy — checkout is handled
+by our merchant of record (Polar), US$119 per seat per year. Your signed license key
+is issued automatically and emailed to you; activate it with the `activate_license`
+tool. The checkout receipt plus this document form your commercial agreement.
+
+**Custom terms (POs, enterprise, volume):**
+
 1. Start the request from inside the product: run the `request_commercial_license`
    tool (or use the onboarding screen). This records your details and points you here.
 2. The licensor sends commercial terms for signature.
