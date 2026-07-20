@@ -48,7 +48,7 @@ function atomicWrite(p, content) {
 // ---------------------------------------------------------------------------
 
 // FBMCPF-120: "sprints" holds the sprint registry (name/start/end/goal)
-const CONFIG_KEYS = ["products", "codeLocation", "websiteLocation", "agentModel", "description", "website", "featurePrefix", "bugPrefix", "customPrompt", "brandTitle", "brandSubtitle", "brandWords", "brandVoice", "brandPrimary", "brandAccent", "brandLogo", "brandFont", "imageTool", "sprints", "stage", "gitTargets", "worktreeDir", "requireReview", "requireCommitOnDone", "slackWebhook", "slackEvents", "pricing", "rules", "slaThresholds", "autoStatusOnCommit", "doneGates", "sprintAutoAssign", "checks", "requireChecksOnDone", "researchOnIntake", "ragInPackets", "ragK"];
+const CONFIG_KEYS = ["products", "codeLocation", "websiteLocation", "agentModel", "description", "website", "featurePrefix", "bugPrefix", "customPrompt", "brandTitle", "brandSubtitle", "brandWords", "brandVoice", "brandPrimary", "brandAccent", "brandLogo", "brandFont", "imageTool", "sprints", "stage", "gitTargets", "worktreeDir", "requireReview", "requireCommitOnDone", "slackWebhook", "slackEvents", "pricing", "rules", "slaThresholds", "autoStatusOnCommit", "doneGates", "sprintAutoAssign", "checks", "requireChecksOnDone", "researchOnIntake", "ragInPackets", "ragK", "voiceProfile"];
 
 /** Merged view: managed config overlaid on legacy project_config.json. */
 export function getProjectConfig(board, project) {

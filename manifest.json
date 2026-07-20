@@ -355,6 +355,10 @@
       "description": "For Done tickets with tagged commits, compare the additions/deletions logged in the work log against the git-actual numstat of their commits. Git-actual comes from recorded commit events (FBMCPF-188) or, failing that, a live git log --grep + numstat cached by hash. Reports per-ticket loggedAdd/loggedDel vs gitAdd/gitDel with a drift ratio (worst first), plus an overall churnAccuracy also surfaced on get_health."
     },
     {
+      "name": "voice_lint",
+      "description": "Score text for AI-writing tells (overused lexical items like \"delve\"/\"tapestry\", contrastive-pivot rhetoric like \"not just X, but Y\", sycophantic openers, tidy-summary closers, and rhythm/density metrics: sentence-length burstiness, tricolon density, em-dash density, bolded-list density) using the research-backed ruleset in docs/VOICE-RESEARCH.md. Intended for editing YOUR OWN outbound drafts before sending them (project updates, docs, customer replies) — not for judging whether someone else's writing was AI-written. Pass `project` to apply that project's voiceProfile config (extraBannedPhrases, allowedTells, samplesNote) on top of the base ruleset; `threshold` (default 30) only changes the summary wording, not which findings fire."
+    },
+    {
       "name": "get_work_packet",
       "description": "Assemble a focused brief for one ticket before you work it: scope, linked-issue details, code location + custom project prompt, scratchpad mentions, the ticket's recent work log, files to read, and a definition of done. Read the files it points to rather than dumping them."
     },

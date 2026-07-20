@@ -1,6 +1,6 @@
 // Auto-extracted from server/index.js (FBMCPF-224). Registration blocks moved verbatim.
 export function registerAnalyticsTools(server, ctx) {
-  const { Board, addKbDoc, agentMonitorV2, appendEvent, appendHeartbeat, applyDriftRemediation, driftReport, existsSync, getBoard, getGitConfig, getHistoryMap, getKbDoc, getLiveActivity, getLatestUpdate, getPricing, lastDispatchForTicket, listKbDocs, listSprints, meta, nodePath, postProjectUpdate, predictDueDates, reconcileChurn, recordDriftScore, rollupCost, prepareResearch, ragSearch, searchKb, setSite, startDriftRun, suggestHistoricalFiles, tryTool, writeTool, z } = ctx;
+  const { Board, addKbDoc, agentMonitorV2, appendEvent, appendHeartbeat, applyDriftRemediation, driftReport, existsSync, getBoard, getGitConfig, getHistoryMap, getKbDoc, getLiveActivity, getLatestUpdate, getPricing, getVoiceProfile, lastDispatchForTicket, lintVoice, listKbDocs, listSprints, meta, nodePath, postProjectUpdate, predictDueDates, reconcileChurn, recordDriftScore, rollupCost, prepareResearch, ragSearch, searchKb, setSite, startDriftRun, suggestHistoricalFiles, tryTool, writeTool, z } = ctx;
 
 // analytics & metadata (v0.3) ----------------------------------------------
 
@@ -648,6 +648,42 @@ server.registerTool(
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
   tryTool(({ project }) => reconcileChurn(getBoard(), project))
+);
+
+// FBMCPF-267: voice_lint — score text for AI-writing tells (research-backed
+// ruleset in docs/VOICE-RESEARCH.md, FBMCPF-266) so an agent can self-edit its
+// own outbound drafts (project updates, docs, customer replies) before
+// sending. `project` is optional; when given, its voiceProfile config
+// (extraBannedPhrases / allowedTells / samplesNote) is applied on top of the
+// base ruleset. Never a judgment about whether someone else's writing was
+// AI-authored — see the Limitations section of the research doc.
+server.registerTool(
+  "voice_lint",
+  {
+    title: "Voice lint (AI-writing-tell scorer)",
+    description:
+      "Score text for AI-writing tells (overused lexical items like \"delve\"/\"tapestry\", contrastive-pivot rhetoric like \"not just X, but Y\", sycophantic openers, tidy-summary closers, and rhythm/density metrics: sentence-length burstiness, tricolon density, em-dash density, bolded-list density) using the research-backed ruleset in docs/VOICE-RESEARCH.md. Intended for editing YOUR OWN outbound drafts before sending them (project updates, docs, customer replies) — not for judging whether someone else's writing was AI-written. Pass `project` to apply that project's voiceProfile config (extraBannedPhrases, allowedTells, samplesNote) on top of the base ruleset; `threshold` (default 30) only changes the summary wording, not which findings fire.",
+    inputSchema: {
+      project: z.string().optional(),
+      text: z.string(),
+      threshold: z.number().optional(),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project, text, threshold }) => {
+    let profile = { extraBannedPhrases: [], allowedTells: [], samplesNote: "" };
+    if (project) {
+      const board = getBoard();
+      if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+      profile = getVoiceProfile(board, project);
+    }
+    return lintVoice(text, {
+      extraBannedPhrases: profile.extraBannedPhrases,
+      allowedTells: profile.allowedTells,
+      samplesNote: profile.samplesNote,
+      threshold,
+    });
+  })
 );
 
 server.registerTool(
