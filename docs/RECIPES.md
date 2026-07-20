@@ -129,6 +129,57 @@ backlog is immediately runnable by the churn loop.
 
 ---
 
+## Nightly Strengthen Auto-Research Loop
+
+**When:** Every night at 2 AM (pairs with `scripts/strengthen.mjs` — FBMCPF-242)
+
+**Prompt:**
+
+```
+Run the nightly strengthen auto-research loop for <Project> (findings -> property tests -> tickets).
+
+0. (Optional) Refresh findings first: run `node scripts/strengthen.mjs --once` in the
+   project's codeLocation if strengthen mode isn't already running in the background.
+
+1. Read the findings:
+   - Read strengthen_findings.json in the repo root (a JSON array of
+     { stage, severity, detail, seed? } entries appended by scripts/strengthen.mjs).
+   - Skip findings already filed: search the board with list_tasks search:<stage/detail>
+     before filing anything.
+
+2. File real findings as bugs:
+   - For each NEW severity:"fail" finding, use log_bug titled
+     "strengthen: <stage> - <short detail>" with the full detail (keep the seed in the
+     description so the failure is reproducible).
+   - severity:"warn" perf findings: file only if they recur across multiple passes.
+
+3. Pick the least-tested module:
+   - Use coverage_by_product to find the product area with the weakest test coverage.
+   - Cross-check with list_code_files (server/ vs test/) for modules with no matching
+     *.test.js at all; prefer those.
+
+4. Generate property tests for it:
+   - Use generate_test on the chosen module to derive cases, then save_generated_test to
+     write the file. Favour property/round-trip style: hostile inputs must never crash,
+     and parse -> serialize -> parse must be byte-stable.
+
+5. Run and log:
+   - Run the new file (node --test <file>) and then the full suite (npm test).
+   - Use log_test_run with suite "strengthen-nightly", the pass/fail counts, and notes
+     naming the module covered and the bugs filed.
+
+Finish with a one-paragraph summary: findings triaged (filed vs skipped), module chosen
+and why, tests added, suite result.
+```
+
+**Why it works:** `strengthen.mjs` does the cheap deterministic crunching offline and
+never edits the board; this recipe is the intelligence layer on top — it converts the
+findings file into bug tickets, steers new property tests at the least-covered module
+each night, and leaves an auditable `log_test_run` trail, so coverage compounds while
+the machine would otherwise sit idle.
+
+---
+
 ## How to Use These Recipes
 
 1. Open **Claude Code** and go to **Scheduled tasks** (or create a new scheduled task).
@@ -150,5 +201,11 @@ All recipes use only these verified FeatureBoard MCP tools:
 - `close_sprint` — Close a sprint and generate close-out reports
 - `get_sprint_report` — Read close-out reports by audience
 - `notify_slack` — Post summaries to the project's Slack webhook
+- `list_tasks` — Search/list tickets (used to dedupe strengthen findings)
+- `log_bug` — File a bug ticket
+- `coverage_by_product` — Per-product test-coverage rollup
+- `generate_test` — Derive suggested test cases for a module
+- `save_generated_test` — Write a generated test file into the repo
+- `log_test_run` — Record a test run (suite, counts, notes)
 
 See [docs/TOOLS.md](TOOLS.md) for full tool descriptions.
