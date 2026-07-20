@@ -11,7 +11,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import crypto from "node:crypto";
+import { issueKey } from "./issue.mjs";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -37,19 +37,7 @@ try {
   console.error(`Could not read private key at ${keyPath}. Run: node owner/keygen.mjs`);
   process.exit(1);
 }
-const privateKey = crypto.createPrivateKey(privatePem);
-
-const payload = {
-  licensee,
-  type: "commercial",
-  ...(seats ? { seats } : {}),
-  issued: new Date().toISOString().split("T")[0],
-  expires: expires || null,
-  v: 1,
-};
-const payloadBuf = Buffer.from(JSON.stringify(payload));
-const sig = crypto.sign(null, payloadBuf, privateKey);
-const key = `${payloadBuf.toString("base64url")}.${sig.toString("base64url")}`;
+const { key, payload } = issueKey({ licensee, seats, expires }, privatePem);
 
 console.log("License payload:", JSON.stringify(payload, null, 2));
 console.log("\nLicense key (send to customer):\n");

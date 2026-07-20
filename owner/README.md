@@ -53,3 +53,46 @@ link back to the originating `license_requests.json` entry id (`LR-…`).
 `{ licensee, type:"commercial", seats?, issued, expires|null, v:1 }`. The server
 verifies the signature with the embedded public key and checks `expires` (+1 grace
 day). Tampering with the payload breaks the signature.
+
+## Self-serve: Polar checkout → auto-issued key (FBMCPF-210)
+
+The manual CRM pipeline above stays for POs/enterprise. The self-serve path is:
+
+**Customer** buys at https://featureboard.dev/buy (redirect to the Polar checkout,
+US$119/seat/year, quantity = seats) → **Polar** fires an `order.paid` webhook →
+**`polar-webhook-issuer.mjs`** verifies it, issues a signed 1-year key, logs it to
+`owner/issued-keys.json` (gitignored — holds customer emails + keys), and emails the
+key via Resend (or prints it for manual delivery).
+
+### One-time Polar setup
+
+1. Create a Polar organization and a product: "FeatureBoard Commercial License",
+   $119/year, per-unit pricing with quantity = seats. Polar is the merchant of
+   record — they handle global VAT/sales tax.
+2. Point featureboard.dev/buy at the product's checkout link.
+3. Add a webhook (Settings → Webhooks): event `order.paid`, URL = wherever the
+   issuer listens (see below). Copy the `whsec_…` secret.
+4. Optional: a Resend API key for auto-delivery from licensing@featureboard.dev.
+
+### Running the issuer
+
+```
+POLAR_WEBHOOK_SECRET=whsec_...            # required
+POLAR_PRODUCT_IDS=prod_...                # optional allowlist
+RESEND_API_KEY=re_...                     # optional auto-email
+node owner/polar-webhook-issuer.mjs       # listens on :8790
+```
+
+Expose it with a Cloudflare Tunnel (`cloudflared tunnel --url http://localhost:8790`)
+or run the same `handleWebhook` logic in a Cloudflare Worker (paste the private key
+as a Worker secret — never commit it). No dependencies; signature verification is
+the standard-webhooks HMAC scheme implemented with node:crypto.
+
+If the email step fails or is unconfigured, the key is printed to the console and
+kept in `issued-keys.json` — deliver it manually and you've lost nothing.
+
+### Renewals
+
+Keys expire 1 year after purchase (+1 grace day). Polar subscriptions renew →
+each renewal `order.paid` re-fires the webhook → a fresh key is issued and emailed
+automatically. Lapsed customers keep read access; writes freeze until they renew.

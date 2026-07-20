@@ -7,3 +7,4 @@ node_modules/
 owner/keys/
 owner/keys/private.pem
 _syncprobe*
+owner/issued-keys.json
