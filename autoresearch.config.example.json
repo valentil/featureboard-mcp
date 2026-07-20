@@ -1,5 +1,5 @@
 {
-  "_comment": "Copy to autoresearch.config.json (gitignored). Claude's nightly configurator scheduled task refreshes the experiments queue and budgets; the standalone runner (node scripts/autoresearch.mjs) consumes it unattended. See docs/RECIPES.md → 'Nightly Auto-Research Outer Loop'.",
+  "_comment": "Copy to autoresearch.config.json (gitignored). Claude's nightly configurator scheduled task refreshes the experiments queue and budgets; the standalone runner (node scripts/autoresearch.mjs) consumes it unattended. See docs/RECIPES.md \u2192 'Nightly Auto-Research Outer Loop'.",
   "integrationBranch": "autoresearch/nightly",
   "baseBranch": "main",
   "objective": {
@@ -16,15 +16,30 @@
   },
   "agent": {
     "command": "claude",
-    "args": ["-p", "--permission-mode", "acceptEdits"],
+    "args": [
+      "-p",
+      "--permission-mode",
+      "acceptEdits",
+      "--output-format",
+      "json"
+    ],
+    "model": "sonnet",
+    "maxTurns": 25,
     "timeoutMinutes": 12
   },
-  "budget": { "maxExperiments": 12, "stopAfterMinutes": 420 },
+  "budget": {
+    "maxExperiments": 12,
+    "stopAfterMinutes": 420,
+    "maxUsdPerExperiment": 2,
+    "maxUsdPerRun": 10,
+    "maxTokensPerExperiment": null,
+    "maxTokensPerRun": null
+  },
   "experiments": [
     {
       "id": "cache-label-parse",
       "hypothesis": "Parsing the [Labels: ...] block with a precompiled regex (instead of re-creating it per ticket line) speeds up Board.listTasks on large boards.",
-      "hint": "server/storage.js — the per-line ticket parser",
+      "hint": "server/storage.js \u2014 the per-line ticket parser",
       "status": "todo"
     },
     {
@@ -33,5 +48,6 @@
       "hint": "server/storage.js listTasks + the compact view in server/register/tasks.js",
       "status": "todo"
     }
-  ]
+  ],
+  "_comment_budget": "Token safety (FBMCPF-248): the runner spends tokens ONLY in the one headless claude call per experiment. model + maxTurns bound each call; maxUsd*/maxTokens* caps halt the loop. Unparseable usage is charged at maxUsdPerExperiment, never treated as free."
 }

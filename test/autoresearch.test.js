@@ -69,3 +69,34 @@ test("appendResults: appends, tolerates corrupt file with .bak rotation", () => 
   assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")).map((e) => e.id), ["c"]); // fresh array
   assert.ok(fs.existsSync(`${file}.bak`)); // history preserved
 });
+
+// FBMCPF-248 — token-safety rails
+
+import { parseAgentUsage, budgetExceeded } from "../scripts/autoresearch.mjs";
+
+test("parseAgentUsage: reads cost + token counts from claude -p json output", () => {
+  const out = 'noise\n{"type":"result","subtype":"success","total_cost_usd":0.42,"usage":{"input_tokens":1000,"output_tokens":500,"cache_read_input_tokens":2000}}';
+  assert.deepEqual(parseAgentUsage(out), { costUsd: 0.42, tokens: 3500 });
+  assert.deepEqual(parseAgentUsage("plain text, no json"), { costUsd: null, tokens: null });
+  assert.deepEqual(parseAgentUsage(""), { costUsd: null, tokens: null });
+  // usage without cost still yields tokens
+  const t = parseAgentUsage('{"usage":{"input_tokens":10,"output_tokens":5}}');
+  assert.equal(t.tokens, 15);
+  assert.equal(t.costUsd, null);
+});
+
+test("budgetExceeded: usd and token run caps halt the loop; null caps never do", () => {
+  assert.equal(budgetExceeded({ usd: 14.99, tokens: 0 }, { maxUsdPerRun: 15 }).stop, false);
+  assert.equal(budgetExceeded({ usd: 15, tokens: 0 }, { maxUsdPerRun: 15 }).stop, true);
+  assert.equal(budgetExceeded({ usd: 0, tokens: 2_000_000 }, { maxTokensPerRun: 1_000_000 }).stop, true);
+  assert.equal(budgetExceeded({ usd: 999, tokens: 999999999 }, {}).stop, false);
+  assert.match(budgetExceeded({ usd: 15, tokens: 0 }, { maxUsdPerRun: 15 }).reason, /USD budget/);
+});
+
+test("agent defaults carry the budget rails", () => {
+  const cfg = mergeConfig({});
+  assert.ok(cfg.agent.args.includes("--output-format"));
+  assert.equal(cfg.agent.maxTurns, 25);
+  assert.ok(cfg.budget.maxUsdPerRun != null);
+  assert.ok(cfg.budget.maxUsdPerExperiment != null);
+});

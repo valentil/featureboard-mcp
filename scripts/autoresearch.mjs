@@ -23,6 +23,15 @@
  *      branch (baseline advances, changes stack); otherwise discard.
  *   6. Append a structured entry to autoresearch_results.json either way.
  *
+ * TOKEN SAFETY (FBMCPF-248): the runner itself makes ZERO API calls. The ONLY
+ * token-consuming step is the single headless `claude -p` invocation that
+ * implements each hypothesis; the constraint suite and the objective metric
+ * are pure local compute. Budgets cap that one spend: agent.maxTurns and
+ * agent.model bound each call, --output-format json usage is captured per
+ * experiment, and budget.maxUsdPerExperiment / maxUsdPerRun (or the token
+ * variants) halt the loop when exhausted. Unparseable usage is treated as the
+ * per-experiment cap (conservative), never as free.
+ *
  * Safety rails: main is never written; the integration branch (default
  * autoresearch/nightly) is the only merge target, reviewed by a human/Claude
  * before anything graduates. Every experiment is worktree-isolated, budget-
@@ -66,10 +75,19 @@ export const DEFAULT_CONFIG = {
   },
   agent: {
     command: "claude",
-    args: ["-p", "--permission-mode", "acceptEdits"],
+    args: ["-p", "--permission-mode", "acceptEdits", "--output-format", "json"],
+    model: null, // e.g. "haiku"/"sonnet" — appended as --model when set
+    maxTurns: 25, // appended as --max-turns; hard bound on each agent loop
     timeoutMinutes: 12,
   },
-  budget: { maxExperiments: 20, stopAfterMinutes: 480 },
+  budget: {
+    maxExperiments: 20,
+    stopAfterMinutes: 480,
+    maxUsdPerExperiment: 3, // conservative fallback charge when usage is unparseable
+    maxUsdPerRun: 15, // loop halts once cumulative agent spend reaches this
+    maxTokensPerExperiment: null, // optional token-denominated variants
+    maxTokensPerRun: null,
+  },
   experiments: [],
 };
 
@@ -153,6 +171,43 @@ export function buildExperimentPrompt(exp, cfg) {
   ].filter((l) => l !== null).join("\n");
 }
 
+/**
+ * Parse usage out of `claude -p --output-format json` stdout: the result object
+ * carries total_cost_usd and usage token counts. Returns { costUsd, tokens }
+ * with nulls when nothing parseable is found — callers must treat null
+ * conservatively (charge the per-experiment cap), never as zero.
+ */
+export function parseAgentUsage(stdout) {
+  const lines = String(stdout || "").split("\n").map((l) => l.trim()).filter(Boolean);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      const o = JSON.parse(lines[i]);
+      if (o && (o.total_cost_usd !== undefined || o.usage)) {
+        const u = o.usage || {};
+        const tokens = ["input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"]
+          .reduce((n, k) => n + (Number.isFinite(u[k]) ? u[k] : 0), 0);
+        return { costUsd: Number.isFinite(o.total_cost_usd) ? o.total_cost_usd : null, tokens: tokens || null };
+      }
+    } catch { /* not this line */ }
+  }
+  return { costUsd: null, tokens: null };
+}
+
+/**
+ * Budget gate. `spent` accumulates { usd, tokens } across the run; an
+ * experiment with unknown usage was already charged maxUsdPerExperiment by the
+ * caller. Returns { stop, reason } — stop BEFORE starting the next experiment.
+ */
+export function budgetExceeded(spent, budget = {}) {
+  if (budget.maxUsdPerRun != null && spent.usd >= budget.maxUsdPerRun) {
+    return { stop: true, reason: `USD budget spent ($${spent.usd.toFixed(2)} >= $${budget.maxUsdPerRun})` };
+  }
+  if (budget.maxTokensPerRun != null && spent.tokens >= budget.maxTokensPerRun) {
+    return { stop: true, reason: `token budget spent (${spent.tokens} >= ${budget.maxTokensPerRun})` };
+  }
+  return { stop: false, reason: null };
+}
+
 /** Append entries to autoresearch_results.json (array file, corrupt-tolerant). */
 export function appendResults(repoRoot, entries) {
   const file = path.join(repoRoot, RESULTS_FILE);
@@ -232,11 +287,21 @@ function runExperiment(exp, cfg, worktreesDir) {
 
     // agent implements the hypothesis inside the worktree
     const prompt = buildExperimentPrompt(exp, cfg);
-    const agentRes = spawnSync(cfg.agent.command, [...cfg.agent.args, prompt], {
+    const agentArgs = [...cfg.agent.args];
+    if (cfg.agent.model) agentArgs.push("--model", cfg.agent.model);
+    if (cfg.agent.maxTurns) agentArgs.push("--max-turns", String(cfg.agent.maxTurns));
+    const agentRes = spawnSync(cfg.agent.command, [...agentArgs, prompt], {
       cwd: wt, encoding: "utf8", timeout: (cfg.agent.timeoutMinutes || 12) * 60_000, maxBuffer: 64 * 1024 * 1024,
       shell: process.platform === "win32", // claude is a .cmd shim on Windows
     });
     if (agentRes.error && agentRes.error.code === "ENOENT") throw new Error(`agent command not found: ${cfg.agent.command} (install Claude Code CLI or set agent.command)`);
+    // token accounting — the ONLY spend in the whole loop happens in the call above
+    const usage = parseAgentUsage(agentRes.stdout);
+    entry.agentCostUsd = usage.costUsd;
+    entry.agentTokens = usage.tokens;
+    if (usage.costUsd == null) entry.notes.push(`agent usage unparseable — charged the per-experiment cap ($${cfg.budget.maxUsdPerExperiment}) against the run budget`);
+    else if (cfg.budget.maxUsdPerExperiment != null && usage.costUsd > cfg.budget.maxUsdPerExperiment) entry.notes.push(`over per-experiment USD cap ($${usage.costUsd.toFixed(2)} > $${cfg.budget.maxUsdPerExperiment})`);
+    if (usage.tokens != null && cfg.budget.maxTokensPerExperiment != null && usage.tokens > cfg.budget.maxTokensPerExperiment) entry.notes.push(`over per-experiment token cap (${usage.tokens} > ${cfg.budget.maxTokensPerExperiment})`);
     const headMoved = git(["rev-list", "--count", `${cfg.integrationBranch}..${branch}`], wt).stdout !== "0";
     if (!headMoved) { entry.status = "no-change"; entry.notes.push("agent committed nothing (hypothesis withdrawn or agent failed)"); cleanup(); return entry; }
 
@@ -308,13 +373,18 @@ if (isMain) {
   process.on("SIGINT", () => { stopped = true; log("SIGINT — finishing current experiment, then stopping."); });
 
   const results = [];
+  const spent = { usd: 0, tokens: 0 };
   const limit = flag("--once") ? 1 : cfg.budget.maxExperiments;
   for (const exp of todo.slice(0, limit)) {
     if (stopped) break;
     if ((Date.now() - t0) / 60_000 > cfg.budget.stopAfterMinutes) { log("time budget spent — stopping."); break; }
+    const gate = budgetExceeded(spent, cfg.budget);
+    if (gate.stop) { log(`${gate.reason} — stopping.`); break; }
     log(`experiment [${exp.id}]: ${exp.hypothesis}`);
     const entry = runExperiment(exp, cfg, worktreesDir);
-    log(`  → ${entry.status}${entry.baseline != null ? ` (${entry.baseline} -> ${entry.value})` : ""}`);
+    spent.usd += entry.agentCostUsd != null ? entry.agentCostUsd : (cfg.budget.maxUsdPerExperiment || 0);
+    spent.tokens += entry.agentTokens || 0;
+    log(`  → ${entry.status}${entry.baseline != null ? ` (${entry.baseline} -> ${entry.value})` : ""}${entry.agentCostUsd != null ? ` [$${entry.agentCostUsd.toFixed(2)}]` : ""}`);
     results.push(entry);
     // persist config progress + results after EVERY experiment (crash-safe)
     const raw = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
@@ -326,6 +396,6 @@ if (isMain) {
 
   git(["checkout", startBranch]); // leave the tree where we found it
   const accepted = results.filter((r) => r.accepted).length;
-  log(`done: ${results.length} experiment(s), ${accepted} accepted on ${cfg.integrationBranch}. Results in ${RESULTS_FILE}.`);
+  log(`done: ${results.length} experiment(s), ${accepted} accepted on ${cfg.integrationBranch}. Agent spend: $${spent.usd.toFixed(2)}${spent.tokens ? ` / ${spent.tokens} tokens` : ""}. Results in ${RESULTS_FILE}.`);
   if (accepted) log(`review with: git log ${startBranch}..${cfg.integrationBranch} --oneline`);
 }

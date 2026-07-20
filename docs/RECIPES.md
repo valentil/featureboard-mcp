@@ -265,6 +265,13 @@ Configure tonight's auto-research run for <repo>.
 5. Reply with the queue you set and yesterday's accept rate.
 ```
 
+**Token safety:** the runner itself makes ZERO API calls — the only token spend is the one
+headless `claude -p` call per experiment (the test suite and metric are pure local compute).
+Bound it with `agent.model` (e.g. haiku/sonnet), `agent.maxTurns`, and the budget caps:
+`maxUsdPerExperiment` / `maxUsdPerRun` (or `maxTokensPerExperiment` / `maxTokensPerRun`).
+Per-call usage is captured from `--output-format json` into `autoresearch_results.json`;
+unparseable usage is charged at the per-experiment cap, never treated as free.
+
 **Why the rails hold:** main is never written; the suite must stay green for any accept
 (objective can't be gamed by deleting behavior — the agent contract also forbids weakening
 tests); every experiment is worktree-isolated and budget-capped; `--once` and `--dry-run`
