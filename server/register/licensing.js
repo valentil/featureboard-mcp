@@ -1,6 +1,6 @@
 // Auto-extracted from server/index.js (FBMCPF-224). Registration blocks moved verbatim.
 export function registerLicensingTools(server, ctx) {
-  const { DATA_DIR, license, registerEmail, tryTool, z } = ctx;
+  const { DATA_DIR, checkUpdates, license, registerEmail, tryTool, z } = ctx;
 
 // licensing ----------------------------------------------------------------
 
@@ -100,6 +100,27 @@ server.registerTool(
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   tryTool(({ email }) => registerEmail(DATA_DIR, email))
+);
+
+// updates (FBMCPF-260) ------------------------------------------------------
+
+server.registerTool(
+  "check_updates",
+  {
+    title: "Check for FeatureBoard updates",
+    description:
+      "Explicitly check featureboard.ai for a newer FeatureBoard release. This makes exactly ONE outbound HTTPS " +
+      "GET request — to https://featureboard.ai/downloads/latest.json — and ONLY when you call this tool; it " +
+      "never runs automatically (no polling, no startup check, no background timer). It is a plain GET with no " +
+      "request body: nothing about you, your board, or this machine is sent. Compares the manifest's version " +
+      "against THIS running server's own version (read from its own package.json) and reports whether an update " +
+      "is available, plus both download links — featureboard.plugin for Claude/Cowork installs, " +
+      "featureboard-mcp.zip for Cursor/Grok Build/other MCP clients. Fails soft on any network problem (timeout, " +
+      "offline, bad response) — never throws; call it again later if it couldn't reach the server.",
+    inputSchema: {},
+    annotations: { readOnlyHint: true, openWorldHint: true },
+  },
+  tryTool(() => checkUpdates())
 );
 
 }

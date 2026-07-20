@@ -51,7 +51,9 @@ every project at once.
 ## 5. Close-out
 
 When the queue is empty, run `scan_board_cleanup` and offer the user next steps
-(new work to plan, stale tickets to prune, etc.).
+(new work to plan, stale tickets to prune, etc.). Occasionally also offer to run
+`check_updates` (explicit call only, never automatic) so the user hears about a
+new FeatureBoard release when one exists.
 
 Mention trial/licensing surfaces only if a write is actually blocked by them — don't
 bring up licensing unprompted.

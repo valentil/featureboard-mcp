@@ -825,6 +825,10 @@
     {
       "name": "register_email",
       "description": "Store an email address the user explicitly typed and submitted on the tier-picker onboarding screen (the 'Save email' action — separate from picking a usage tier), then POST it once to the featureboard.ai registrations listener. This is deliberate outbound egress: the board is otherwise local-only, and this is the only call it makes without a user-configured destination (contrast notify_slack, which requires a webhook the user pastes in). There is no usage telemetry — only this email, and only after explicit submit. Never call this speculatively (e.g. on every onboarding render, or with an unconfirmed/autofilled value); omit or pass an empty string to skip. No-ops (no local write, no network call) when email is empty or malformed. Safe to call again later — once posted, it will not re-POST."
+    },
+    {
+      "name": "check_updates",
+      "description": "Explicitly check featureboard.ai for a newer FeatureBoard release. This makes exactly ONE outbound HTTPS GET request — to https://featureboard.ai/downloads/latest.json — and ONLY when you call this tool; it never runs automatically (no polling, no startup check, no background timer). It is a plain GET with no request body: nothing about you, your board, or this machine is sent. Compares the manifest's version against THIS running server's own version (read from its own package.json) and reports whether an update is available, plus both download links — featureboard.plugin for Claude/Cowork installs, featureboard-mcp.zip for Cursor/Grok Build/other MCP clients. Fails soft on any network problem (timeout, offline, bad response) — never throws; call it again later if it couldn't reach the server."
     }
   ],
   "prompts": [

@@ -63,6 +63,11 @@ code repo on disk) and makes no network call.
   privacy policy; the product only ever receives the resulting license key, which is
   verified offline. Purchase records (licensee, email, key) are kept by the licensor,
   not inside your installation.
+- `check_updates` is an explicitly-invoked, user/agent-initiated version check: a single plain GET of a public
+  JSON file (`https://featureboard.ai/downloads/latest.json`), and only when this tool is called — never on a
+  timer, on startup, or automatically in the background. No identifying data is sent (no body, no board contents,
+  no machine info); the response is compared against the running server's own version to report whether a newer
+  release exists. See `server/updates.js`.
 - `register_email`: the tier-picker onboarding screen has an optional email field. It is
   stored locally (`.featureboard/registration.json`) only when you explicitly click
   "Save email" — that click is the only consent signal used, and there is no usage

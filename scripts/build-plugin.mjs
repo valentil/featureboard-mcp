@@ -186,3 +186,23 @@ console.log(`✓ built ${path.relative(root, ideOut)} (${ideMb} MB) — IDE rele
 const mb = (fs.statSync(outFile).size / (1024 * 1024)).toFixed(1);
 console.log(`✓ built ${path.relative(root, outFile)} (${mb} MB, v${pkg.version})`);
 console.log("  install: open the .plugin file in Cowork, or attach it in chat and press Save.");
+
+// --- update manifest (FBMCPF-260) --------------------------------------------
+// latest.json is what the check_updates tool polls (only when a user/agent
+// explicitly calls it — see server/updates.js / server/register/licensing.js)
+// to learn a newer release exists. Publishing it to the live site is the same
+// manual copy-to-featureboard.ai step as the two artifacts above; this script
+// only ever writes the local releases/ copy.
+const manifest = {
+  name: "featureboard",
+  version: pkg.version,
+  releasedAt: new Date().toISOString(),
+  artifacts: {
+    plugin: "https://featureboard.ai/downloads/featureboard.plugin",
+    mcpZip: "https://featureboard.ai/downloads/featureboard-mcp.zip",
+  },
+  notes: "",
+};
+const manifestPath = path.join(outDir, "latest.json");
+fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+console.log(`✓ wrote ${path.relative(root, manifestPath)} (v${pkg.version})`);

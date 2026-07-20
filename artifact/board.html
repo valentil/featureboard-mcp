@@ -380,6 +380,7 @@
   <button class="ghost" id="notesBtn" title="Project scratchpad">📝 Notes</button>
   <button class="ghost" id="settingsBtn" title="Board settings">⚙ Settings</button>
   <button class="ghost" id="reportBugBtn" title="Report a bug in this board UI">🐞 Report bug</button>
+  <button class="ghost" id="checkUpdatesBtn" title="Check featureboard.ai for a newer FeatureBoard release">⟳ Updates</button>
   <button id="addBtn">+ Add task</button>
 </div>
 <div id="content"><div class="loading">Loading board…</div></div>
@@ -2798,6 +2799,42 @@ async function submitReportBug() {
   );
 }
 
+/* ---------- updates (FBMCPF-260) ----------
+   Explicit click = explicit invocation: check_updates makes its one outbound
+   request only when this handler runs, never on load/poll. Toasts the
+   recommendation; when an update is available, offers the .plugin download
+   (this board is a Claude/Cowork surface) prominently, with the IDE zip as a
+   secondary link. */
+async function checkForUpdates() {
+  const btn = $("#checkUpdatesBtn");
+  if (btn) { btn.disabled = true; btn.textContent = "⟳ Checking…"; }
+  try {
+    const res = await call("check_updates", {});
+    if (!res || !res.checked) {
+      toast((res && res.reason) ? "Update check failed: " + res.reason : "Update check failed");
+      return;
+    }
+    if (res.updateAvailable) {
+      showModal(
+        '<h3>⟳ Update available</h3>' +
+        '<p>v' + esc(res.latest) + ' is out — you\'re running v' + esc(res.current) + '.</p>' +
+        (res.notes ? '<p>' + esc(res.notes) + '</p>' : '') +
+        '<div class="actions">' +
+        '<a href="' + esc(res.downloads.plugin) + '"><button class="primary">⬇ Download featureboard.plugin (Claude/Cowork)</button></a>' +
+        '<a href="' + esc(res.downloads.mcpZip) + '"><button class="ghost">featureboard-mcp.zip (Cursor/Grok)</button></a>' +
+        '<button class="ghost" onclick="closeModal()">Dismiss</button>' +
+        '</div>'
+      );
+    } else {
+      toast(res.recommendation || ("You're up to date (v" + res.current + ")"));
+    }
+  } catch (e) {
+    toast("Update check failed: " + e.message.slice(0, 140));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "⟳ Updates"; }
+  }
+}
+
 /* ---------- boot ---------- */
 function esc(s) { return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 
@@ -2849,6 +2886,7 @@ $("#timelineBtn").addEventListener("click", openTimeline);
 $("#reportsBtn").addEventListener("click", openReports);
 $("#prioBtn").addEventListener("click", autoPrioritize);
 $("#reportBugBtn").addEventListener("click", openReportBug);
+$("#checkUpdatesBtn").addEventListener("click", checkForUpdates);
 
 (async function init() {
   state.license = await loadLicense();

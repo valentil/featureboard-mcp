@@ -48,7 +48,7 @@ test("findOpenWorldTools sanity: parses a non-empty set of tools from server/ind
 
 test("findOpenWorldTools finds the known egress-capable tools (canary for parser drift)", () => {
   const names = findOpenWorldTools(serverSrc);
-  for (const known of ["notify_slack", "deploy_site", "commit_feature", "get_site_traffic"]) {
+  for (const known of ["notify_slack", "deploy_site", "commit_feature", "get_site_traffic", "check_updates"]) {
     assert.ok(names.includes(known), `expected known egress tool "${known}" to be detected`);
   }
 });
@@ -70,7 +70,7 @@ test("PRIVACY.md's Exceptions section exists and covers more than a single item"
   // Regression guard for FBMCPB-14: the old doc only disclosed the registration
   // POST exception. A healthy inventory names at least Slack, git push, and the
   // analytics proxy alongside registration/license-request.
-  for (const name of ["notify_slack", "deploy_site", "commit_feature", "get_site_traffic", "register_email"]) {
+  for (const name of ["notify_slack", "deploy_site", "commit_feature", "get_site_traffic", "register_email", "check_updates"]) {
     assert.ok(section.includes("`" + name + "`"), `Exceptions section should mention \`${name}\``);
   }
 });
