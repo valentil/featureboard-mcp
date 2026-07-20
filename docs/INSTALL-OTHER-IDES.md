@@ -14,6 +14,15 @@ cd featureboard-mcp
 npm install        # installs the two runtime deps into node_modules
 ```
 
+Or do an **unpacked install from the plugin bundle** — `releases/featureboard.plugin` (the
+Claude Cowork package) is an ordinary zip that already contains the server AND its
+`node_modules`, so it needs no npm at all:
+
+```bash
+unzip featureboard.plugin -d featureboard   # (rename to .zip first on tools that insist)
+node featureboard/server/index.js           # ready — same bits every host runs
+```
+
 Or build an npm-style tarball from a checkout (nothing is published to the npm registry):
 
 ```bash
