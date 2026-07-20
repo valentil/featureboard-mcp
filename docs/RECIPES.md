@@ -180,6 +180,49 @@ the machine would otherwise sit idle.
 
 ---
 
+## Life of a Ticket — the verified end-to-end loop
+
+**Verified:** 2026-07-19 against a scratch project (`SeamTest20x`, prefix `ST`) and a
+throwaway git repo, per FBMCPF-235. This is the seam-by-seam recipe for taking a ticket
+from idea to closed sprint using only real FeatureBoard MCP tools. Numbers below match
+what the tools actually returned in the verification run, not aspirational behavior.
+
+1. **`create_project`** — creates the board folder, returns the ticket prefix (e.g. `ST`).
+2. **`set_project_config`** (`codeLocation`) + **`set_git_config`** (`enabled:true`) — point the board at the code repo.
+   Use the repo's path on the **host** machine (the MCP server shells out to `git` host-side), not a sandbox-only path.[^1]
+3. **`plan_work`** — turn a request into tickets in one call. The intake guard stamps `model:`/`cap:` labels on every ticket immediately, no separate step needed.
+4. **`list_tasks`** — spot-check the stamped labels landed (`model:opus`/`cap:160000`/etc per ticket).
+5. **`daily_plan apply:false`** — dry-run the day's slice (per-ticket model/effort, dispatch groups); `applied:0` confirms nothing was written.
+6. **`daily_plan apply:true`** — same plan, now writes `effort:<level>` labels alongside the existing `model:` labels. `applied:<n>` confirms the write.
+7. **`next_task`** — pulls the top ticket honoring priority/due-date/age; reflects the labels written above.
+8. **`set_status "In Progress"`** — claim the ticket before starting work.
+9. **`get_work_packet`** — assembles scope, `codeLocation`/`gitTargets`, definition of done, and (once present) unresolved `reviewComments`.
+10. **`create_worktree`** → **`list_worktrees`** (confirm it's listed, branch `ticket/<id>`, path sibling to the repo) → **`cleanup_worktree`** once merged/unused.[^2]
+11. Make the actual code change in the repo working tree, then **`commit_feature`** — commits (and optionally pushes) with message `"<ticket>: <title>"`.[^2][^3]
+12. **`get_ticket_diff`** (plain, then `semantic:true`) — returns the unified diff for commits mentioning the ticket id.[^4]
+13. **`add_review_comment`** — attaches PR-style feedback; it immediately shows up in `get_work_packet.reviewComments` for the next agent.
+14. **`resolve_review_comment`** — clears it; work packet stops surfacing it.
+15. Done gate: with `requireReview:true` (`set_project_config`), `set_status Done` directly is **refused** with a clear message; `set_status Review` then `set_status Done` succeeds. `approve:true` overrides the gate in one step.
+16. **`set_status Done`** with `completionSummary` (+ optional `model`/`tokens`/`additions`/`deletions`) — records completion and rolls metadata into velocity.
+17. **`log_work`** — an additional, explicit work-log line (independent of the metrics `set_status Done` already recorded — use one or both deliberately, not by accident).
+18. **`export_tasks`** (`format:"json"`) and **`get_metrics`** — round-trippable ticket export and a live velocity/cost rollup; both reflected all three scratch tickets correctly.
+19. **`create_sprint`** → **`assign_sprint`** (sets `sprint:<name>` label) → **`close_sprint`** — closes cleanly (no `force` needed) once every assigned ticket is Done, and writes four audience reports (marketing/sales/technical/executive).[^5]
+20. **`get_sprint_report`** (`audience:"executive"`) — reads back the close-out markdown; numbers matched `close_sprint`'s own summary.
+
+**Footnotes / gotchas hit during verification:**
+
+[^1]: `codeLocation` and worktree paths are read by the MCP server on the **host**, not the sandbox — under Cowork, set them to the host-visible path (e.g. a `dist/<name>` folder under the repo mount, which is gitignored) rather than a sandbox-only `/tmp` path.
+
+[^2]: `create_worktree` places the ticket's checkout **outside** the code repo (sibling `<repo>-worktrees/<ticket>`) on purpose. `commit_feature` always commits in the project's configured `codeLocation` (the main working tree) — **not** the worktree — so changes made inside a worktree must be merged back into the main tree first, or committed via plain `git` in the worktree itself, before `commit_feature` will see them.
+
+[^3]: `commit_feature` stages the **whole repo** (`git add .`) by default and has no `paths` parameter exposed on the tool. If more than one ticket has uncommitted edits in the same working tree at once, the first `commit_feature` call bundles every pending change into that one ticket's commit. Commit (or stash) one ticket's change at a time when not using isolated worktrees.
+
+[^4]: In this verification run, `get_ticket_diff` returned correct diffs via its commit-message grep fallback, but the documented `source` field (`"recorded"`/`"grep"`) and the `semantic` key (with `semantic:true`) were both absent from the response, and `commit_feature`'s own response had no `commit` (hash/additions/deletions) field — the post-commit hash-correlation enrichment never wrote a `commit` work-log line or audit event for any of the three test tickets. The diff/commit tools still worked end to end; only the correlation metadata was missing. Confirm the running MCP server is on current code (not a stale process or an older packaged build) before treating this as a code bug.
+
+[^5]: Sprint report `commits` are extracted from **work-log summary text** by regex (looking for hash-like substrings), not from git or from `commit_feature`'s recorded commits. Only the ticket whose `log_work` summary happened to mention a short hash showed a commit in the close-out report; two other genuinely-committed tickets showed zero. Mention the commit hash explicitly in `log_work`/`completionSummary` text if you want it to surface in sprint reports.
+
+---
+
 ## How to Use These Recipes
 
 1. Open **Claude Code** and go to **Scheduled tasks** (or create a new scheduled task).
