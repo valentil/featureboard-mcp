@@ -86,6 +86,9 @@ code repo on disk) and makes no network call.
   Skipping the field means nothing is stored or sent. This is the only telemetry-adjacent
   exception; license keys (`activate_license`) are verified offline against an embedded
   public key with no phone-home (see `server/license.js`).
+- `activate_license` (activation-by-order only): a single user-initiated HTTPS POST to
+  featureboard.ai/api/claim carrying the email + order id you enter; validation remains
+  fully offline.
 
 ## Your control
 All data is local files you own. Delete the boards folder to remove everything.

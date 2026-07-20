@@ -44,12 +44,42 @@ server.registerTool(
   "activate_license",
   {
     title: "Activate license key",
-    description: "Activate a commercial license key received from the licensor. Verified offline. Unblocks writes for commercial use.",
-    inputSchema: { key: z.string().describe("The signed license key string.") },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    description:
+      "Activate a commercial license. Two modes — provide exactly one: (1) `key`, a signed license key string pasted " +
+      "from the licensor; or (2) `email` + `orderId` from your purchase receipt, in which case the server fetches the " +
+      "signed key for you from the featureboard.ai claim API (a single outbound HTTPS POST carrying just that email + " +
+      "order id) and then verifies it exactly the same way as a pasted key. Either way, verification itself is fully " +
+      "offline. Unblocks writes for commercial use.",
+    inputSchema: {
+      key: z.string().optional().describe("The signed license key string (pasted-key mode). Omit if using email + orderId."),
+      email: z.string().optional().describe("Receipt email from your purchase (activation-by-order mode). Requires orderId; omit if passing key."),
+      orderId: z.string().optional().describe("Order id from your purchase receipt (activation-by-order mode). Requires email; omit if passing key."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
-  tryTool(({ key }) => {
-    license.activate(DATA_DIR, key);
+  tryTool(async ({ key, email, orderId }) => {
+    const hasKey = typeof key === "string" && key.trim().length > 0;
+    const hasEmail = typeof email === "string" && email.trim().length > 0;
+    const hasOrderId = typeof orderId === "string" && orderId.trim().length > 0;
+    const orderMode = hasEmail || hasOrderId;
+
+    if (hasKey && orderMode) {
+      throw new Error("Provide either a license key, or email + orderId to claim one — not both.");
+    }
+    if (!hasKey && !orderMode) {
+      throw new Error("Provide either a license key, or email + orderId to claim one.");
+    }
+    if (orderMode && !(hasEmail && hasOrderId)) {
+      throw new Error("Activation by order requires BOTH email and orderId.");
+    }
+
+    let resolvedKey = key;
+    if (orderMode) {
+      const claim = await license.fetchKeyByOrder({ email, orderId });
+      resolvedKey = claim.key;
+    }
+
+    license.activate(DATA_DIR, resolvedKey);
     const ev = license.evaluate(DATA_DIR);
     return { activated: true, ...ev };
   })

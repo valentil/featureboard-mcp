@@ -836,7 +836,7 @@
     },
     {
       "name": "activate_license",
-      "description": "Activate a commercial license key received from the licensor. Verified offline. Unblocks writes for commercial use."
+      "description": "Activate a commercial license. Two modes — provide exactly one: (1) `key`, a signed license key string pasted from the licensor; or (2) `email` + `orderId` from your purchase receipt, in which case the server fetches the signed key for you from the featureboard.ai claim API (a single outbound HTTPS POST carrying just that email + order id) and then verifies it exactly the same way as a pasted key. Either way, verification itself is fully offline. Unblocks writes for commercial use."
     },
     {
       "name": "request_commercial_license",

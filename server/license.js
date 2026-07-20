@@ -42,6 +42,14 @@ export const PRICE_PER_SEAT_YEAR_USD = 119;
 export const CHECKOUT_URL =
   process.env.FEATUREBOARD_CHECKOUT_URL || "https://featureboard.ai/buy";
 
+// Activation-by-order (FBMCPF-274): claim a signed key from the featureboard.ai
+// claim API using the receipt email + order id, instead of pasting a key. The
+// key it returns still goes through the exact same offline verifyKey/activate
+// path as a pasted key — this only replaces how the key ARRIVES.
+export const CLAIM_URL = process.env.FEATUREBOARD_CLAIM_URL || "https://featureboard.ai/api/claim";
+export const MANUAL_CLAIM_URL = "https://featureboard.ai/claim";
+const CLAIM_TIMEOUT_MS = 10000;
+
 function stateDir(dataDir) {
   return path.join(dataDir, STATE_DIR);
 }
@@ -102,6 +110,78 @@ export function activate(dataDir, key) {
   s.license = v.payload;
   s.updatedAt = new Date().toISOString();
   return writeState(dataDir, s);
+}
+
+/**
+ * Claim a signed license key from the featureboard.ai claim API using the
+ * buyer's receipt email + order id (FBMCPF-274) — the "activation by order"
+ * mode of activate_license, as an alternative to pasting a key.
+ *
+ * POSTs { email, orderId } to CLAIM_URL and expects 200 { key, licensee, seats,
+ * expires } on success. Never throws a raw network/HTTP error: every failure
+ * mode is mapped to an actionable message (and 404/429 get their own clear
+ * wording), each pointing at MANUAL_CLAIM_URL as a fallback. Never logs the
+ * full key — callers get it back in the return value only.
+ *
+ * `fetchImpl` is injectable (defaults to globalThis.fetch) so tests can drive
+ * every path (success / 404 / 429 / network failure) without real network
+ * access — same pattern as registerEmail (server/registration.js) and
+ * checkUpdates (server/updates.js).
+ */
+export async function fetchKeyByOrder({ email, orderId, fetchImpl } = {}) {
+  const trimmedEmail = typeof email === "string" ? email.trim() : "";
+  const trimmedOrderId = typeof orderId === "string" ? orderId.trim() : String(orderId == null ? "" : orderId).trim();
+  if (!trimmedEmail || !trimmedOrderId) {
+    throw new Error("email and orderId are both required to claim a license key.");
+  }
+
+  const doFetch = fetchImpl || globalThis.fetch;
+  if (typeof doFetch !== "function") {
+    throw new Error(
+      `No fetch implementation available to reach the claim API. Claim your key manually at ${MANUAL_CLAIM_URL}.`
+    );
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), CLAIM_TIMEOUT_MS);
+  let res;
+  try {
+    res = await doFetch(CLAIM_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: trimmedEmail, orderId: trimmedOrderId }),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    const msg =
+      err && err.name === "AbortError"
+        ? `timed out after ${CLAIM_TIMEOUT_MS / 1000}s`
+        : (err && err.message) || String(err);
+    throw new Error(`Could not reach the featureboard.ai claim API (${msg}). Claim your key manually at ${MANUAL_CLAIM_URL}.`);
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (res.status === 404) {
+    throw new Error("no key found for that email+order");
+  }
+  if (res.status === 429) {
+    throw new Error("too many attempts, wait an hour");
+  }
+  if (!res.ok) {
+    throw new Error(`Claim API responded with HTTP ${res.status}. Claim your key manually at ${MANUAL_CLAIM_URL}.`);
+  }
+
+  let body;
+  try {
+    body = await res.json();
+  } catch {
+    throw new Error(`Claim API returned an unreadable response. Claim your key manually at ${MANUAL_CLAIM_URL}.`);
+  }
+  if (!body || !body.key) {
+    throw new Error(`Claim API response did not include a key. Claim your key manually at ${MANUAL_CLAIM_URL}.`);
+  }
+  return { key: body.key, licensee: body.licensee, seats: body.seats, expires: body.expires };
 }
 
 /** Record a commercial-license request locally (fed into the owner's CRM pipeline). */
