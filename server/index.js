@@ -66,7 +66,7 @@ import {
   listSiteTemplates, applySiteTemplate,
   renderSite, siteRoot, saveAsset, listAssets, setSiteAnalytics, addRawPage,
 } from "./website.js";
-import { getGitConfig, setGitConfig, commitFeature, mirrorGraduatedPad, getTicketDiff, getGlobalConfig, setGlobalConfig, resolveGitMode, evaluateCommitGate, reconcileChurn, getHistoryMap, suggestHistoricalFiles } from "./git.js";
+import { getGitConfig, setGitConfig, commitFeature, mirrorGraduatedPad, getTicketDiff, getGlobalConfig, setGlobalConfig, resolveGitMode, evaluateCommitGate, reconcileChurn, getHistoryMap, suggestHistoricalFiles, openPullRequest } from "./git.js";
 import { createWorktree, listWorktrees, cleanupWorktree, mergeBackGuidance } from "./worktrees.js";
 import { addReviewComment, listReviewComments, resolveReviewComment, ticketsWithUnresolvedReviews } from "./reviews.js";
 import { scaffoldSite } from "./sitegen.js";
@@ -4495,6 +4495,34 @@ server.registerTool(
     if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
     const cwd = meta.getProjectConfig(board, project).codeLocation;
     return commitFeature(board, project, { ticket, title, message, push }, { cwd });
+  })
+);
+
+server.registerTool(
+  "open_pull_request",
+  {
+    title: "Open a PR for a ticket's branch",
+    description:
+      "Turn a ticket's pushed ticket/<id> branch into a pull request with a ticket-linked title and a closing-keyword body (Closes <id>) — the last step of the worktree→review loop after create_worktree + commit_feature. Uses the gh CLI when installed; otherwise returns a pre-filled compare URL to open manually. If the branch isn't on origin yet it is pushed first only when the resolved git mode is commit-push. Never throws for environmental gaps (no remote, no gh, unpushed branch) — returns opened:false with a reason.",
+    inputSchema: {
+      project: z.string(),
+      ticket: z.string(),
+      base: z.string().optional().describe("Base branch for the PR (default: the repo's default branch)."),
+      draft: z.boolean().optional().describe("Open as a draft PR."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  },
+  writeTool(({ project, ticket, base, draft }) => {
+    const board = getBoard();
+    if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
+    const t = board.getTask(project, ticket);
+    return openPullRequest(board, project, {
+      ticket,
+      title: t ? t.title : "",
+      description: t ? t.description || "" : "",
+      base,
+      draft,
+    });
   })
 );
 

@@ -196,6 +196,96 @@ function defaultExec(args, cwd) {
   return { status: r.status == null ? 1 : r.status, stdout: r.stdout || "", stderr: r.stderr || "" };
 }
 
+/** Default gh exec: run the GitHub CLI synchronously in cwd. Same contract as defaultExec. */
+function defaultGhExec(args, cwd) {
+  try {
+    const r = spawnSync("gh", args, { cwd, encoding: "utf8" });
+    return { status: r.status == null ? 1 : r.status, stdout: r.stdout || "", stderr: r.stderr || "" };
+  } catch {
+    return { status: 127, stdout: "", stderr: "gh not found" };
+  }
+}
+
+/** Normalize a git remote URL to https://host/owner/repo (no .git). Null if unparseable. */
+export function normalizeRemoteUrl(url) {
+  const u = String(url || "").trim();
+  let m = u.match(/^git@([^:]+):(.+?)(?:\.git)?$/);
+  if (m) return `https://${m[1]}/${m[2]}`;
+  m = u.match(/^https?:\/\/([^/]+)\/(.+?)(?:\.git)?\/?$/);
+  if (m) return `https://${m[1]}/${m[2]}`;
+  m = u.match(/^ssh:\/\/git@([^/]+)\/(.+?)(?:\.git)?$/);
+  if (m) return `https://${m[1]}/${m[2]}`;
+  return null;
+}
+
+/**
+ * FBMCPF-213: turn a ticket's pushed branch into a pull request. Closes the
+ * worktree→review loop: create_worktree + commit_feature get the branch onto the
+ * remote; this opens the reviewable PR with a ticket-linked title/body.
+ *
+ * Uses the gh CLI when available; otherwise falls back to a pre-filled GitHub
+ * compare URL (works for any host with a /compare/ route). Never throws for
+ * environmental gaps — returns { opened:false, reason } so the orchestrator can
+ * report rather than crash mid-churn.
+ */
+export function openPullRequest(
+  board,
+  project,
+  { ticket, title, description, base, draft = false } = {},
+  { exec = defaultExec, gh = defaultGhExec } = {}
+) {
+  if (!ticket || !String(ticket).trim()) throw new Error("ticket is required");
+  const tk = String(ticket).trim();
+  const targets = resolveGitTargets(board, project);
+  const repo = (targets.codeRepo && targets.codeRepo.path) || null;
+  if (!repo) return { opened: false, ticket: tk, reason: "no codeLocation configured for this project." };
+  if (!fs.existsSync(path.join(repo, ".git")))
+    return { opened: false, ticket: tk, reason: `no git repository at ${repo}.` };
+
+  const branch = `ticket/${tk}`;
+  if (exec(["rev-parse", "--verify", "--quiet", branch], repo).status !== 0)
+    return { opened: false, ticket: tk, reason: `branch ${branch} does not exist — create_worktree + commit first.` };
+
+  const remote = exec(["remote", "get-url", "origin"], repo);
+  if (remote.status !== 0)
+    return { opened: false, ticket: tk, reason: "no 'origin' remote — a PR needs a hosted remote." };
+  const webUrl = normalizeRemoteUrl(remote.stdout);
+
+  // The branch must be on the remote. Push it if the resolved git mode allows pushing.
+  if (exec(["rev-parse", "--verify", "--quiet", `origin/${branch}`], repo).status !== 0) {
+    const mode = resolveGitMode(board, project);
+    if (mode !== "commit-push")
+      return {
+        opened: false, ticket: tk, branch,
+        reason: `branch ${branch} is not on origin and git mode is "${mode}" — push it first (or set git mode to commit-push).`,
+      };
+    const push = exec(["push", "-u", "origin", branch], repo);
+    if (push.status !== 0)
+      return { opened: false, ticket: tk, branch, reason: `push failed: ${(push.stderr || "").trim()}` };
+  }
+
+  const prTitle = `${tk}: ${title || ""}`.trim().replace(/:$/, "");
+  const prBody = `${description || ""}\n\nCloses ${tk}`.trim();
+
+  if (gh(["--version"], repo).status === 0) {
+    const args = ["pr", "create", "--head", branch, "--title", prTitle, "--body", prBody];
+    if (base) args.push("--base", base);
+    if (draft) args.push("--draft");
+    const r = gh(args, repo);
+    if (r.status === 0) {
+      const url = ((r.stdout || "").match(/https?:\/\/\S+/) || [null])[0];
+      return { opened: true, ticket: tk, branch, url, via: "gh" };
+    }
+    // fall through to compare URL with the gh error attached
+    const compare = webUrl ? `${webUrl}/compare/${base ? `${base}...` : ""}${encodeURIComponent(branch)}?expand=1` : null;
+    return { opened: false, ticket: tk, branch, compareUrl: compare, reason: `gh pr create failed: ${(r.stderr || "").trim()}` };
+  }
+  const compare = webUrl ? `${webUrl}/compare/${base ? `${base}...` : ""}${encodeURIComponent(branch)}?expand=1` : null;
+  return compare
+    ? { opened: false, ticket: tk, branch, compareUrl: compare, via: "compare-url", reason: "gh CLI not available — open the compare URL to file the PR." }
+    : { opened: false, ticket: tk, branch, reason: "gh CLI not available and origin URL unparseable." };
+}
+
 /**
  * FBMCPF-189: has this ticket got a commit yet? Used by set_status's
  * Done-without-commit warning/refusal (requireCommitOnDone). Prefers
