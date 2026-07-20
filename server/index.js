@@ -25,7 +25,7 @@ import { evalReport } from "./eval.js";
 import { exportBoard, parsePmImport } from "./pmbridge.js";
 import { setRequirements, getRequirements, checkAcceptance } from "./requirements.js";
 import { parseFeedback, createFeedbackTickets } from "./feedback.js";
-import { withOrchestrationLabels, findUnlabeledTickets } from "./orchestration.js";
+import { withOrchestrationLabels, findUnlabeledTickets, applyTriage } from "./orchestration.js";
 import { notifySlack, notifyTicketEvent } from "./slack.js";
 import { registerEmail } from "./registration.js";
 import { addDecision, listDecisions, decisionsForTicket } from "./decisions.js";
@@ -500,13 +500,16 @@ server.registerTool(
   },
   writeTool(({ project, ...f }) => {
     const board = getBoard();
-    const created = board.addTask(project, "feature", withOrchestrationLabels("feature", f));
+    // FBMCPF-214: triage intelligence — fill missing product/priority from similar past tickets.
+    const tri = applyTriage(board.listTasks(project, {}), f);
+    const created = board.addTask(project, "feature", withOrchestrationLabels("feature", tri.fields));
     // FBMCPF-196: fire ticket-created automation rules (best-effort).
     const auto = evaluateRules(board, project, { trigger: "ticket-created", ticket: created.ticketNumber }, { notify: (text) => notifySlack(board, project, { text, event: "summary" }) });
-    if (!auto.applied.length && !auto.warnings.length) return created;
+    if (!auto.applied.length && !auto.warnings.length && !tri.triage) return created;
     const view = fullView(board.getTask(project, created.ticketNumber));
     if (auto.applied.length) view.automations = auto.applied;
     if (auto.warnings.length) view.warnings = auto.warnings;
+    if (tri.triage) view.triage = tri.triage;
     return view;
   })
 );
@@ -521,13 +524,16 @@ server.registerTool(
   },
   writeTool(({ project, ...f }) => {
     const board = getBoard();
-    const created = board.addTask(project, "bug", withOrchestrationLabels("bug", f));
+    // FBMCPF-214: triage intelligence — fill missing product/priority from similar past tickets.
+    const tri = applyTriage(board.listTasks(project, {}), f);
+    const created = board.addTask(project, "bug", withOrchestrationLabels("bug", tri.fields));
     // FBMCPF-196: fire ticket-created automation rules (best-effort).
     const auto = evaluateRules(board, project, { trigger: "ticket-created", ticket: created.ticketNumber }, { notify: (text) => notifySlack(board, project, { text, event: "summary" }) });
-    if (!auto.applied.length && !auto.warnings.length) return created;
+    if (!auto.applied.length && !auto.warnings.length && !tri.triage) return created;
     const view = fullView(board.getTask(project, created.ticketNumber));
     if (auto.applied.length) view.automations = auto.applied;
     if (auto.warnings.length) view.warnings = auto.warnings;
+    if (tri.triage) view.triage = tri.triage;
     return view;
   })
 );

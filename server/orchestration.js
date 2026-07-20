@@ -143,3 +143,87 @@ export function findUnlabeledTickets(tasks) {
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// FBMCPF-214: triage intelligence — suggest product/priority (and labels) at
+// intake from similar historical tickets. Same never-override contract as the
+// model/cap guard above: explicit values always win; we only fill what's
+// missing, and label suggestions are surfaced, never auto-applied. Purely
+// deterministic token-overlap similarity — no LLM calls.
+// ---------------------------------------------------------------------------
+
+const TRIAGE_STOPWORDS = new Set(
+  "a an and are as at be by for from has have in into is it its of on or that the this to was were will with add fix new tool tools support".split(" ")
+);
+/** Labels that describe orchestration/bookkeeping, not subject matter. */
+const TRIAGE_LABEL_NOISE = /^(model|cap|effort|sprint|pair|experiment|ask|priority):/i;
+
+export function triageTokens(text) {
+  return new Set(
+    String(text || "")
+      .toLowerCase()
+      .split(/[^a-z0-9_]+/)
+      .filter((w) => w.length > 2 && !TRIAGE_STOPWORDS.has(w))
+  );
+}
+
+/** Rank existing tickets by title+description token overlap (Jaccard). */
+export function similarTickets(tasks, ticketLike, { limit = 5, minScore = 0.15 } = {}) {
+  const q = triageTokens(`${ticketLike.title || ""} ${ticketLike.description || ""}`);
+  if (!q.size) return [];
+  const scored = [];
+  for (const t of tasks || []) {
+    const c = triageTokens(`${t.title || ""} ${t.description || ""}`);
+    if (!c.size) continue;
+    let inter = 0;
+    for (const w of q) if (c.has(w)) inter++;
+    const score = inter / (q.size + c.size - inter);
+    if (score >= minScore) scored.push({ task: t, score: Math.round(score * 1000) / 1000 });
+  }
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, limit);
+}
+
+/**
+ * Suggest product/priority/labels for a new ticket from its nearest historical
+ * neighbours. Returns null when there's no usable signal.
+ */
+export function suggestTriage(tasks, fields, opts = {}) {
+  const near = similarTickets(tasks, fields, opts);
+  if (!near.length) return null;
+  const out = { basis: near.map((n) => ({ ticket: n.task.ticketNumber, score: n.score })) };
+
+  // product: score-weighted majority among neighbours that have one
+  const byProduct = new Map();
+  for (const n of near) if (n.task.product) byProduct.set(n.task.product, (byProduct.get(n.task.product) || 0) + n.score);
+  if (byProduct.size) out.product = [...byProduct.entries()].sort((a, b) => b[1] - a[1])[0][0];
+
+  // priority: median of neighbours that set one
+  const prios = near.map((n) => n.task.priority).filter((v) => v != null && v !== "").map(Number).filter(Number.isFinite).sort((a, b) => a - b);
+  if (prios.length) out.priority = prios[Math.floor((prios.length - 1) / 2)];
+
+  // labels: subject-matter labels appearing on >= 2 neighbours (or the single best match)
+  const counts = new Map();
+  for (const n of near)
+    for (const l of n.task.labels || []) if (!TRIAGE_LABEL_NOISE.test(String(l))) counts.set(l, (counts.get(l) || 0) + 1);
+  const labels = [...counts.entries()].filter(([, c]) => c >= Math.min(2, near.length)).map(([l]) => l);
+  if (labels.length) out.labels = labels.slice(0, 4);
+
+  return out.product || out.priority != null || out.labels ? out : null;
+}
+
+/**
+ * Intake wrapper: fill missing product/priority from triage (explicit values
+ * win), and return the suggestion payload for the create response. Label
+ * suggestions ride along in `triage.labels` but are NOT auto-applied.
+ */
+export function applyTriage(tasks, fields) {
+  const f = fields || {};
+  const t = suggestTriage(tasks, f);
+  if (!t) return { fields: f, triage: null };
+  const next = { ...f };
+  const applied = {};
+  if (!next.product && t.product) { next.product = t.product; applied.product = t.product; }
+  if ((next.priority == null || next.priority === "") && t.priority != null) { next.priority = t.priority; applied.priority = t.priority; }
+  return { fields: next, triage: { ...t, applied: Object.keys(applied).length ? applied : undefined } };
+}
