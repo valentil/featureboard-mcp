@@ -54,6 +54,10 @@ drift on open-ended asks. See [docs/EVAL-BOARD-VS-CHAT.md](docs/EVAL-BOARD-VS-CH
 > surface (CRM, media, website, marketing, and more). After installing or updating, fully
 > **restart Claude Desktop** so new tools load.
 
+> **Not using Claude?** Cursor, Grok Build, and any other MCP client can run the same server
+> over stdio — see [docs/INSTALL-OTHER-IDES.md](docs/INSTALL-OTHER-IDES.md) for per-IDE config,
+> tool-count limits, and the IDE-neutral instructions flag.
+
 
 ## Recipes
 

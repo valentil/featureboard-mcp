@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "FeatureBoard": {
+      "command": "node",
+      "args": ["server/index.js"],
+      "env": {
+        "FEATUREBOARD_CORE_ONLY": "1",
+        "FEATUREBOARD_CLIENT_NEUTRAL": "1"
+      }
+    }
+  }
+}

@@ -198,9 +198,41 @@ Keep the board honest: a ticket should be In Progress only while you are activel
 
 Showing the board: when the user asks to see, open, or check on the board in natural language — e.g. "show me the board", "show the featureboard", "open the board", "let's see the tasks/queue", "what's on my plate", "how's it going / how are we looking", "give me a status", or "show velocity/analytics" — call the get_board tool and render the HTML it returns as a Cowork artifact (create_artifact with id "featureboard-board", or update_artifact if one is already open — reuse it, don't create duplicates). Do NOT hand-write your own board or reply only in text: get_board returns the shipped UI, which already has the Todo / In Progress / Done columns, the product filter, the dark/light theme toggle, and the 📊 Analytics dashboard (velocity, timeline, bug health, and the work-log feed) — tasks + analytics + everything in one place. Use the mcp_tools array get_board returns VERBATIM as the artifact's mcp_tools (don't hand-pick tools from memory) so its buttons and charts work. Pair the artifact with a one- or two-line text summary of where things stand.`;
 
+// FBMCPF-245: IDE-neutral instructions for non-Claude MCP clients (Cursor,
+// Grok Build, any generic stdio host). The default INSTRUCTIONS speak Cowork:
+// artifacts, create_artifact/update_artifact, orchestrator/sub-agent dispatch
+// conventions — mildly wrong advice under other IDEs. Set
+// FEATUREBOARD_CLIENT_NEUTRAL=1 to swap in guidance that speaks of "your
+// agent", drops the Cowork artifact/sub-agent machinery, and describes
+// get_board as an HTML file the IDE can save and open. Why an env var and not
+// clientInfo auto-detection: the SDK captures the instructions string at
+// construction and its private Server._oninitialize returns it verbatim in
+// the initialize response (verified against @modelcontextprotocol/sdk 1.29.0
+// — clientInfo lands on this._clientVersion in the same handler, so making
+// instructions depend on it would mean overriding a private handler and
+// re-implementing protocol-version negotiation; fragile across SDK updates).
+// The default (flag off) stays byte-identical to INSTRUCTIONS above —
+// test/client_neutral_instructions.test.js asserts both modes.
+const NEUTRAL_INSTRUCTIONS = `FeatureBoard is your task board for the user's projects. PROACTIVE BOARDING: a substantive, multi-step dev request (build/fix/ship/refactor X) IS a boarding event — run plan_work without being asked; the user should never have to say 'put it on the board'. Treat it as the place you plan and track work, not just a store you touch when asked.
+
+When the user gives you a substantive, multi-step request (build X, fix these bugs, ship a feature):
+1. Pick or create the board. Call list_projects; if nothing fits, create_project.
+2. Break the request down onto the board. Use plan_work once to create the project (if needed) plus the initial features and bugs in a single step. Features are units of new work (FBF-###); bugs are defects (FBB-###).
+3. Work one ticket at a time. Call next_task to pull the next open item (it honours manual priority). set_status <ticket> "In Progress" BEFORE you start. Call get_work_packet to assemble a focused brief (scope, linked issue, code location, custom prompt, definition of done) and read the files it points to rather than dumping them. Check the packet's gitTargets first — code commits and projectpad commits can go to DIFFERENT repos; never assume. Match rigor to the ticket's effort: label — low: minimal exploration, obvious change, verify, stop; medium: normal loop with tests; high: read adjacent code, protect invariants and back-compat, add tests, self-review the diff. When finished, set_status "Done" with a one-line completionSummary AND log_work with additions/deletions so progress is recorded. Write tools return compact acks by default (verbose:true for the full ticket) — do not re-fetch tickets you just wrote. If git is configured for the project, commit the change per ticket (commit_feature, message referencing the ticket id) before pulling the next. Then pull the next. (The process_next prompt runs this loop for you.)
+4. Log new issues as you find them with log_bug, and split anything too big with decompose_feature.
+5. When the user asks how things are going, use get_metrics and list_tasks rather than guessing.
+
+Keep the board honest: a ticket should be In Progress only while you are actively working it, and Done only when it is genuinely finished. The board is scaffolding around the real work — it does not replace writing the code, running the tests, etc. Do not create boards or tickets for trivial one-shot chores that don't benefit from tracking.
+
+Showing the board: when the user asks to see, open, or check on the board, call the get_board tool. It returns the shipped board UI as a single self-contained HTML document (the html field) — Todo / In Progress / Done columns, product filter, theme toggle, and the analytics dashboard. Save that HTML to a file (e.g. featureboard-board.html) and open it — or tell the user to open it — in the IDE's HTML preview or a browser. Note: the UI's live data panels and buttons call back into this MCP server and only function in hosts that can bridge HTML views to MCP tool calls; in a plain browser treat the saved file as a static shell and answer status questions with list_tasks and get_metrics in text instead. Do NOT hand-write your own board UI.`;
+
+const CLIENT_NEUTRAL = /^(1|true|yes|on)$/.test(
+  (process.env.FEATUREBOARD_CLIENT_NEUTRAL || "").toLowerCase()
+);
+
 const server = new McpServer(
   { name: "featureboard", version: "0.3.3" },
-  { instructions: INSTRUCTIONS }
+  { instructions: CLIENT_NEUTRAL ? NEUTRAL_INSTRUCTIONS : INSTRUCTIONS }
 );
 
 // tool gating --------------------------------------------------------------
