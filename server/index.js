@@ -827,10 +827,14 @@ server.registerTool(
       newFile: z.boolean().nullable().optional().describe("'New file' flag, or null to clear."),
       website: z.string().nullable().optional().describe("Associated website/URL, or null to clear."),
       blockedBy: z.array(z.string()).nullable().optional().describe("Ticket ids that block this one (empty array or null clears). Adding an edge that closes a loop is rejected."),
+      verbose: z.boolean().optional().describe("Return the full ticket view (description, labels, attachments, dates, ...) instead of the default compact ack."),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  writeTool(({ project, ticket, ...fields }) => getBoard().updateTask(project, ticket, fields))
+  writeTool(({ project, ticket, verbose, ...fields }) => {
+    const result = getBoard().updateTask(project, ticket, fields);
+    return verbose ? result : meta.compactAck(result, { updated: true });
+  })
 );
 
 // sprints (FBMCPF-120) -------------------------------------------------------
@@ -1383,10 +1387,11 @@ server.registerTool(
       additions: z.number().int().optional().describe("Lines added (Done only)."),
       deletions: z.number().int().optional().describe("Lines deleted (Done only)."),
       handoff: z.string().optional().describe("Handoff note for successor tickets, written to handoffs/<TICKET>.md (Done only)."),
+      verbose: z.boolean().optional().describe("Return the full ticket view (description, labels, attachments, dates, ...) instead of the default compact ack."),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  writeTool(({ project, ticket, status, approve, completionSummary, model, tokens, inputTokens, outputTokens, additions, deletions, handoff }) => {
+  writeTool(({ project, ticket, status, approve, completionSummary, model, tokens, inputTokens, outputTokens, additions, deletions, handoff, verbose }) => {
     const board = getBoard();
     // FBMCPF-189: Done-without-commit gate/warning. evaluateCommitGate is a
     // no-op (missingCommit:false) whenever git is disabled for the project,
@@ -1461,7 +1466,7 @@ server.registerTool(
     const auto = evaluateRules(board, project, { trigger: "status-change", ticket, to: status }, { notify: (text) => notifySlack(board, project, { text, event: "summary" }) });
     if (auto.applied.length) result.automations = auto.applied;
     if (auto.warnings.length) result.warning = result.warning ? `${result.warning}; ${auto.warnings.join("; ")}` : auto.warnings.join("; ");
-    return result;
+    return verbose ? result : meta.compactAck(result);
   })
 );
 

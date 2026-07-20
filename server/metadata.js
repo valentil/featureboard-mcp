@@ -788,3 +788,44 @@ export function getWorkPacket(board, project, ticket, opts = {}) {
   }
   return packet;
 }
+
+// ---------------------------------------------------------------------------
+// Compact write echoes (FBMCPF-237)
+// ---------------------------------------------------------------------------
+
+// Heavy per-ticket fields that a set_status/update_task ack drops by default
+// (the caller can always re-fetch them via list_tasks/get_task, and can force
+// the full view back with verbose:true). Defined once so both tool handlers
+// share a single strip-list instead of duplicating it.
+export const ACK_HEAVY_FIELDS = [
+  "description", "_raw", "line", "labels", "attachments", "blockedBy",
+  "createdDate", "dueDate", "completionDate", "product", "linkedIssue",
+  "ref", "newFile", "website", "source", "priority",
+];
+
+/**
+ * Compact write-echo for set_status/update_task: strips ACK_HEAVY_FIELDS from
+ * a full ticket-mutation result (as returned by board.setStatus/updateTask),
+ * renames ticketNumber -> ticket, and merges in any extras (completionSummary,
+ * warning, updated, metrics, ...) the caller has already computed. Keeps
+ * conditional annotations that aren't in the heavy list — e.g. set_status
+ * already attaches uncommitted/commitReminder/metrics/telemetryHint/padMirror/
+ * warning/automations directly onto its result object, so those survive the
+ * strip untouched.
+ */
+export function compactAck(view, extras = {}) {
+  const out = {};
+  for (const [k, v] of Object.entries(view || {})) {
+    if (k === "ticketNumber") {
+      out.ticket = v;
+      continue;
+    }
+    if (ACK_HEAVY_FIELDS.includes(k)) continue;
+    out[k] = v;
+  }
+  for (const [k, v] of Object.entries(extras || {})) {
+    if (v === undefined) continue;
+    out[k] = v;
+  }
+  return out;
+}
