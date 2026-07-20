@@ -1,6 +1,6 @@
 // Auto-extracted from server/index.js (FBMCPF-224). Registration blocks moved verbatim.
 export function registerAnalyticsTools(server, ctx) {
-  const { Board, addKbDoc, agentMonitorV2, appendHeartbeat, applyDriftRemediation, driftReport, existsSync, getBoard, getGitConfig, getHistoryMap, getKbDoc, getLiveActivity, getLatestUpdate, getPricing, listKbDocs, listSprints, meta, nodePath, postProjectUpdate, predictDueDates, reconcileChurn, recordDriftScore, rollupCost, searchKb, setSite, startDriftRun, suggestHistoricalFiles, tryTool, writeTool, z } = ctx;
+  const { Board, addKbDoc, agentMonitorV2, appendEvent, appendHeartbeat, applyDriftRemediation, driftReport, existsSync, getBoard, getGitConfig, getHistoryMap, getKbDoc, getLiveActivity, getLatestUpdate, getPricing, lastDispatchForTicket, listKbDocs, listSprints, meta, nodePath, postProjectUpdate, predictDueDates, reconcileChurn, recordDriftScore, rollupCost, searchKb, setSite, startDriftRun, suggestHistoricalFiles, tryTool, writeTool, z } = ctx;
 
 // analytics & metadata (v0.3) ----------------------------------------------
 
@@ -515,10 +515,13 @@ server.registerTool(
       "when there's no recorded status event), its last event (most recent audit event or work-log entry, whichever is " +
       "newer) with age, token spend so far vs its cap:<tokens> label and the resulting spend ratio, and a stalled flag " +
       "(no event/work-log activity within stallMinutes, default 30). Also reports costSoFar and capCost in dollars " +
-      "(via project-config-overridable pricing; capCost is null when no model can be inferred for the ticket). Sorted " +
-      "most-recently-active first, with a top-level summary (count, stalledCount, totalSpend, totalCap, totalCostSoFar, " +
-      "totalCapCost, stalledTickets). Pairs with churn mode: a stalled ticket mid-churn usually means the agent is stuck " +
-      "or has gone quiet. Use it to see what's underway and catch stuck tickets.",
+      "(via project-config-overridable pricing; capCost is null when no model can be inferred for the ticket). Each " +
+      "ticket also carries lastDispatch ({worker, model, parallel, note, ageMinutes}, null if record_dispatch was " +
+      "never called for it) — who's actively working it, a sub-agent or the orchestrator — so the board can render an " +
+      "orchestration chip without a separate call. Sorted most-recently-active first, with a top-level summary (count, " +
+      "stalledCount, subAgentCount, parallelCount, totalSpend, totalCap, totalCostSoFar, totalCapCost, stalledTickets). " +
+      "Pairs with churn mode: a stalled ticket mid-churn usually means the agent is stuck or has gone quiet. Use it to " +
+      "see what's underway, who/what is running it, and catch stuck tickets.",
     inputSchema: {
       project: z.string(),
       stallMinutes: z.number().min(0).optional().describe("Inactivity minutes after which an In Progress ticket is flagged stalled. Defaults to 30."),
@@ -558,6 +561,38 @@ server.registerTool(
     const task = board.getTask(project, ticket);
     if (!task) throw new Error(`Ticket ${ticket} not found in "${project}".`);
     return appendHeartbeat(board, project, { ticket, note, model, elapsedMinutes, spend });
+  })
+);
+
+// dispatch handoffs (FBMCPF-256) ---------------------------------------------
+server.registerTool(
+  "record_dispatch",
+  {
+    title: "Record a dispatch handoff",
+    description:
+      "Record who is actively working an In Progress ticket: appended as a 'dispatch' audit event " +
+      "(ticket_events.jsonl), so get_agent_monitor's lastDispatch and the board UI's orchestration chip can show " +
+      "whether a ticket is running on a sub-agent or back with the orchestrator. Call this right after set_status " +
+      "\"In Progress\" when handing a ticket off to a fresh sub-agent — worker:\"sub-agent\", with model (sonnet/opus/" +
+      "haiku/fable) and parallel:true when it's running alongside other sub-agent dispatches. Call it again with " +
+      "worker:\"orchestrator\" when you take the ticket back (e.g. for review before commit) — the newest call always " +
+      "wins as the ticket's current lastDispatch. Informational only: it never moves the ticket's status.",
+    inputSchema: {
+      project: z.string(),
+      ticket: z.string(),
+      worker: z.enum(["sub-agent", "orchestrator"]).describe("Who is now actively working the ticket."),
+      model: z.string().optional().describe("Model doing the work (sonnet/opus/haiku/fable, or a full model id), when worker is sub-agent."),
+      parallel: z.coerce.boolean().optional().describe("Whether this dispatch is running alongside other parallel sub-agent dispatches."),
+      note: z.string().optional().describe("Short context, e.g. \"parity + docs\" or \"taking back for review\"."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  writeTool(({ project, ticket, worker, model, parallel, note }) => {
+    const board = getBoard();
+    const task = board.getTask(project, ticket);
+    if (!task) throw new Error(`Ticket ${ticket} not found in "${project}".`);
+    appendEvent(board, project, { ticket, field: "dispatch", from: null, to: worker, source: "record_dispatch", worker, model, parallel, note });
+    return { project, ticket, dispatch: lastDispatchForTicket(board, project, ticket) };
   })
 );
 

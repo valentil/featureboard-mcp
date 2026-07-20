@@ -27,8 +27,11 @@ Never ask "should I put this on the board?" — just do it, then get to work.
 
 Sub-agents NEVER write the board and NEVER commit. Only the orchestrator:
 
-1. Sets status to `In Progress` before dispatching a ticket.
-2. Reviews the sub-agent's diff and runs the tests.
+1. Sets status to `In Progress` before dispatching a ticket, then calls
+   `record_dispatch` (`worker: "sub-agent"`, `model`, `parallel`) right after
+   handing it off, so `get_agent_monitor` and the board show who's running it.
+2. Reviews the sub-agent's diff and runs the tests — call `record_dispatch`
+   again with `worker: "orchestrator"` when taking the ticket back for this.
 3. Sets status to `Done` with a one-line `completionSummary`.
 4. Calls `log_work` with tokens/additions/deletions/model.
 5. Calls `commit_feature` for that ticket before pulling the next one.

@@ -113,6 +113,15 @@ export function appendEvent(board, project, event) {
   if (event.shortHash != null) rec.shortHash = String(event.shortHash);
   if (event.additions != null) rec.additions = Number(event.additions);
   if (event.deletions != null) rec.deletions = Number(event.deletions);
+  // FBMCPF-256: dispatch events (field:"dispatch", appended by the record_dispatch
+  // tool) carry who is actively working a ticket — a sub-agent (+ its model and
+  // whether it's running in parallel with others) or the orchestrator taking a
+  // ticket back — alongside the usual from/to/source shape. See
+  // lastDispatchForTicket() below and get_agent_monitor's lastDispatch field.
+  if (event.worker != null) rec.worker = String(event.worker);
+  if (event.model != null) rec.model = String(event.model);
+  if (event.parallel != null) rec.parallel = Boolean(event.parallel);
+  if (event.note != null) rec.note = String(event.note);
   try {
     const p = eventsPath(board, project);
     fs.mkdirSync(path.dirname(p), { recursive: true });
@@ -155,6 +164,34 @@ export function recordedCommitsForTicket(board, project, ticket) {
     ordered.push(h);
   }
   return ordered.reverse(); // append order is oldest-first; callers want newest-first
+}
+
+/**
+ * FBMCPF-256: the most recent dispatch handoff recorded for a ticket, or null
+ * if none was ever recorded. A dispatch event (field:"dispatch", appended by
+ * the record_dispatch tool right after set_status "In Progress") says who is
+ * actively working the ticket: a sub-agent (worker:"sub-agent", with its
+ * model and whether it's running alongside other parallel dispatches) or the
+ * orchestrator taking the ticket back (worker:"orchestrator"). Like
+ * recordedCommitsForTicket, this is a thin read over eventsForTicket — the
+ * newest matching event wins (events are append-order, oldest first), so a
+ * take-back dispatch naturally supersedes the original hand-off.
+ */
+export function lastDispatchForTicket(board, project, ticket) {
+  const dispatches = eventsForTicket(board, project, ticket).filter((e) => e.field === "dispatch");
+  if (!dispatches.length) return null;
+  return extractDispatch(dispatches[dispatches.length - 1]);
+}
+
+/** Shape a raw dispatch event record into the {worker, model, parallel, note, ts} view. */
+function extractDispatch(e) {
+  return {
+    worker: e.worker || null,
+    model: e.model || null,
+    parallel: e.parallel != null ? e.parallel : null,
+    note: e.note || null,
+    ts: e.ts,
+  };
 }
 
 /**
@@ -368,7 +405,14 @@ function resolveLastEvent(events, work, heartbeats) {
   let candidate = null;
   if (events.length) {
     const e = events[events.length - 1];
-    candidate = { kind: "event", ts: e.ts, summary: `${e.field}: ${e.from ?? "?"} \u2192 ${e.to ?? "?"}`, model: null };
+    // FBMCPF-256: dispatch events read as "dispatch: null \u2192 sub-agent" under
+    // the generic field/from/to summary below (their `to` is just the worker,
+    // `from` is always null) — a readable "dispatch \u2192 sub-agent (sonnet)"
+    // summary instead, so lastEvent surfaces something legible for these too.
+    const summary = e.field === "dispatch"
+      ? `dispatch \u2192 ${e.worker || e.to || "?"}${e.model ? ` (${e.model})` : ""}`
+      : `${e.field}: ${e.from ?? "?"} \u2192 ${e.to ?? "?"}`;
+    candidate = { kind: "event", ts: e.ts, summary, model: e.field === "dispatch" ? (e.model || null) : null };
   }
   if (work.length) {
     const w = work[work.length - 1];
@@ -409,6 +453,25 @@ function resolveLastHeartbeat(heartbeats, now) {
     spend: h.spend != null ? h.spend : null,
     ageMinutes,
   };
+}
+
+/**
+ * FBMCPF-256: a ticket's own latest dispatch handoff (worker/model/parallel/
+ * note), with age relative to `now` — mirrors resolveLastHeartbeat's shape.
+ * Distinct from resolveLastEvent's generic lastEvent: this always reflects
+ * the latest dispatch even when a status/work-log/heartbeat event is newer,
+ * so the board can show "who's on it right now" (lastDispatch) separately
+ * from "when did something last happen" (lastEvent). Null when the ticket
+ * has never had a dispatch recorded.
+ */
+function resolveLastDispatch(events, now) {
+  const dispatches = events.filter((e) => e.field === "dispatch");
+  if (!dispatches.length) return null;
+  const d = extractDispatch(dispatches[dispatches.length - 1]);
+  const ageMinutes = !Number.isNaN(Date.parse(d.ts))
+    ? Math.round(((now - new Date(d.ts)) / 60000) * 10) / 10
+    : null;
+  return { ...d, ageMinutes };
 }
 
 /**
@@ -463,6 +526,10 @@ export function agentMonitorV2(board, project, opts = {}) {
     // right now" view than lastEvent, which only says activity happened.
     const lastHeartbeat = resolveLastHeartbeat(ticketHeartbeats, now);
 
+    // FBMCPF-256: the ticket's own latest dispatch handoff (who's actively
+    // working it), null when record_dispatch was never called for it.
+    const lastDispatch = resolveLastDispatch(ticketEvents, now);
+
     const spend = spendForTicket(ticketWork);
     const cap = capOfTask(t);
     const spendRatio = cap ? Math.round((spend / cap) * 1000) / 1000 : null;
@@ -492,6 +559,7 @@ export function agentMonitorV2(board, project, opts = {}) {
       elapsedMinutes,
       lastEvent,
       lastHeartbeat,
+      lastDispatch,
       spend,
       cap,
       spendRatio,
@@ -512,6 +580,13 @@ export function agentMonitorV2(board, project, opts = {}) {
     .filter((t) => t.stalled)
     .map((t) => ({ ticket: t.ticket, title: t.title, ageMinutes: t.lastEvent ? t.lastEvent.ageMinutes : null }));
 
+  // FBMCPF-256: board-wide orchestration counts — how many In Progress
+  // tickets are currently on a sub-agent, and of those, how many are running
+  // in parallel with others. Both derive purely from each ticket's own
+  // lastDispatch above (no extra read pass over the event log).
+  const subAgentCount = tickets.filter((t) => t.lastDispatch && t.lastDispatch.worker === "sub-agent").length;
+  const parallelCount = tickets.filter((t) => t.lastDispatch && t.lastDispatch.worker === "sub-agent" && t.lastDispatch.parallel === true).length;
+
   const totalSpend = tickets.reduce((s, t) => s + t.spend, 0);
   const totalCap = tickets.reduce((s, t) => s + (t.cap || 0), 0);
   const totalCostSoFar = Math.round(tickets.reduce((s, t) => s + (t.costSoFar || 0), 0) * 1e4) / 1e4;
@@ -526,6 +601,8 @@ export function agentMonitorV2(board, project, opts = {}) {
     stallMinutes,
     count: tickets.length,
     stalledCount: stalledTickets.length,
+    subAgentCount,
+    parallelCount,
     totalSpend,
     totalCap: totalCap || null,
     totalCostSoFar,
