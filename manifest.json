@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "featureboard",
   "display_name": "FeatureBoard",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "A local, file-backed feature/bug board for agentic projects. Claude reads and writes your featurelist.md / buglist.md boards directly.",
   "long_description": "FeatureBoard turns your project's markdown task files into a first-class board that Claude can manage. It keeps the same `featurelist.md` / `buglist.md` format used by the original FeatureBoard app, with FBF-/FBB- ticket IDs, statuses (Todo / In Progress / Done), due dates, products, labels, linked issues and completion summaries. Because Claude is now the agent, workflow tools like brainstorm (bulk-add) and decompose fit naturally: Claude generates the ideas, the board persists them. Read-only analytics summarize velocity and open/closed counts.",
   "author": {
@@ -237,6 +237,10 @@
     {
       "name": "read_code_file",
       "description": "Read a file under the project's codeLocation as UTF-8 text (size-capped; binary files are flagged, not dumped). Returns content + line count. Sandboxed to codeLocation (no path escape)."
+    },
+    {
+      "name": "suggest_file_split",
+      "description": "Given an oversized source file (see code_file_map's splitCandidates), return a structured, ready-to-execute refactor proposal: exported symbols clustered by name-prefix, proposed target modules, keep-original-as-barrel guidance, and a prompt to hand straight to the agent. Read-only — the server never edits code; Claude executes the split."
     },
     {
       "name": "code_file_map",
