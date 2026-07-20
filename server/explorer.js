@@ -214,3 +214,70 @@ export function codeFileMap(root, { maxDepth = 6, splitLines = SPLIT_LINES, spli
     ...(symbols ? { symbols: symbolMap, symbolFileCount: Object.keys(symbolMap).length } : {}),
   };
 }
+
+// ---------------------------------------------------------------------------
+// FBMCPF-221: suggest_file_split — turn an oversized file into a structured,
+// ready-to-execute refactor prompt (the original app's `fs` verb). Read-only:
+// like generate_test, the server proposes, Claude executes. Symbols are
+// clustered by shared name-prefix (fooRead/fooWrite -> foo group).
+// ---------------------------------------------------------------------------
+
+/** Cluster symbols by leading lowercase word of their camelCase name. */
+export function clusterSymbols(symbols, { maxClusters = 6 } = {}) {
+  const groups = new Map();
+  for (const sym of symbols || []) {
+    const m = String(sym.name).match(/^[a-z]+|^[A-Z][a-z]+/);
+    const key = m ? m[0].toLowerCase() : "misc";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(sym);
+  }
+  const clusters = [];
+  const misc = [];
+  for (const [key, syms] of groups) {
+    if (syms.length >= 2) clusters.push({ key, symbols: syms });
+    else misc.push(...syms);
+  }
+  clusters.sort((a, b) => b.symbols.length - a.symbols.length);
+  if (misc.length) clusters.push({ key: "misc", symbols: misc });
+  return clusters.slice(0, maxClusters);
+}
+
+/**
+ * Build a structured split proposal for one file. Returns { file, lines,
+ * symbols, clusters, targets, prompt } or { file, warning } when the file
+ * can't be read / has no exported symbols to anchor a split.
+ */
+export function suggestFileSplit(root, relPath, { splitLines = SPLIT_LINES } = {}) {
+  const read = readCodeFile(root, relPath);
+  if (read.error) return { file: relPath, warning: read.error };
+  if (read.binary) return { file: relPath, warning: "binary file - nothing to split" };
+  const content = read.content || "";
+  const lineCount = content.split(/\r?\n/).length;
+  const symbols = extractExportedSymbols(content, { maxSymbols: 200 });
+  if (!symbols.length) return { file: relPath, lines: lineCount, warning: "no exported symbols found to anchor a split - consider splitting by section manually" };
+
+  const clusters = clusterSymbols(symbols);
+  const base = relPath.replace(/\.[^.]+$/, "");
+  const ext = (relPath.match(/\.[^.]+$/) || [".js"])[0];
+  const targets = clusters.map((c) => ({
+    file: `${base}.${c.key}${ext}`,
+    symbols: c.symbols.map((s) => s.name),
+  }));
+  const prompt = [
+    `Refactor ${relPath} (${lineCount} lines) into smaller modules. Proposed split:`,
+    ...targets.map((t) => `- ${t.file}: ${t.symbols.join(", ")}`),
+    `Keep ${relPath} as a thin re-export barrel so existing imports keep working.`,
+    `Move each symbol with its private helpers and imports; run the test suite after each move.`,
+    `Do NOT change any public symbol names or signatures.`,
+  ].join("\n");
+  return {
+    file: relPath,
+    lines: lineCount,
+    overThreshold: lineCount >= splitLines,
+    symbolCount: symbols.length,
+    clusters: clusters.map((c) => ({ key: c.key, count: c.symbols.length })),
+    targets,
+    keepOriginalAsBarrel: true,
+    prompt,
+  };
+}

@@ -43,7 +43,7 @@ import {
 } from "./media.js";
 import { startDriftRun, recordDriftScore, driftReport, applyDriftRemediation } from "./drift.js";
 import { scanBoardCleanup, pruneBoard, scanTestFiles, dismissCleanupFinding } from "./cleanup.js";
-import { listCodeTree, readCodeFile, codeFileMap } from "./explorer.js";
+import { listCodeTree, readCodeFile, codeFileMap, suggestFileSplit } from "./explorer.js";
 import { saveTestPage, listTestPages, getTestPage, removeTestPage } from "./testpages.js";
 import { groupBySuite, coverageByProduct, generateMultiModelTests, saveGeneratedTests, listVariants } from "./testing.js";
 import { runVariantMatrix, formatEvidenceSection, appendEvidence } from "./modeleval.js";
@@ -1697,6 +1697,26 @@ server.registerTool(
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
   tryTool(({ project, path: rel, maxBytes }) => readCodeFile(codeRoot(project), rel, { maxBytes }))
+);
+
+server.registerTool(
+  "suggest_file_split",
+  {
+    title: "Suggest a file split (refactor prompt)",
+    description:
+      "Given an oversized source file (see code_file_map's splitCandidates), return a structured, ready-to-execute refactor proposal: exported symbols clustered by name-prefix, proposed target modules, keep-original-as-barrel guidance, and a prompt to hand straight to the agent. Read-only — the server never edits code; Claude executes the split.",
+    inputSchema: {
+      project: z.string(),
+      file: z.string().describe("Path relative to the project's codeLocation."),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project, file }) => {
+    const board = getBoard();
+    const root = meta.getProjectConfig(board, project).codeLocation;
+    if (!root) throw new Error("No codeLocation configured for this project.");
+    return suggestFileSplit(root, file);
+  })
 );
 
 server.registerTool(
