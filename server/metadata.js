@@ -622,6 +622,63 @@ export function resolveGitTargets(board, project) {
   return { stage, codeRepo, padRepo, preflight };
 }
 
+// FBMCPF-236: dispatch directive — makes sub-agent fan-out the default reading
+// of a work packet returned by next_task / get_work_packet. Parsed locally
+// (not imported from budget.js) to avoid a metadata↔budget import cycle
+// (budget.js already imports metadata.js as `meta`).
+export const DISPATCH_MODEL_RE = /^model:([a-z0-9._-]+)$/i;
+export const DISPATCH_CAP_RE = /^cap:(\d+(?:\.\d+)?)([km]?)$/i;
+export const DISPATCH_EFFORT_RE = /^effort:(low|medium|high)$/i;
+
+/**
+ * Pure directive builder: sonnet/haiku tickets are cheap enough to hand to a
+ * sub-agent (which edits code and runs tests but never writes the board or
+ * commits); opus/fable tickets are orchestrator-tier and run sequentially
+ * with review. `blocked` (when known) forces parallelizable to false even
+ * for an otherwise-dispatchable ticket.
+ */
+export function buildDispatchDirective(task, { blocked = false } = {}) {
+  let model = null, cap = null, effort = null;
+  for (const l of (task && task.labels) || []) {
+    const ls = String(l);
+    if (model == null) {
+      const m = ls.match(DISPATCH_MODEL_RE);
+      if (m) model = m[1].toLowerCase();
+    }
+    if (cap == null) {
+      const m = ls.match(DISPATCH_CAP_RE);
+      if (m) cap = Math.round(parseFloat(m[1]) * (m[2]?.toLowerCase() === "m" ? 1e6 : m[2]?.toLowerCase() === "k" ? 1e3 : 1));
+    }
+    if (effort == null) {
+      const m = ls.match(DISPATCH_EFFORT_RE);
+      if (m) effort = m[1].toLowerCase();
+    }
+  }
+  if (!model) model = "sonnet";
+  const subAgent = model === "sonnet" || model === "haiku";
+  const parallelizable = subAgent && !blocked;
+  const instruction = subAgent
+    ? `Dispatch this ticket to a ${model} sub-agent with this packet (cap ~${cap} tokens). The sub-agent edits code and runs tests but NEVER writes the board or commits — the orchestrator reviews, sets status, logs work, and commits.`
+    : `Work this ticket in the orchestrator context (model tier ${model}); review carefully before close-out.`;
+  return { model, cap, effort, subAgent, parallelizable, instruction };
+}
+
+/**
+ * Cheap, git-free "is this task blocked" check reusing the board instance
+ * already passed to getWorkPacket (mirrors storage.js's isBlocked, which we
+ * cannot import here without creating a metadata↔storage cycle: storage.js
+ * imports getProjectConfig from this module).
+ */
+function isTaskBlockedLocal(board, project, task) {
+  const list = (task && task.blockedBy) || [];
+  if (!list.length) return false;
+  const byId = new Map(board.listTasks(project, {}).map((t) => [t.ticketNumber, t]));
+  return list.some((id) => {
+    const b = byId.get(id);
+    return b && b.status !== "Done";
+  });
+}
+
 export function getWorkPacket(board, project, ticket, opts = {}) {
   const task = board.getTask(project, ticket);
   if (!task) throw new Error(`Ticket ${ticket} not found in "${project}".`);
@@ -698,6 +755,7 @@ export function getWorkPacket(board, project, ticket, opts = {}) {
     scratchpadMentions,
     recentWork,
     suggestedModel: suggestModelForPacket(task),
+    dispatch: buildDispatchDirective(task, { blocked: isTaskBlockedLocal(board, project, task) }),
     definitionOfDone: effectiveDoD,
     closeOut:
       "When done: set_status Done with a one-line completionSummary, then log_work with additions/deletions (and model), and — when git is configured — commit per ticket (commit_feature, message referencing the ticket id). Only the orchestrator writes to the board; work one ticket at a time.",

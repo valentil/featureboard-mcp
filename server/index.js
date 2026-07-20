@@ -795,7 +795,10 @@ server.registerTool(
     const num = (t) => parseInt((t.ticketNumber || "").replace(/\D+/g, ""), 10) || 0;
     open.sort((a, b) => rank(a) - rank(b) || prio(a) - prio(b) || dueVal(a) - dueVal(b) || num(a) - num(b));
     const sm = suggestModel(open[0]); // FBMCPF-125: model tiering hint
-    const res = { next: fullView(open[0]), remaining: openAll.length, suggestedModel: sm.model, modelBasis: sm.basis };
+    // FBMCPF-236: dispatch directive — makes sub-agent fan-out the default
+    // reading of next_task's result, same as get_work_packet.
+    const dispatch = meta.buildDispatchDirective(open[0], { blocked: isBlocked(board, project, open[0]) });
+    const res = { next: fullView(open[0]), remaining: openAll.length, suggestedModel: sm.model, modelBasis: sm.basis, dispatch };
     if (blockedSkipped) res.blockedSkipped = blockedSkipped;
     if (reviewSkipped) res.reviewSkipped = reviewSkipped;
     return res;
