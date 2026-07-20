@@ -273,3 +273,37 @@ export function exportBoard(board, project, format = "json") {
   if (format === "markdown") return toMarkdown(tasks);
   throw new Error(`Unknown export format: "${format}". Use json, csv, or markdown.`);
 }
+
+// ---------------------------------------------------------------------------
+// FBMCPF-217: metrics/work-log export — flat-file time series for external
+// BI/spreadsheet use, mirroring exportBoard's json/csv shape. Read-only.
+// ---------------------------------------------------------------------------
+
+const WORKLOG_COLUMNS = ["date", "time", "ticket", "summary", "model", "tokens", "inputTokens", "outputTokens", "additions", "deletions"];
+
+/** Export the work log as rows (json) or csv. */
+export function exportWorkLog(entries, format = "json") {
+  const rows = (entries || []).map((e) => {
+    const out = {};
+    for (const c of WORKLOG_COLUMNS) out[c] = e[c] != null ? e[c] : "";
+    return out;
+  });
+  if (format === "csv") {
+    return [WORKLOG_COLUMNS.join(","), ...rows.map((r) => WORKLOG_COLUMNS.map((c) => csvField(r[c])).join(","))].join("\n");
+  }
+  return JSON.stringify(rows, null, 2);
+}
+
+/** Export completions-by-date + status counts (get_metrics shape) as rows or csv. */
+export function exportMetricsSeries(metrics, format = "json") {
+  const byDate = (metrics && (metrics.completedByDate || metrics.completionsByDate)) || {};
+  const rows = Object.keys(byDate).sort().map((date) => ({ date, completed: byDate[date] }));
+  if (format === "csv") {
+    return ["date,completed", ...rows.map((r) => `${csvField(r.date)},${csvField(r.completed)}`)].join("\n");
+  }
+  return JSON.stringify(
+    { features: (metrics && metrics.features) || null, bugs: (metrics && metrics.bugs) || null, completedByDate: rows },
+    null,
+    2
+  );
+}

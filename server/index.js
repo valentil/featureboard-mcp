@@ -22,7 +22,7 @@ import { graduateProject } from "./graduate.js";
 import { estimateWork, planBudget, suggestModel, dailyPlan } from "./budget.js";
 import { computeWaves } from "./planchain.js";
 import { evalReport } from "./eval.js";
-import { exportBoard, parsePmImport } from "./pmbridge.js";
+import { exportBoard, parsePmImport, exportWorkLog, exportMetricsSeries } from "./pmbridge.js";
 import { setRequirements, getRequirements, checkAcceptance } from "./requirements.js";
 import { parseFeedback, createFeedbackTickets, captureAsk } from "./feedback.js";
 import { withOrchestrationLabels, findUnlabeledTickets, applyTriage } from "./orchestration.js";
@@ -1066,6 +1066,29 @@ server.registerTool(
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
   tryTool(({ project, format }) => ({ project, format, content: exportBoard(getBoard(), project, format) }))
+);
+
+server.registerTool(
+  "export_metrics",
+  {
+    title: "Export metrics / work log",
+    description:
+      "Flat-file export of analytics for external BI/spreadsheet use, mirroring export_tasks: what:'worklog' exports the per-event work log (date, ticket, model, tokens, additions/deletions); what:'completions' exports status counts + completions-by-date. Formats: json or csv. Read-only.",
+    inputSchema: {
+      project: z.string(),
+      what: z.enum(["worklog", "completions"]).optional().default("worklog"),
+      format: z.enum(["json", "csv"]).optional().default("json"),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project, what, format }) => {
+    const board = getBoard();
+    const content =
+      what === "completions"
+        ? exportMetricsSeries(board.getMetrics(project), format)
+        : exportWorkLog(meta.readWorkLog(board, project), format);
+    return { project, what, format, content };
+  })
 );
 
 server.registerTool(
