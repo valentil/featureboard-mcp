@@ -1,0 +1,11 @@
+# FBMCPF-226: normalize line endings; stop LF->CRLF warning spam on Windows checkouts
+* text=auto
+*.js text eol=lf
+*.mjs text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.html text eol=lf
+*.yml text eol=lf
+*.mcpb binary
+*.png binary
+icon.png binary
