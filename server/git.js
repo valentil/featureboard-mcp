@@ -18,6 +18,7 @@
  */
 
 import fs from "node:fs";
+import { normalizeStandard } from "./standards.js";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { resolveGitTargets, logWork, getProjectConfig, readWorkLog } from "./metadata.js";
@@ -155,6 +156,11 @@ export function getGlobalConfig(board) {
   if (raw && raw.planLimits != null) {
     try { cfg.planLimits = normalizePlanLimits(raw.planLimits); } catch { /* ignore malformed */ }
   }
+  // Account-wide default standard (rigor profile) — projects without their own
+  // `standard` config resolve to this, then to the built-in "standard" preset.
+  if (raw && raw.defaultStandard != null) {
+    try { const n = normalizeStandard(typeof raw.defaultStandard === "string" ? { level: raw.defaultStandard } : raw.defaultStandard); if (n) cfg.defaultStandard = n; } catch { /* ignore malformed */ }
+  }
   return cfg;
 }
 
@@ -175,6 +181,16 @@ export function setGlobalConfig(board, patch = {}) {
     const norm = normalizePlanLimits(patch.planLimits);
     if (norm == null) delete cfg.planLimits;
     else cfg.planLimits = norm;
+  }
+  // Account-wide default standard: undefined leaves it, null clears, a string
+  // level or {level,...} object sets it (normalized; unlocked at this layer —
+  // per-project set_standard is where locking happens).
+  if (patch.defaultStandard !== undefined) {
+    if (patch.defaultStandard == null) delete cfg.defaultStandard;
+    else {
+      const n = normalizeStandard(typeof patch.defaultStandard === "string" ? { level: patch.defaultStandard } : patch.defaultStandard);
+      cfg.defaultStandard = { ...n, locked: false, source: "default" };
+    }
   }
   atomicWrite(p, JSON.stringify(cfg, null, 2) + "\n");
   return cfg;

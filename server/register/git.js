@@ -78,10 +78,15 @@ server.registerTool(
         })
         .nullable()
         .optional(),
+      defaultStandard: z
+        .enum(["prototype", "standard", "polished"])
+        .nullable()
+        .optional()
+        .describe("Account-wide default rigor profile for projects without their own standard (set_standard). null clears it."),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  writeTool(({ gitMode, planLimits }) => setGlobalConfig(getBoard(), { gitMode, planLimits }))
+  writeTool(({ gitMode, planLimits, defaultStandard }) => setGlobalConfig(getBoard(), { gitMode, planLimits, defaultStandard }))
 );
 
 server.registerTool(

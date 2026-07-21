@@ -1,6 +1,6 @@
 // Auto-extracted from server/index.js (FBMCPF-224). Registration blocks moved verbatim.
 export function registerBoardTools(server, ctx) {
-  const { BOARD_HTML_PATH, RAG_EXPLORER_HTML_PATH, Board, StatusEnum, applyTriage, autoAssignSprintFields, blendStatus, compactView, completedAtForTask, computeWaves, createFeedbackTickets, estimateTicketMinutes, evaluateRules, extractBoardToolNames, fail, fullView, getBoard, getGlobalConfig, isBlocked, meta, notifySlack, parseFeedback, parseImport, parsePmImport, readFileSync, sprintOfTask, suggestModel, ticketsWithUnresolvedReviews, tryTool, withOrchestrationLabels, writeTool, z } = ctx;
+  const { BOARD_HTML_PATH, RAG_EXPLORER_HTML_PATH, Board, applyStandard, resolveStandard, standardPacketBlock, StatusEnum, applyTriage, autoAssignSprintFields, blendStatus, compactView, completedAtForTask, computeWaves, createFeedbackTickets, estimateTicketMinutes, evaluateRules, extractBoardToolNames, fail, fullView, getBoard, getGlobalConfig, isBlocked, meta, notifySlack, parseFeedback, parseImport, parsePmImport, readFileSync, sprintOfTask, suggestModel, ticketsWithUnresolvedReviews, tryTool, withOrchestrationLabels, writeTool, z } = ctx;
 
 // projects -----------------------------------------------------------------
 
@@ -79,6 +79,40 @@ server.registerTool(
         "as the artifact's mcp_tools param so the explorer's panels can call back into this server.",
       html,
     };
+  })
+);
+
+server.registerTool(
+  "set_standard",
+  {
+    title: "Set the project standard (rigor profile)",
+    description:
+      "Set — and LOCK — how much rigor a project's work is held to. Levels: \"prototype\" (move fast, minimal ceremony), " +
+      "\"standard\" (normal professional loop), \"polished\" (research-first: competitor teardowns, layout/IA of comparable apps, " +
+      "white papers, UX/UI heuristics, automation-everywhere, high test rigor + self-review). The resolved standard is injected " +
+      "into every work packet (packet.standard + extra definition-of-done items) and bends research-on-intake (polished forces " +
+      "it on with expanded questions; prototype skips it). `mandate` is the project's own free-text bar, carried verbatim into packets. " +
+      "INFERENCE RULE: when a project's standard is unset/unlocked, infer the level from the user's cues ONCE (pass source:\"inferred\") " +
+      "and lock it. A locked standard is settled — this tool refuses to change it unless force:true, which you pass ONLY when the user " +
+      "explicitly asks to change the standard. Account-wide default for unset projects: set_global_config defaultStandard.",
+    inputSchema: {
+      project: z.string(),
+      level: z.enum(["prototype", "standard", "polished"]),
+      mandate: z.string().optional().describe("Project-specific bar in the user's words, e.g. 'research competitors + whitepapers + UX guides; automate everywhere; highly polished engineering standard'."),
+      source: z.enum(["user", "inferred"]).optional().describe("Who decided: the user explicitly (default), or inferred once from conversation cues."),
+      force: z.boolean().optional().describe("Override a LOCKED standard. Pass ONLY when the user explicitly asked to change it."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  writeTool(({ project, level, mandate, source, force }) => {
+    const board = getBoard();
+    const cfg = meta.getProjectConfig(board, project);
+    const result = applyStandard(cfg.standard, { level, mandate, source: source || "user", locked: true }, { force: !!force });
+    if (!result.applied) {
+      return { ...result, effective: standardPacketBlock(resolveStandard(cfg.standard)) };
+    }
+    meta.setProjectConfig(board, project, { standard: result.standard });
+    return { ...result, effective: standardPacketBlock(result.standard) };
   })
 );
 

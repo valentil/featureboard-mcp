@@ -13,6 +13,7 @@
  */
 
 import fs from "node:fs";
+import { resolveStandard, standardPacketBlock, definitionOfDoneExtras } from "./standards.js";
 import path from "node:path";
 import { getRequirements } from "./requirements.js";
 import { decisionsForTicket } from "./decisions.js";
@@ -48,7 +49,7 @@ function atomicWrite(p, content) {
 // ---------------------------------------------------------------------------
 
 // FBMCPF-120: "sprints" holds the sprint registry (name/start/end/goal)
-const CONFIG_KEYS = ["products", "codeLocation", "websiteLocation", "agentModel", "description", "website", "featurePrefix", "bugPrefix", "customPrompt", "brandTitle", "brandSubtitle", "brandWords", "brandVoice", "brandPrimary", "brandAccent", "brandLogo", "brandFont", "imageTool", "sprints", "stage", "gitTargets", "worktreeDir", "requireReview", "requireCommitOnDone", "slackWebhook", "slackEvents", "pricing", "rules", "slaThresholds", "autoStatusOnCommit", "doneGates", "sprintAutoAssign", "checks", "requireChecksOnDone", "researchOnIntake", "ragInPackets", "ragK", "voiceProfile", "voiceLint", "voiceLintMin", "etaHints"];
+const CONFIG_KEYS = ["products", "codeLocation", "websiteLocation", "agentModel", "description", "website", "featurePrefix", "bugPrefix", "customPrompt", "brandTitle", "brandSubtitle", "brandWords", "brandVoice", "brandPrimary", "brandAccent", "brandLogo", "brandFont", "imageTool", "sprints", "stage", "gitTargets", "worktreeDir", "requireReview", "requireCommitOnDone", "slackWebhook", "slackEvents", "pricing", "rules", "slaThresholds", "autoStatusOnCommit", "doneGates", "sprintAutoAssign", "checks", "requireChecksOnDone", "researchOnIntake", "ragInPackets", "ragK", "voiceProfile", "voiceLint", "voiceLintMin", "etaHints", "standard"];
 
 /** Merged view: managed config overlaid on legacy project_config.json. */
 export function getProjectConfig(board, project) {
@@ -787,6 +788,13 @@ export function getWorkPacket(board, project, ticket, opts = {}) {
       .concat(definitionOfDone[definitionOfDone.length - 1]);
   }
 
+  // Project standard (rigor profile): resolved once (project config -> global
+  // default -> "standard"), injected into every packet so dispatched agents
+  // hold the work to the right bar. Extra DoD items ride along for "polished".
+  const std = resolveStandard(cfg.standard, opts.globalDefaultStandard);
+  const stdExtras = definitionOfDoneExtras(std);
+  if (stdExtras.length) effectiveDoD = effectiveDoD.concat(stdExtras);
+
   const packet = {
     ticket: task.ticketNumber,
     type: task.type,
@@ -814,6 +822,7 @@ export function getWorkPacket(board, project, ticket, opts = {}) {
     recentWork,
     suggestedModel: suggestModelForPacket(task),
     dispatch: buildDispatchDirective(task, { blocked: isTaskBlockedLocal(board, project, task), etaHints: cfg.etaHints !== false, blend: opts.blend || null }),
+    standard: standardPacketBlock(std),
     definitionOfDone: effectiveDoD,
     closeOut:
       "When done: set_status Done with a one-line completionSummary, then log_work with additions/deletions (and model), and — when git is configured — commit per ticket (commit_feature, message referencing the ticket id). Only the orchestrator writes to the board; work one ticket at a time.",

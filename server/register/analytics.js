@@ -735,7 +735,9 @@ server.registerTool(
     // directive can steer toward the hotter meter. Best-effort.
     let blend = null;
     try { blend = blendStatus(getGlobalConfig(board), new Date()); } catch { blend = null; }
-    const packet = meta.getWorkPacket(board, project, ticket, { historicalFiles, blend });
+    let globalDefaultStandard = null;
+    try { globalDefaultStandard = getGlobalConfig(board).defaultStandard || null; } catch { globalDefaultStandard = null; }
+    const packet = meta.getWorkPacket(board, project, ticket, { historicalFiles, blend, globalDefaultStandard });
     // FBMCPF-269: etaHints defaults ON (see CONFIG_KEYS in metadata.js) —
     // attach a per-ticket wall-clock estimate alongside the packet's other
     // scoping info.

@@ -20,6 +20,7 @@
  */
 
 import { getProjectConfig, DISPATCH_EFFORT_RE } from "./metadata.js";
+import { resolveStandard, researchProfile } from "./standards.js";
 import { ragSearch } from "./rag.js";
 import { searchKb, slugify } from "./kb.js";
 
@@ -82,7 +83,18 @@ export function prepareResearch(board, project, ticket, opts = {}) {
   const task = board.getTask(project, ticket);
   if (!task) throw new Error(`Ticket ${ticket} not found in "${project}".`);
 
-  const resolved = resolveResearchOnIntake(board, project, task);
+  let resolved = resolveResearchOnIntake(board, project, task);
+  // Project standard bends the default: "polished" forces research on (labels
+  // still win); "prototype" skips it unless a research:on label forces it.
+  const cfgStd = (() => { try { return getProjectConfig(board, project); } catch { return {}; } })();
+  const std = resolveStandard(cfgStd.standard);
+  const profile = researchProfile(std);
+  if (resolved.source === "default" && profile.defaultOn === true && !resolved.enabled) {
+    resolved = { enabled: true, source: "standard", reason: `project standard "${std.level}" runs research-first.` };
+  }
+  if (resolved.source === "default" && profile.defaultOn === false) {
+    return { ticket: task.ticketNumber, title: task.title, skip: true, reason: `project standard "${std.level}" skips the research phase by default (add a research:on label to force it).` };
+  }
   if (!resolved.enabled) {
     return { ticket: task.ticketNumber, title: task.title, skip: true, reason: resolved.reason };
   }
@@ -114,6 +126,7 @@ export function prepareResearch(board, project, ticket, opts = {}) {
     "Prior art IN THIS REPO: which existing files, modules, or Done tickets already touched similar ground? (Start from the priorArt hits below and rag_search for more.)",
     "Comparables / competitors: how do other tools solve this, and what's the one idea worth borrowing?",
     "Risks & invariants: what must NOT break — data shapes, public APIs, existing tests, performance envelopes?",
+    ...profile.extraQuestions,
   ];
 
   return {
