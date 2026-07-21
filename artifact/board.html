@@ -512,10 +512,10 @@ async function loadLicense() {
 
 function buyUrl() {
   const lic = state.license;
-  return (lic && lic.pricing && lic.pricing.checkoutUrl) || (lic && lic.checkoutUrl) || "https://featureboard.dev/buy";
+  return (lic && lic.pricing && lic.pricing.checkoutUrl) || (lic && lic.checkoutUrl) || "https://featureboard.ai/buy";
 }
 function buyBtn(label) {
-  return '<a class="primary" style="text-decoration:none" href="' + buyUrl() + '" target="_blank" rel="noopener">' + (label || "Buy · $119/seat/yr") + "</a> ";
+  return '<a class="primary" style="text-decoration:none" href="' + buyUrl() + '" target="_blank" rel="noopener">' + (label || "Buy · $99.99/seat/yr") + "</a> ";
 }
 function renderLicense() {
   const lic = state.license, badge = $("#licBadge"), banner = $("#banner");
@@ -534,7 +534,7 @@ function renderLicense() {
     badge.style.display = ""; badge.className = "badge lic"; badge.textContent = "Licensed" + (lic.license && lic.license.licensee ? " · " + lic.license.licensee : "");
   } else if (lic.allowWrites === false) {
     badge.style.display = ""; badge.className = "badge frozen"; badge.textContent = "Writes frozen";
-    banner.innerHTML = '<div class="banner stop">🔒 ' + (lic.message || "Commercial license required.") + ' ' + buyBtn("Buy license · $119/seat/yr") + '<button class="ghost" onclick="openActivate()">Activate key</button> <button class="ghost" onclick="openRequest()">Custom terms</button></div>';
+    banner.innerHTML = '<div class="banner stop">🔒 ' + (lic.message || "Commercial license required.") + ' ' + buyBtn("Buy license · $99.99/seat/yr") + '<button class="ghost" onclick="openActivate()">Activate key</button> <button class="ghost" onclick="openRequest()">Custom terms</button></div>';
   }
 }
 
@@ -2649,7 +2649,7 @@ async function openOnboarding() {
     '<p>How are you using it? This sets your license tier.</p>' +
     '<button class="tier" onclick="pickTier(\'personal\')"><b>Personal / non-commercial</b><span>Free forever. Private, hobby, or personal projects.</span></button>' +
     '<button class="tier" onclick="pickTier(\'public\')"><b>Public / open-source / nonprofit</b><span>Free forever for non-commercial public work.</span></button>' +
-    '<button class="tier" onclick="pickTier(\'commercial-trial\')"><b>Commercial — start 24h trial</b><span>Evaluate commercially for 24 hours, then US$119/seat/yr self-serve at featureboard.dev/buy. Writes freeze after the trial until licensed.</span></button>' +
+    '<button class="tier" onclick="pickTier(\'commercial-trial\')"><b>Commercial — start 24h trial</b><span>Evaluate commercially for 24 hours, then US$99.99/seat/yr self-serve at featureboard.ai/buy. Writes freeze after the trial until licensed.</span></button>' +
     '<button class="tier" onclick="openActivate()"><b>Commercial — I have a license key</b><span>Enter a key issued after signing a commercial agreement.</span></button>' +
     '<hr style="margin:14px 0;border:none;border-top:1px solid #d8dce6">' +
     '<label>How should FeatureBoard handle git?</label>' +
