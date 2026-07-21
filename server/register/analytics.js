@@ -115,6 +115,7 @@ server.registerTool(
       description: z.string().optional(),
       website: z.string().optional(),
       customPrompt: z.string().optional().describe("Project-specific guidance injected into every work packet."),
+      goal: z.string().optional().describe("The project's north star outcome, e.g. 'become the default agent-run task board; grow paid seats'. Injected into work packets and aimed at by steer_project's research pass."),
       brandTitle: z.string().optional().describe("Board display title (branding)."),
       brandSubtitle: z.string().optional().describe("Board subtitle / byline (branding)."),
       brandWords: z.array(z.string()).optional().describe("Brand / trial words woven into generated media (e.g. product name, taglines, campaign phrases)."),

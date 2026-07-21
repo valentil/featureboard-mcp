@@ -49,7 +49,7 @@ function atomicWrite(p, content) {
 // ---------------------------------------------------------------------------
 
 // FBMCPF-120: "sprints" holds the sprint registry (name/start/end/goal)
-const CONFIG_KEYS = ["products", "codeLocation", "websiteLocation", "agentModel", "description", "website", "featurePrefix", "bugPrefix", "customPrompt", "brandTitle", "brandSubtitle", "brandWords", "brandVoice", "brandPrimary", "brandAccent", "brandLogo", "brandFont", "imageTool", "sprints", "stage", "gitTargets", "worktreeDir", "requireReview", "requireCommitOnDone", "slackWebhook", "slackEvents", "pricing", "rules", "slaThresholds", "autoStatusOnCommit", "doneGates", "sprintAutoAssign", "checks", "requireChecksOnDone", "researchOnIntake", "ragInPackets", "ragK", "voiceProfile", "voiceLint", "voiceLintMin", "etaHints", "standard"];
+const CONFIG_KEYS = ["products", "codeLocation", "websiteLocation", "agentModel", "description", "website", "featurePrefix", "bugPrefix", "customPrompt", "brandTitle", "brandSubtitle", "brandWords", "brandVoice", "brandPrimary", "brandAccent", "brandLogo", "brandFont", "imageTool", "sprints", "stage", "gitTargets", "worktreeDir", "requireReview", "requireCommitOnDone", "slackWebhook", "slackEvents", "pricing", "rules", "slaThresholds", "autoStatusOnCommit", "doneGates", "sprintAutoAssign", "checks", "requireChecksOnDone", "researchOnIntake", "ragInPackets", "ragK", "voiceProfile", "voiceLint", "voiceLintMin", "etaHints", "standard", "goal"];
 
 /** Merged view: managed config overlaid on legacy project_config.json. */
 export function getProjectConfig(board, project) {
@@ -813,6 +813,7 @@ export function getWorkPacket(board, project, ticket, opts = {}) {
       name: project,
       codeLocation: cfg.codeLocation || null,
       customPrompt: cfg.customPrompt || null,
+      goal: cfg.goal || null,
       agentModel: cfg.agentModel || null,
       website: cfg.website || null,
     },

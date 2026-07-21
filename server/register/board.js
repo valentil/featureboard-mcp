@@ -1,6 +1,6 @@
 // Auto-extracted from server/index.js (FBMCPF-224). Registration blocks moved verbatim.
 export function registerBoardTools(server, ctx) {
-  const { BOARD_HTML_PATH, RAG_EXPLORER_HTML_PATH, Board, applyStandard, resolveStandard, standardPacketBlock, StatusEnum, applyTriage, autoAssignSprintFields, blendStatus, compactView, completedAtForTask, computeWaves, createFeedbackTickets, estimateTicketMinutes, evaluateRules, extractBoardToolNames, fail, fullView, getBoard, getGlobalConfig, isBlocked, meta, notifySlack, parseFeedback, parseImport, parsePmImport, readFileSync, sprintOfTask, suggestModel, ticketsWithUnresolvedReviews, tryTool, withOrchestrationLabels, writeTool, z } = ctx;
+  const { BOARD_HTML_PATH, RAG_EXPLORER_HTML_PATH, Board, applyStandard, steerProject, resolveStandard, standardPacketBlock, StatusEnum, applyTriage, autoAssignSprintFields, blendStatus, compactView, completedAtForTask, computeWaves, createFeedbackTickets, estimateTicketMinutes, evaluateRules, extractBoardToolNames, fail, fullView, getBoard, getGlobalConfig, isBlocked, meta, notifySlack, parseFeedback, parseImport, parsePmImport, readFileSync, sprintOfTask, suggestModel, ticketsWithUnresolvedReviews, tryTool, withOrchestrationLabels, writeTool, z } = ctx;
 
 // projects -----------------------------------------------------------------
 
@@ -114,6 +114,28 @@ server.registerTool(
     meta.setProjectConfig(board, project, { standard: result.standard });
     return { ...result, effective: standardPacketBlock(result.standard) };
   })
+);
+
+server.registerTool(
+  "steer_project",
+  {
+    title: "Steer the project (next wave when the queue runs dry)",
+    description:
+      "FBMCPF-317: the churn loop's answer to an empty queue — call this when next_task returns nothing (or the user asks to " +
+      "'keep improving'). Returns ordered, executable passes that encode the owner's steering pattern: (1) REVIEW the Done " +
+      "tickets completed since the last steering pass — adversarial defect hunt over their diffs (get_ticket_diff semantic:true, " +
+      "churn_reconcile), file log_bug for real defects; (2) TIGHTEN — triage the attached cleanup/strengthen findings into tickets " +
+      "or dismissals; (3) RESEARCH toward the project's `goal` at its locked standard (polished standards carry the " +
+      "competitor/layout/whitepaper/UX question set) grounded in rag_search prior art, then add_feature the next wave; (4) RESUME " +
+      "next_task. Review candidates are claimed in steering.json so the same work is never re-reviewed. If `actionable` is false " +
+      "twice in a row, report to the user and stop — do not spin. Pass dryRun:true to preview without claiming.",
+    inputSchema: {
+      project: z.string(),
+      dryRun: z.boolean().optional().describe("Preview the passes without marking the review candidates as claimed."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  writeTool(({ project, dryRun }) => steerProject(getBoard(), project, { dryRun: !!dryRun })),
 );
 
 server.registerTool(
