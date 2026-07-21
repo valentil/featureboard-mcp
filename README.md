@@ -330,6 +330,16 @@ result is appended there so `get_test_runs` and the board's 🧪 Tests panel sur
 next to manual ones. MCP servers have no daemon, so scheduling lives outside the server — point
 cron or Windows Task Scheduler at the script.
 
+## Troubleshooting
+
+**`bash` fails, the sandbox won't start, or a scheduled task silently stopped?**
+That's almost always the Claude Desktop **Cowork sandbox** filling its disk — not a
+FeatureBoard bug — and it surfaces as `useradd failed: exit status 12: cannot create
+directory /sessions/…`, `Workspace unavailable`, or checks that never return. The fix
+is to reset the sandbox's disk image from your computer (your boards and repos are
+never touched). Full symptoms, the root cause, and step-by-step macOS/Windows reset
+instructions are in **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)**.
+
 ## License
 
 MIT © Lewis Valentine
