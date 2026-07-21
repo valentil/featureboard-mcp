@@ -18,6 +18,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+// FBMCPB-46: the free-tier cap compares capStartDate against each feature's
+// [Created: ...] tag, which storage.js stamps in the LOCAL calendar day
+// (localDateStr, per FBMCPB-18). capStartDate must use the SAME basis or a
+// feature created within ~1 day of first evaluate can land on the wrong side
+// of the boundary (wrongly grandfathered, or over-counted). Share the one
+// source of truth rather than re-deriving a UTC date here.
+import { localDateStr } from "./storage.js";
 
 // Public key — safe to embed and ship. Regenerate with owner/keygen.mjs to rotate.
 const PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
@@ -355,7 +362,9 @@ export function evaluate(dataDir) {
     // legacy lines with no [Created: ...] tag — never counts.
     let capStartDate = s.capStartDate;
     if (!capStartDate) {
-      capStartDate = new Date().toISOString().slice(0, 10);
+      // FBMCPB-46: LOCAL calendar day, matching serializeTask's [Created: ...]
+      // stamp — NOT toISOString() (UTC), which drifts a day near midnight.
+      capStartDate = localDateStr();
       // Merge into the existing state so usageType etc. are preserved.
       writeState(dataDir, { ...s, capStartDate });
     }

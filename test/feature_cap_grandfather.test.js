@@ -23,8 +23,13 @@ import {
   FREE_FEATURE_HARD,
   CHECKOUT_URL,
 } from "../server/license.js";
+import { localDateStr } from "../server/storage.js";
 
-const TODAY = new Date().toISOString().slice(0, 10);
+// FBMCPB-46: capStartDate and feature [Created: ...] tags share ONE calendar
+// basis — the LOCAL day (localDateStr), not UTC. Deriving TODAY the same way
+// keeps this suite correct in any timezone (the old UTC slice could drift a
+// day near midnight and spuriously fail).
+const TODAY = localDateStr();
 const OLD_DATE = "2026-01-05"; // safely before any capStartDate stamped today
 
 function tmpDataDir() {
@@ -159,6 +164,18 @@ test("hard cap freezes writes only — reads remain available", () => {
   assert.equal(ev.status, "free-limit-reached");
   assert.equal(ev.allowWrites, false);
   assert.ok(/reads still work/i.test(ev.message), "message reassures that reads keep working");
+});
+
+// (f) FBMCPB-46: the stamped capStartDate uses the local-day helper, so it
+// shares a basis with serializeTask's [Created: ...] tag (no UTC-vs-local drift).
+test("FBMCPB-46: capStartDate is stamped in the local calendar day (localDateStr basis)", () => {
+  const dir = tmpDataDir();
+  writeBoard(dir, "Proj", [featureLine(1, OLD_DATE)]);
+  setUsageType(dir, "personal");
+
+  const ev = evaluate(dir);
+  assert.equal(ev.capStartDate, localDateStr(), "capStartDate must match the local-day helper, not a UTC slice");
+  assert.equal(readState(dir).capStartDate, localDateStr());
 });
 
 // Non-personal tiers never get a capStartDate stamp.
