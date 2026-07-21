@@ -706,7 +706,36 @@ export function commitFeature(board, project, opts = {}, { exec = defaultExec, c
       padMirror && Array.isArray(padMirror.mirrored) && padMirror.mirrored.length) {
     planOpts = { ...planOpts, paths: [...planOpts.paths, ".featureboard"] };
   }
-  const plan = buildCommitPlan(config, planOpts);
+  // FBMCPB-35: when the commit runs in the shipped-website repo (deploy_site's
+  // repoOverride), the push refspec must target THAT repo's branch — not the
+  // project git config's branch, which describes the CODE repo and made pushes
+  // fail ("src refspec main does not match any") whenever the website repo sat
+  // on a different branch (e.g. master). Resolution order:
+  //   1. gitTargets.websiteRepo.branch — explicit per-project website config;
+  //   2. the website repo's actual checked-out branch (rev-parse --abbrev-ref
+  //      HEAD in that cwd; failures and detached HEAD are tolerated);
+  //   3. the project git config's branch — the old behavior, last resort.
+  // The remote resolves analogously from gitTargets.websiteRepo.remote, else
+  // the config remote. The code-repo path (commit_feature without repoOverride)
+  // is deliberately untouched — its branch resolution stays exactly as before.
+  let planConfig = config;
+  if (repoOverride) {
+    const wr = (targets.websiteRepo && targets.websiteRepo.path === repoOverride && targets.websiteRepo) || {};
+    let branch = typeof wr.branch === "string" && wr.branch.trim() ? wr.branch.trim() : null;
+    if (!branch) {
+      try {
+        const r = exec(["rev-parse", "--abbrev-ref", "HEAD"], codeCwd);
+        const head = r.status === 0 ? (r.stdout || "").trim() : "";
+        if (head && head !== "HEAD") branch = head; // "HEAD" = detached — fall through
+      } catch {
+        // tolerated — fall through to the config branch
+      }
+    }
+    if (!branch) branch = config.branch;
+    const remote = typeof wr.remote === "string" && wr.remote.trim() ? wr.remote.trim() : config.remote;
+    planConfig = { ...config, branch, remote };
+  }
+  const plan = buildCommitPlan(planConfig, planOpts);
   const results = [];
   for (const step of plan.steps) {
     const r = exec(step.args, codeCwd);

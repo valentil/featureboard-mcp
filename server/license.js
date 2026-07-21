@@ -56,9 +56,18 @@ export const FREE_FEATURE_HARD = Math.max(FREE_FEATURE_SOFT, parseInt(process.en
 // A top-level feature line in featurelist.md: checkbox + [PREFIX-<n>] id, and no
 // 🔗 link token (decompose subtasks link back to their parent).
 const TOP_LEVEL_FEATURE_RE = /^\s*-\s*\[[ xXpPrR\-]\]\s*\[[A-Z][A-Z0-9\-]*\d+\]/;
+const CREATED_DATE_RE = /\[Created:\s*(\d{4}-\d{2}-\d{2})/;
 
-/** Count top-level features across every board under dataDir (bugs + subtasks excluded). */
-export function countTopLevelFeatures(dataDir) {
+/**
+ * Count top-level features across every board under dataDir (bugs + subtasks excluded).
+ *
+ * Grandfather clause (FBMCPB-36): when opts.since (YYYY-MM-DD) is given, only
+ * features CREATED on/after that date count — a line only counts if it carries
+ * a [Created: YYYY-MM-DD] tag with date >= since. Lines with no [Created: ...]
+ * tag are pre-existing/legacy and never count when since is set. Without
+ * opts.since the original behavior is preserved: every top-level feature counts.
+ */
+export function countTopLevelFeatures(dataDir, { since } = {}) {
   let count = 0;
   let entries;
   try {
@@ -75,7 +84,13 @@ export function countTopLevelFeatures(dataDir) {
       continue;
     }
     for (const line of text.split(/\r?\n/)) {
-      if (TOP_LEVEL_FEATURE_RE.test(line) && !line.includes("🔗")) count++;
+      if (!TOP_LEVEL_FEATURE_RE.test(line) || line.includes("🔗")) continue;
+      if (since) {
+        const m = line.match(CREATED_DATE_RE);
+        // No [Created: ...] tag => pre-existing/legacy => grandfathered.
+        if (!m || m[1] < since) continue;
+      }
+      count++;
     }
   }
   return count;
@@ -334,7 +349,17 @@ export function evaluate(dataDir) {
   }
 
   if (type === "personal") {
-    const featureCount = countTopLevelFeatures(dataDir);
+    // Grandfather clause (FBMCPB-36): the cap only meters features created
+    // AFTER it first started observing this install. Stamp that moment once
+    // (capStartDate, YYYY-MM-DD); everything created before it — including
+    // legacy lines with no [Created: ...] tag — never counts.
+    let capStartDate = s.capStartDate;
+    if (!capStartDate) {
+      capStartDate = new Date().toISOString().slice(0, 10);
+      // Merge into the existing state so usageType etc. are preserved.
+      writeState(dataDir, { ...s, capStartDate });
+    }
+    const featureCount = countTopLevelFeatures(dataDir, { since: capStartDate });
     const q = featureQuota(featureCount);
     if (q.state === "hard") {
       return {
@@ -344,9 +369,11 @@ export function evaluate(dataDir) {
         tier: "personal",
         featureCount,
         featureCap: q.hard,
+        capStartDate,
         checkoutUrl: CHECKOUT_URL,
         message:
-          `Free tier limit reached: ${featureCount} of ${q.hard} features. Reads still work; new writes are frozen. ` +
+          `Free tier limit reached: ${featureCount} of ${q.hard} features created since ${capStartDate} (earlier features are grandfathered and don't count). ` +
+          `Reads still work; new writes are frozen. ` +
           `Keep going with a license (US$${PRICE_PER_SEAT_YEAR_USD}/seat/yr) at ${CHECKOUT_URL}, then run activate_license. ` +
           `Open-source projects and verified students are free and uncapped — set usage type "public" if that applies.`,
       };
@@ -359,13 +386,23 @@ export function evaluate(dataDir) {
         tier: "personal",
         featureCount,
         featureCap: q.hard,
+        capStartDate,
         warn: true,
         message:
-          `You're at ${featureCount} of ${q.hard} free features — writes freeze at ${q.hard}. ` +
+          `You're at ${featureCount} of ${q.hard} free features created since ${capStartDate} — writes freeze at ${q.hard}. ` +
+          `(Features created before ${capStartDate} are grandfathered and don't count.) ` +
           `Grab a license (US$${PRICE_PER_SEAT_YEAR_USD}/seat/yr) at ${CHECKOUT_URL} to keep going uninterrupted.`,
       };
     }
-    return { status: "personal", configured: true, allowWrites: true, tier: "personal", featureCount, featureCap: q.hard };
+    return {
+      status: "personal",
+      configured: true,
+      allowWrites: true,
+      tier: "personal",
+      featureCount,
+      featureCap: q.hard,
+      capStartDate,
+    };
   }
 
   if (type === "public") {
