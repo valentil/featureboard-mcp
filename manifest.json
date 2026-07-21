@@ -43,6 +43,10 @@
       "description": "Return the FeatureBoard board UI as a self-contained HTML document, ready to render as a Cowork artifact. This is THE way to satisfy any natural-language request to see the board — \"open/show the board\", \"show the featureboard\", \"what's on my plate\", \"how are we looking\", \"give me a status\", \"show velocity/analytics\". Do NOT hand-write your own board: take the returned `html`, write it to a file, and pass it to create_artifact (use artifact id \"featureboard-board\"; if a board artifact is already open, reuse it via update_artifact instead of creating a duplicate). Use the `mcp_tools` array in this response VERBATIM as the artifact's mcp_tools (do not hand-pick tools from memory — the board's buttons and analytics dashboard call back into exactly these tools, and any you omit will fail with \"not in this artifact's mcp_tools allowlist\")."
     },
     {
+      "name": "get_rag_explorer",
+      "description": "Return the Research RAG Explorer UI as a self-contained HTML document, ready to render as a Cowork artifact — the visual front door to the local research RAG (FBMCPF-263/264). It lets the user browse a board's kb/ docs (including per-ticket research briefs), add new docs (add_kb_doc), and query the BM25 index (rag_search over kb + repo docs/ + Done-ticket summaries, with a search_kb fallback). Use this for natural-language asks like \"show/open the RAG\", \"what's in the knowledge base\", \"let me query the research index\". Do NOT hand-write your own explorer: take the returned `html`, write it to a file, and pass it to create_artifact (use artifact id \"featureboard-rag-explorer\"; if one is already open, reuse it via update_artifact). Use the `mcp_tools` array in this response VERBATIM as the artifact's mcp_tools — any tool you omit fails with \"not in this artifact's mcp_tools allowlist\"."
+    },
+    {
       "name": "create_project",
       "description": "Create a new board folder with empty featurelist.md and buglist.md. Returns the derived ticket prefix."
     },

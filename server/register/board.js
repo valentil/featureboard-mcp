@@ -1,6 +1,6 @@
 // Auto-extracted from server/index.js (FBMCPF-224). Registration blocks moved verbatim.
 export function registerBoardTools(server, ctx) {
-  const { BOARD_HTML_PATH, Board, StatusEnum, applyTriage, autoAssignSprintFields, blendStatus, compactView, completedAtForTask, computeWaves, createFeedbackTickets, estimateTicketMinutes, evaluateRules, extractBoardToolNames, fail, fullView, getBoard, getGlobalConfig, isBlocked, meta, notifySlack, parseFeedback, parseImport, parsePmImport, readFileSync, sprintOfTask, suggestModel, ticketsWithUnresolvedReviews, tryTool, withOrchestrationLabels, writeTool, z } = ctx;
+  const { BOARD_HTML_PATH, RAG_EXPLORER_HTML_PATH, Board, StatusEnum, applyTriage, autoAssignSprintFields, blendStatus, compactView, completedAtForTask, computeWaves, createFeedbackTickets, estimateTicketMinutes, evaluateRules, extractBoardToolNames, fail, fullView, getBoard, getGlobalConfig, isBlocked, meta, notifySlack, parseFeedback, parseImport, parsePmImport, readFileSync, sprintOfTask, suggestModel, ticketsWithUnresolvedReviews, tryTool, withOrchestrationLabels, writeTool, z } = ctx;
 
 // projects -----------------------------------------------------------------
 
@@ -43,6 +43,40 @@ server.registerTool(
         "Write `html` to a file, then call create_artifact with id \"featureboard-board\" " +
         "(or update_artifact if a board artifact is already open), passing this response's `mcp_tools` array verbatim " +
         "as the artifact's mcp_tools param so the board's buttons and analytics can call back into this server.",
+      html,
+    };
+  })
+);
+
+server.registerTool(
+  "get_rag_explorer",
+  {
+    title: "Open the research RAG explorer (UI)",
+    description:
+      "Return the Research RAG Explorer UI as a self-contained HTML document, ready to render as a Cowork artifact — " +
+      "the visual front door to the local research RAG (FBMCPF-263/264). It lets the user browse a board's kb/ docs " +
+      "(including per-ticket research briefs), add new docs (add_kb_doc), and query the BM25 index (rag_search over kb + " +
+      "repo docs/ + Done-ticket summaries, with a search_kb fallback). Use this for natural-language asks like " +
+      "\"show/open the RAG\", \"what's in the knowledge base\", \"let me query the research index\". Do NOT hand-write " +
+      "your own explorer: take the returned `html`, write it to a file, and pass it to create_artifact (use artifact id " +
+      "\"featureboard-rag-explorer\"; if one is already open, reuse it via update_artifact). Use the `mcp_tools` array in " +
+      "this response VERBATIM as the artifact's mcp_tools — any tool you omit fails with \"not in this artifact's " +
+      "mcp_tools allowlist\".",
+    inputSchema: {},
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(() => {
+    const html = readFileSync(RAG_EXPLORER_HTML_PATH, "utf8");
+    const mcp_tools = extractBoardToolNames(html).map((name) => "mcp__FeatureBoard__" + name);
+    return {
+      artifactId: "featureboard-rag-explorer",
+      filename: "rag-explorer.html",
+      bytes: Buffer.byteLength(html, "utf8"),
+      mcp_tools,
+      render:
+        "Write `html` to a file, then call create_artifact with id \"featureboard-rag-explorer\" " +
+        "(or update_artifact if it is already open), passing this response's `mcp_tools` array verbatim " +
+        "as the artifact's mcp_tools param so the explorer's panels can call back into this server.",
       html,
     };
   })

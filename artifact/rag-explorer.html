@@ -1,0 +1,424 @@
+<!doctype html>
+<script type="application/json" id="cowork-artifact-meta">
+{
+  "name": "FeatureBoard Research RAG Explorer",
+  "schemaVersion": 1,
+  "description": "Explorer for the local research RAG behind FeatureBoard's research-on-intake: browse the knowledge base (including per-ticket research briefs), add new docs, and query the BM25 retrieval index — all wired live to the FeatureBoard MCP via callMcpTool.",
+  "mcpTools": [
+    "mcp__FeatureBoard__list_projects",
+    "mcp__FeatureBoard__list_kb_docs",
+    "mcp__FeatureBoard__get_kb_doc",
+    "mcp__FeatureBoard__add_kb_doc",
+    "mcp__FeatureBoard__search_kb",
+    "mcp__FeatureBoard__rag_search"
+  ]
+}
+</script>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Research RAG Explorer — FeatureBoard</title>
+<style>
+:root{
+  --bg:#0b1220; --bg2:#101a2e; --card:#152238; --line:#23324d;
+  --ink:#e8eefb; --dim:#8fa1bf; --cyan:#39d0ff; --cyan2:#0ea5cf;
+  --green:#34d399; --amber:#fbbf24; --red:#f87171; --violet:#a78bfa;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+[data-theme="light"]{
+  --bg:#f4f7fc; --bg2:#ffffff; --card:#ffffff; --line:#dbe4f0;
+  --ink:#16233a; --dim:#5b6b85; --cyan:#0284c7; --cyan2:#0369a1;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{position:sticky;top:0;z-index:5;display:flex;gap:10px;align-items:center;flex-wrap:wrap;
+  padding:12px 18px;background:var(--bg2);border-bottom:1px solid var(--line)}
+header h1{font-size:16px;margin:0;letter-spacing:.2px}
+header h1 small{color:var(--dim);font-weight:400}
+.spacer{flex:1}
+select,input[type=text],textarea{background:var(--card);color:var(--ink);border:1px solid var(--line);
+  border-radius:8px;padding:7px 10px;font:inherit;outline:none}
+select:focus,input:focus,textarea:focus{border-color:var(--cyan)}
+button{background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:8px;
+  padding:7px 12px;font:inherit;cursor:pointer}
+button:hover{border-color:var(--cyan)}
+button.primary{background:var(--cyan);border-color:var(--cyan);color:#04121c;font-weight:600}
+button.primary:hover{background:var(--cyan2);border-color:var(--cyan2)}
+button:disabled{opacity:.5;cursor:default}
+.pill{font-size:11px;padding:2px 9px;border-radius:99px;border:1px solid var(--line);color:var(--dim);white-space:nowrap}
+.pill.ok{color:var(--green);border-color:var(--green)}
+.pill.warn{color:var(--amber);border-color:var(--amber)}
+.tabs{display:flex;gap:4px;padding:10px 18px 0}
+.tabs button{border-radius:8px 8px 0 0;border-bottom:none;color:var(--dim)}
+.tabs button.active{color:var(--ink);border-color:var(--cyan);background:var(--card)}
+main{padding:16px 18px;max-width:1060px;margin:0 auto}
+.note{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--cyan);
+  border-radius:8px;padding:10px 14px;color:var(--dim);margin-bottom:14px}
+.note b{color:var(--ink)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;cursor:pointer;
+  display:flex;flex-direction:column;gap:6px;transition:border-color .12s}
+.card:hover{border-color:var(--cyan)}
+.card h3{margin:0;font-size:13.5px}
+.card .meta{display:flex;gap:8px;align-items:center;font-size:11px;color:var(--dim)}
+.card .ex{color:var(--dim);font-size:12px;max-height:54px;overflow:hidden}
+.badge{font-size:10px;padding:1px 7px;border-radius:99px;font-weight:600}
+.badge.research{background:rgba(167,139,250,.16);color:var(--violet)}
+.badge.kb{background:rgba(57,208,255,.14);color:var(--cyan)}
+.badge.docs{background:rgba(52,211,153,.15);color:var(--green)}
+.badge.ticket{background:rgba(251,191,36,.15);color:var(--amber)}
+.empty{color:var(--dim);text-align:center;padding:40px 0}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+/* results */
+.res{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:10px}
+.res .top{display:flex;gap:8px;align-items:center;margin-bottom:6px;flex-wrap:wrap}
+.res .src{font-family:var(--mono);font-size:11.5px;color:var(--cyan);cursor:pointer}
+.res .src:hover{text-decoration:underline}
+.res .head{color:var(--dim);font-size:11.5px}
+.res .txt{white-space:pre-wrap;font-size:12.5px}
+.res mark{background:rgba(57,208,255,.25);color:inherit;border-radius:3px;padding:0 1px}
+.scorebar{height:4px;border-radius:2px;background:var(--line);flex:0 0 90px;overflow:hidden}
+.scorebar i{display:block;height:100%;background:var(--cyan)}
+.score{font-family:var(--mono);font-size:11px;color:var(--dim)}
+/* doc viewer */
+#viewer{position:fixed;inset:0;background:rgba(4,10,20,.6);display:none;z-index:20;padding:4vh 4vw}
+#viewer.open{display:flex}
+#viewer .panel{background:var(--bg2);border:1px solid var(--line);border-radius:12px;flex:1;max-width:900px;
+  margin:0 auto;display:flex;flex-direction:column;overflow:hidden}
+#viewer .phead{display:flex;gap:10px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line)}
+#viewer .pbody{padding:16px 22px;overflow:auto}
+.md h1,.md h2,.md h3{margin:.9em 0 .35em;line-height:1.25}
+.md h1{font-size:19px}.md h2{font-size:16px}.md h3{font-size:14px}
+.md p{margin:.5em 0}
+.md code{font-family:var(--mono);font-size:12px;background:var(--card);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.md pre{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 12px;overflow:auto}
+.md pre code{border:none;background:none;padding:0}
+.md ul{padding-left:22px}
+.md a{color:var(--cyan)}
+.md blockquote{border-left:3px solid var(--line);margin:.5em 0;padding:2px 12px;color:var(--dim)}
+/* add form */
+form.add{display:flex;flex-direction:column;gap:10px;max-width:820px}
+form.add textarea{min-height:280px;font-family:var(--mono);font-size:12.5px}
+#toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(80px);opacity:0;
+  background:var(--card);border:1px solid var(--cyan);color:var(--ink);padding:9px 18px;border-radius:9px;
+  transition:all .2s;z-index:30;max-width:80vw}
+#toast.show{transform:translateX(-50%);opacity:1}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--cyan);
+  border-radius:50%;animation:sp .8s linear infinite;vertical-align:-2px}
+@keyframes sp{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body data-theme="dark">
+<header>
+  <h1>🔎 Research RAG Explorer <small>— FeatureBoard knowledge base + retrieval</small></h1>
+  <div class="spacer"></div>
+  <select id="project" title="Board / project"></select>
+  <span id="cap" class="pill">checking…</span>
+  <button id="themeBtn" title="Toggle theme">☀️</button>
+</header>
+
+<div class="tabs">
+  <button id="tab-contents" class="active">📚 Contents</button>
+  <button id="tab-query">🔍 Query</button>
+  <button id="tab-add">➕ Add data</button>
+</div>
+
+<main>
+  <section id="pane-contents">
+    <div class="note" id="corpusNote">
+      <b>What this RAG holds:</b> the docs below are this board's <b>kb/</b> knowledge base — including the
+      <span class="badge research">research brief</span> docs written per ticket by research-on-intake.
+      The full retrieval index (BM25, local, zero-token) also covers the code repo's <b>docs/*.md + README</b>
+      and every <b>Done ticket's title + completion summary</b>; those two sources are queryable from the
+      🔍 Query tab but only kb/ docs are editable here.
+    </div>
+    <div class="row" style="margin-bottom:12px">
+      <input type="text" id="filter" placeholder="Filter docs by title/slug…" style="flex:1;min-width:220px">
+      <button id="reload">↻ Refresh</button>
+      <span class="pill" id="docCount"></span>
+    </div>
+    <div id="docs" class="grid"></div>
+    <div id="docsEmpty" class="empty" style="display:none">No kb docs on this board yet — add one in ➕ Add data.</div>
+  </section>
+
+  <section id="pane-query" style="display:none">
+    <div class="note">Retrieval is <b>keyword (BM25)</b>, not semantic — query with the vocabulary the docs would use.
+      <span id="qMode"></span></div>
+    <div class="row" style="margin-bottom:14px">
+      <input type="text" id="q" placeholder="e.g. license revocation webhook, worktree sync caveat, pricing…" style="flex:1;min-width:260px">
+      <label class="pill">top-k <input type="text" id="k" value="8" style="width:34px;padding:2px 6px;margin-left:4px"></label>
+      <button class="primary" id="go">Search</button>
+    </div>
+    <div id="results"></div>
+  </section>
+
+  <section id="pane-add" style="display:none">
+    <div class="note">Docs are stored as <b>kb/&lt;slugified-title&gt;.md</b> and get keyword-matched into future
+      work packets and research briefs automatically. Re-using an <b>existing title updates that doc in place</b>.</div>
+    <form class="add" id="addForm">
+      <input type="text" id="addTitle" placeholder="Title (e.g. 'Polar webhook gotchas')" required>
+      <textarea id="addBody" placeholder="Markdown body… findings, sources, gotchas, decisions." required></textarea>
+      <div class="row">
+        <button type="submit" class="primary" id="addBtn">Save to knowledge base</button>
+        <span id="addHint" class="pill"></span>
+      </div>
+    </form>
+  </section>
+</main>
+
+<div id="viewer"><div class="panel">
+  <div class="phead">
+    <b id="vTitle"></b><span id="vBadge"></span>
+    <div class="spacer"></div>
+    <span class="pill" id="vMeta"></span>
+    <button onclick="closeViewer()">✕</button>
+  </div>
+  <div class="pbody md" id="vBody"></div>
+</div></div>
+
+<div id="toast"></div>
+
+<script>
+"use strict";
+const FB = "mcp__FeatureBoard__";
+const $ = (s) => document.querySelector(s);
+let state = { project: "FeatureBoardMCP", docs: [], ragAvailable: null, theme: "dark" };
+
+async function call(tool, args = {}) {
+  const r = await window.cowork.callMcpTool(FB + tool, args);
+  const text = r && r.content && r.content[0] && r.content[0].text;
+  if (r && r.isError) { const e = new Error(text || "Tool error"); e.tool = tool; throw e; }
+  if (r && r.structuredContent !== undefined && r.structuredContent !== null) return r.structuredContent;
+  try { return JSON.parse(text); } catch { return text; }
+}
+
+function toast(msg) {
+  const t = $("#toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove("show"), 3500);
+}
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+/* ---------- tiny markdown renderer (headings, code, lists, links, bold/italic) ---------- */
+function md(src) {
+  const lines = String(src || "").split(/\r?\n/);
+  let out = [], inCode = false, inList = false;
+  const inline = (s) => esc(s)
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+    .replace(/(^|\W)\*([^*\n]+)\*(?=\W|$)/g, "$1<i>$2</i>")
+    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  for (const raw of lines) {
+    if (/^```/.test(raw)) {
+      if (inList) { out.push("</ul>"); inList = false; }
+      inCode = !inCode; out.push(inCode ? "<pre><code>" : "</code></pre>"); continue;
+    }
+    if (inCode) { out.push(esc(raw) + "\n"); continue; }
+    const h = raw.match(/^(#{1,3})\s+(.*)$/);
+    if (h) { if (inList) { out.push("</ul>"); inList = false; } out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`); continue; }
+    if (/^\s*[-*]\s+/.test(raw)) {
+      if (!inList) { out.push("<ul>"); inList = true; }
+      out.push("<li>" + inline(raw.replace(/^\s*[-*]\s+/, "")) + "</li>"); continue;
+    }
+    if (inList) { out.push("</ul>"); inList = false; }
+    if (/^\s*>\s?/.test(raw)) { out.push("<blockquote>" + inline(raw.replace(/^\s*>\s?/, "")) + "</blockquote>"); continue; }
+    if (raw.trim() === "") { out.push(""); continue; }
+    out.push("<p>" + inline(raw) + "</p>");
+  }
+  if (inList) out.push("</ul>");
+  if (inCode) out.push("</code></pre>");
+  return out.join("\n");
+}
+
+/* ---------- header: projects, capability, theme ---------- */
+async function loadProjects() {
+  try {
+    const r = await call("list_projects");
+    const sel = $("#project"); sel.innerHTML = "";
+    (r.projects || []).forEach((p) => {
+      const o = document.createElement("option");
+      o.value = p.name; o.textContent = p.name;
+      if (p.name === state.project) o.selected = true;
+      sel.appendChild(o);
+    });
+    if (!(r.projects || []).some((p) => p.name === state.project) && r.projects && r.projects[0]) {
+      state.project = r.projects[0].name;
+    }
+  } catch (e) {
+    toast("Can't reach FeatureBoard — grant this artifact access to the FeatureBoard connector (artifact sidebar), then reload.");
+    $("#cap").textContent = "no connector access"; $("#cap").className = "pill warn";
+    throw e;
+  }
+}
+
+async function probeRag() {
+  try {
+    await call("rag_search", { project: state.project, query: "probe", k: 1 });
+    state.ragAvailable = true;
+    $("#cap").textContent = "full RAG (kb + docs + tickets)"; $("#cap").className = "pill ok";
+    $("#qMode").innerHTML = "Querying the <b>full BM25 index</b>: kb docs, repo docs/ + README, Done-ticket summaries.";
+  } catch {
+    state.ragAvailable = false;
+    $("#cap").textContent = "kb-only (server pre-0.7)"; $("#cap").className = "pill warn";
+    $("#qMode").innerHTML = "<b>rag_search isn't exposed by the running server yet</b> (needs the 0.7.0 build + a Claude Desktop restart) — falling back to kb-doc keyword search only.";
+  }
+}
+
+/* ---------- contents ---------- */
+async function loadDocs() {
+  $("#docs").innerHTML = '<div class="empty"><span class="spin"></span></div>';
+  try {
+    const r = await call("list_kb_docs", { project: state.project });
+    state.docs = r.docs || r.kbDocs || (Array.isArray(r) ? r : []) || [];
+    renderDocs();
+  } catch (e) { $("#docs").innerHTML = ""; toast("list_kb_docs failed: " + e.message); }
+}
+function renderDocs() {
+  const f = ($("#filter").value || "").toLowerCase();
+  const docs = state.docs.filter((d) =>
+    !f || (d.title || "").toLowerCase().includes(f) || (d.slug || "").toLowerCase().includes(f));
+  $("#docCount").textContent = docs.length + " doc" + (docs.length === 1 ? "" : "s");
+  const box = $("#docs"); box.innerHTML = "";
+  $("#docsEmpty").style.display = docs.length ? "none" : "";
+  docs.forEach((d) => {
+    const isResearch = /^research[-/]/.test(d.slug || "");
+    const el = document.createElement("div");
+    el.className = "card";
+    el.innerHTML = `
+      <h3>${esc(d.title || d.slug)}</h3>
+      <div class="meta">
+        <span class="badge ${isResearch ? "research" : "kb"}">${isResearch ? "research brief" : "kb doc"}</span>
+        <span>${esc((d.updatedAt || "").slice(0, 16).replace("T", " "))}</span>
+        <span>${d.size ? Math.round(d.size / 100) / 10 + " KB" : ""}</span>
+      </div>
+      <div class="ex">${esc(d.excerpt || "")}</div>`;
+    el.addEventListener("click", () => openDoc(d));
+    box.appendChild(el);
+  });
+}
+async function openDoc(d) {
+  $("#vTitle").textContent = d.title || d.slug;
+  $("#vBadge").innerHTML = /^research[-/]/.test(d.slug || "")
+    ? ' <span class="badge research">research brief</span>' : ' <span class="badge kb">kb doc</span>';
+  $("#vMeta").textContent = "kb/" + (d.slug || "") + ".md";
+  $("#vBody").innerHTML = '<span class="spin"></span>';
+  $("#viewer").classList.add("open");
+  try {
+    const r = await call("get_kb_doc", { project: state.project, slug: d.slug || d.title });
+    const content = (r && (r.content || r.markdown || r.body)) || (typeof r === "string" ? r : JSON.stringify(r, null, 2));
+    $("#vBody").innerHTML = md(content);
+  } catch (e) { $("#vBody").textContent = "Failed to load: " + e.message; }
+}
+function closeViewer(){ $("#viewer").classList.remove("open"); }
+$("#viewer").addEventListener("click", (e) => { if (e.target.id === "viewer") closeViewer(); });
+
+/* ---------- query ---------- */
+function badgeFor(source) {
+  if (/^kb\/research[-/]/.test(source)) return '<span class="badge research">research brief</span>';
+  if (/^kb\//.test(source)) return '<span class="badge kb">kb doc</span>';
+  if (/\.md$/i.test(source)) return '<span class="badge docs">repo doc</span>';
+  return '<span class="badge ticket">done ticket</span>';
+}
+function highlight(text, terms) {
+  let out = esc(text);
+  terms.forEach((t) => { if (t.length > 1) out = out.replace(new RegExp("(" + t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")", "gi"), "<mark>$1</mark>"); });
+  return out;
+}
+async function runQuery() {
+  const q = ($("#q").value || "").trim();
+  if (!q) return;
+  const k = Math.max(1, Math.min(20, parseInt($("#k").value, 10) || 8));
+  const box = $("#results"); box.innerHTML = '<div class="empty"><span class="spin"></span></div>';
+  const terms = q.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  try {
+    let items = [];
+    if (state.ragAvailable) {
+      const r = await call("rag_search", { project: state.project, query: q, k });
+      const max = Math.max(0.0001, ...(r.results || []).map((x) => x.score || 0));
+      items = (r.results || []).map((x) => ({
+        source: x.source, heading: x.heading, text: x.text, score: x.score, pct: Math.round(100 * (x.score || 0) / max),
+      }));
+    } else {
+      const r = await call("search_kb", { project: state.project, query: q, limit: k });
+      items = (r.matches || r.results || []).map((x) => ({
+        source: x.path || ("kb/" + (x.slug || "")), heading: x.title || x.slug, text: x.excerpt || "", score: x.score, pct: null,
+      }));
+    }
+    box.innerHTML = "";
+    if (!items.length) { box.innerHTML = '<div class="empty">No hits. BM25 is keyword-based — try the words the doc itself would use.</div>'; return; }
+    items.forEach((x) => {
+      const slugM = String(x.source || "").match(/^kb\/(.+)$/);
+      const el = document.createElement("div");
+      el.className = "res";
+      el.innerHTML = `
+        <div class="top">${badgeFor(x.source || "")}
+          <span class="src" ${slugM ? 'data-slug="' + esc(slugM[1]) + '"' : ""}>${esc(x.source || "")}</span>
+          <span class="head">${esc(x.heading || "")}</span>
+          <div class="spacer" style="flex:1"></div>
+          ${x.pct != null ? '<div class="scorebar"><i style="width:' + x.pct + '%"></i></div>' : ""}
+          ${x.score != null ? '<span class="score">' + x.score + "</span>" : ""}
+        </div>
+        <div class="txt">${highlight(x.text || "", terms)}</div>`;
+      const src = el.querySelector(".src[data-slug]");
+      if (src) src.addEventListener("click", () => openDoc({ slug: src.dataset.slug, title: src.dataset.slug }));
+      box.appendChild(el);
+    });
+  } catch (e) { box.innerHTML = ""; toast("Search failed: " + e.message); }
+}
+$("#go").addEventListener("click", runQuery);
+$("#q").addEventListener("keydown", (e) => { if (e.key === "Enter") runQuery(); });
+
+/* ---------- add ---------- */
+$("#addTitle").addEventListener("input", () => {
+  const t = $("#addTitle").value.trim();
+  const slug = t.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  const exists = state.docs.some((d) => d.slug === slug);
+  $("#addHint").textContent = t ? ("→ kb/" + slug + ".md" + (exists ? " (updates existing doc)" : " (new)")) : "";
+});
+$("#addForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const title = $("#addTitle").value.trim(), content = $("#addBody").value;
+  if (!title || !content.trim()) return;
+  $("#addBtn").disabled = true;
+  try {
+    await call("add_kb_doc", { project: state.project, title, content });
+    toast("Saved to the knowledge base ✓ — it's now retrievable by research and work packets.");
+    $("#addTitle").value = ""; $("#addBody").value = ""; $("#addHint").textContent = "";
+    await loadDocs();
+  } catch (err) { toast("Save failed: " + err.message); }
+  $("#addBtn").disabled = false;
+});
+
+/* ---------- tabs / header wiring ---------- */
+const panes = { contents: "#pane-contents", query: "#pane-query", add: "#pane-add" };
+Object.keys(panes).forEach((k) => {
+  $("#tab-" + k).addEventListener("click", () => {
+    Object.keys(panes).forEach((j) => {
+      $(panes[j]).style.display = j === k ? "" : "none";
+      $("#tab-" + j).classList.toggle("active", j === k);
+    });
+    if (k === "query") setTimeout(() => $("#q").focus(), 50);
+  });
+});
+$("#filter").addEventListener("input", renderDocs);
+$("#reload").addEventListener("click", loadDocs);
+$("#project").addEventListener("change", async () => {
+  state.project = $("#project").value;
+  await Promise.all([loadDocs(), probeRag()]);
+});
+$("#themeBtn").addEventListener("click", () => {
+  state.theme = state.theme === "dark" ? "light" : "dark";
+  document.body.dataset.theme = state.theme;
+  $("#themeBtn").textContent = state.theme === "dark" ? "☀️" : "🌙";
+});
+
+/* ---------- boot ---------- */
+(async () => {
+  try {
+    await loadProjects();
+    await Promise.all([loadDocs(), probeRag()]);
+  } catch { /* connector not granted yet — toasts already shown */ }
+})();
+</script>
+</body>
+</html>
