@@ -665,11 +665,18 @@ server.registerTool(
   {
     title: "Reconcile logged vs git churn",
     description:
-      "For Done tickets with tagged commits, compare the additions/deletions logged in the work log against the git-actual numstat of their commits. Git-actual comes from recorded commit events (FBMCPF-188) or, failing that, a live git log --grep + numstat cached by hash. Reports per-ticket loggedAdd/loggedDel vs gitAdd/gitDel with a drift ratio (worst first), plus an overall churnAccuracy also surfaced on get_health.",
-    inputSchema: { project: z.string() },
+      "For Done tickets with tagged commits, compare the additions/deletions logged in the work log against the git-actual numstat of their commits. Git-actual comes from recorded commit events (FBMCPF-188) or, failing that, a live git log --grep + numstat cached by hash. Reports per-ticket loggedAdd/loggedDel vs gitAdd/gitDel with a drift ratio (worst first), plus an overall churnAccuracy also surfaced on get_health. Paginated (FBMCPB-42): returns the worst-drift page by default (limit/offset, mirroring list_tasks) so a big board stays inside the token budget — the `totals`/churnAccuracy rollup is always over ALL reconciled tickets. Pass driftThreshold to omit tickets whose drift ratio is below it, or full:true for every row.",
+    inputSchema: {
+      project: z.string(),
+      limit: z.number().optional().describe("Max tickets in the returned page (default 25, worst drift first)."),
+      offset: z.number().optional().describe("Page offset into the worst-first list."),
+      driftThreshold: z.number().optional().describe("Only return tickets with driftRatio >= this (e.g. 0.2). Totals still cover all tickets."),
+      full: z.boolean().optional().describe("Return every reconciled ticket (ignores limit/offset) — may be large."),
+    },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
-  tryTool(({ project }) => reconcileChurn(getBoard(), project))
+  tryTool(({ project, limit, offset, driftThreshold, full }) =>
+    reconcileChurn(getBoard(), project, { limit, offset, driftThreshold, full }))
 );
 
 // FBMCPF-267: voice_lint — score text for AI-writing tells (research-backed

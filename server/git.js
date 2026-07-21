@@ -902,7 +902,7 @@ export function numstatForCommit(exec, repo, hash) {
  * normal board. `driftRatio` = |loggedTotal - gitTotal| / gitTotal per ticket;
  * `churnAccuracy` = round(100 * max(0, 1 - Σ|drift| / Σ gitTotal)).
  */
-export function reconcileChurn(board, project, { exec = defaultExec, allowGit = true } = {}) {
+export function reconcileChurn(board, project, { exec = defaultExec, allowGit = true, limit = 25, offset = 0, driftThreshold = null, full = false } = {}) {
   const doneTasks = board.listTasks(project, {}).filter((t) => t.status === "Done");
 
   const workByTicket = new Map();
@@ -973,18 +973,40 @@ export function reconcileChurn(board, project, { exec = defaultExec, allowGit = 
   const churnAccuracy = sumGit > 0 ? Math.round(100 * Math.max(0, 1 - sumAbsDrift / sumGit)) : null;
   const driftPct = sumGit > 0 ? Math.round((sumAbsDrift / sumGit) * 100) : null;
 
+  const totals = {
+    loggedAdd: rows.reduce((s, r) => s + r.loggedAdd, 0),
+    loggedDel: rows.reduce((s, r) => s + r.loggedDel, 0),
+    gitAdd: rows.reduce((s, r) => s + r.gitAdd, 0),
+    gitDel: rows.reduce((s, r) => s + r.gitDel, 0),
+    driftPct,
+    churnAccuracy,
+  };
+
+  // FBMCPB-42: a full-board reconcile can be thousands of rows (53k+ chars on a
+  // 350-ticket board), which blows the tool token budget and forces a spill to
+  // file — the steering REVIEW pass then loses the drift signal entirely.
+  // Default to a compact, worst-drift-first page (mirrors list_tasks
+  // pagination). `totals` (incl. churnAccuracy, which get_health reads) are
+  // always computed over EVERY reconciled ticket, never just the returned page,
+  // so the rollup is unaffected by limit/offset/driftThreshold.
+  const lim = Math.max(1, Math.floor(limit) || 25);
+  const off = Math.max(0, Math.floor(offset) || 0);
+  const ranked = driftThreshold != null
+    ? rows.filter((r) => (r.driftRatio ?? 0) >= driftThreshold)
+    : rows;
+  const page = full ? ranked : ranked.slice(off, off + lim);
+
   return {
     project,
-    count: rows.length,
-    tickets: rows,
-    totals: {
-      loggedAdd: rows.reduce((s, r) => s + r.loggedAdd, 0),
-      loggedDel: rows.reduce((s, r) => s + r.loggedDel, 0),
-      gitAdd: rows.reduce((s, r) => s + r.gitAdd, 0),
-      gitDel: rows.reduce((s, r) => s + r.gitDel, 0),
-      driftPct,
-      churnAccuracy,
-    },
+    count: rows.length,       // total Done tickets reconciled (all rows)
+    matched: ranked.length,   // after driftThreshold (=== count when unset)
+    returned: page.length,
+    offset: full ? 0 : off,
+    limit: full ? null : lim,
+    truncated: !full && off + page.length < ranked.length,
+    driftThreshold: driftThreshold != null ? driftThreshold : null,
+    tickets: page,
+    totals,
   };
 }
 

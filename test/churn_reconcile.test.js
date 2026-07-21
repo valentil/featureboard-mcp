@@ -103,3 +103,57 @@ test("grep+numstat fallback (allowGit) via injected exec when no recorded events
   const noGit = reconcileChurn(b, "Proj", { exec, allowGit: false });
   assert.equal(noGit.count, 0, "allowGit:false must not shell out; the grep-only ticket is excluded");
 });
+
+// FBMCPB-42 — reconcile output is paginated (worst drift first) so a big board
+// stays inside the token budget, without distorting the totals rollup.
+function reconciled(b, title, { logAdd, logDel, gitAdd, gitDel }) {
+  const tk = done(b, title);
+  logWork(b, "Proj", { ticket: tk, summary: "work", additions: logAdd, deletions: logDel });
+  appendEvent(b, "Proj", { ticket: tk, field: "commit", to: tk, hash: tk + "hash", shortHash: tk, additions: gitAdd, deletions: gitDel, source: "commit_feature" });
+  return tk;
+}
+
+test("FBMCPB-42: default page is worst-drift-first and capped by limit; totals cover ALL tickets", () => {
+  const b = tmpBoard();
+  const a = reconciled(b, "Mid drift", { logAdd: 100, logDel: 10, gitAdd: 80, gitDel: 6 });   // |110-86|/86 ≈ 0.279
+  const cln = reconciled(b, "Clean", { logAdd: 40, logDel: 4, gitAdd: 40, gitDel: 4 });        // 0
+  const worst = reconciled(b, "Worst drift", { logAdd: 200, logDel: 20, gitAdd: 100, gitDel: 10 }); // 1.0
+
+  const all = reconcileChurn(b, "Proj");
+  assert.equal(all.count, 3);
+  assert.equal(all.matched, 3);
+  assert.equal(all.returned, 3);
+  assert.deepEqual(all.tickets.map((t) => t.ticket), [worst, a, cln], "worst drift first");
+  assert.equal(all.truncated, false);
+
+  // A tiny limit pages the list but leaves the rollup intact.
+  const first = reconcileChurn(b, "Proj", { limit: 1 });
+  assert.equal(first.returned, 1);
+  assert.equal(first.matched, 3);
+  assert.equal(first.truncated, true);
+  assert.equal(first.tickets[0].ticket, worst, "the single returned row is the worst offender");
+  assert.equal(first.totals.churnAccuracy, all.totals.churnAccuracy, "totals must not depend on the page size");
+  assert.deepEqual(first.totals, all.totals);
+
+  const second = reconcileChurn(b, "Proj", { limit: 1, offset: 1 });
+  assert.equal(second.tickets[0].ticket, a, "offset walks down the worst-first list");
+  assert.equal(second.truncated, true);
+});
+
+test("FBMCPB-42: driftThreshold omits clean tickets from the page but not from totals; full:true returns everything", () => {
+  const b = tmpBoard();
+  reconciled(b, "Mid", { logAdd: 100, logDel: 10, gitAdd: 80, gitDel: 6 });   // ≈0.279
+  const cln = reconciled(b, "Clean", { logAdd: 40, logDel: 4, gitAdd: 40, gitDel: 4 }); // 0
+  reconciled(b, "Worst", { logAdd: 200, logDel: 20, gitAdd: 100, gitDel: 10 }); // 1.0
+
+  const base = reconcileChurn(b, "Proj");
+  const filtered = reconcileChurn(b, "Proj", { driftThreshold: 0.2 });
+  assert.equal(filtered.matched, 2, "only the two drifting tickets match");
+  assert.ok(!filtered.tickets.some((t) => t.ticket === cln), "the clean ticket is omitted from the page");
+  assert.equal(filtered.totals.churnAccuracy, base.totals.churnAccuracy, "threshold must not change the rollup");
+  assert.equal(filtered.count, 3, "count still reflects every reconciled ticket");
+
+  const full = reconcileChurn(b, "Proj", { limit: 1, full: true });
+  assert.equal(full.returned, 3, "full:true ignores limit");
+  assert.equal(full.truncated, false);
+});
