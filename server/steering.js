@@ -43,9 +43,14 @@ export function readSteeringState(board, project) {
     return {
       lastSteeringAt: typeof s.lastSteeringAt === "string" ? s.lastSteeringAt : null,
       reviewedTickets: Array.isArray(s.reviewedTickets) ? s.reviewedTickets : [],
+      // FBMCPB-45: consecutive passes whose ONLY actionable content was
+      // open-ended goal research (no concrete review/tighten work). Bounds the
+      // otherwise-infinite research loop so the documented "two empty passes →
+      // stop" valve can actually fire.
+      goalOnlyStreak: Number.isInteger(s.goalOnlyStreak) && s.goalOnlyStreak >= 0 ? s.goalOnlyStreak : 0,
     };
   } catch {
-    return { lastSteeringAt: null, reviewedTickets: [] };
+    return { lastSteeringAt: null, reviewedTickets: [], goalOnlyStreak: 0 };
   }
 }
 
@@ -145,14 +150,35 @@ export function steerProject(board, project, { now = new Date(), dryRun = false 
     },
   ];
 
+  // FBMCPB-45: `actionable` must be able to become false so the documented
+  // "two consecutive non-actionable passes → stop" valve can fire. Concrete
+  // work (unreviewed Done tickets, cleanup/strengthen findings) is always
+  // actionable and resets the streak. An open-ended goal, on its own, is only
+  // good for ONE research wave: after that we require NEW concrete work (which
+  // surfaces as fresh review items once tickets reach Done) before steering is
+  // actionable again. Without this, any project with a goal set — which the
+  // research pass actively encourages — could never self-terminate.
+  const concrete = review.length + cleanup.length + strengthen.length > 0;
+  let goalOnlyStreak = state.goalOnlyStreak;
+  if (concrete) {
+    goalOnlyStreak = 0;
+  } else if (goal) {
+    goalOnlyStreak = state.goalOnlyStreak + 1;
+  } else {
+    goalOnlyStreak = 0;
+  }
+  // First goal-only pass (streak === 1) emits the research wave and stays
+  // actionable; subsequent consecutive goal-only passes are non-actionable.
+  const actionable = concrete || (!!goal && goalOnlyStreak <= 1);
+
   if (!dryRun) {
     writeSteeringState(board, project, {
       lastSteeringAt: now.toISOString(),
       reviewedTickets: [...new Set([...state.reviewedTickets, ...review.map((r) => r.ticket)])].slice(-500),
+      goalOnlyStreak,
     });
   }
 
-  const actionable = review.length + cleanup.length + strengthen.length > 0 || !!goal;
   return {
     project,
     steeredAt: now.toISOString(),
@@ -164,7 +190,7 @@ export function steerProject(board, project, { now = new Date(), dryRun = false 
     stopHint:
       actionable
         ? null
-        : "Nothing actionable this pass. If the NEXT steering pass is also empty, report to the user and stop — do not spin.",
+        : "Nothing actionable this pass (no new review/tighten work; the goal's research wave is already out). If the NEXT steering pass is also empty, report to the user and stop — do not spin.",
     passes,
   };
 }

@@ -69,7 +69,45 @@ test("research pass carries the goal and the polished question set", () => {
   assert.match(qs, /become the default agent-run task board/);
   assert.match(qs, /Competitor teardown/);
   assert.match(research.instruction, /add_feature per proposal/);
-  assert.equal(out.actionable, true, "a goal alone keeps steering actionable");
+  assert.equal(out.actionable, true, "a goal makes the FIRST research pass actionable");
+});
+
+test("FBMCPB-45: a goal is good for ONE research wave, then goes non-actionable until new Done work", () => {
+  const { board } = tmpBoard();
+  setProjectConfig(board, "Proj", { goal: "become the default agent-run task board" });
+
+  // Pass 1: no concrete work, goal set → emit the research wave, actionable.
+  const first = steerProject(board, "Proj", { now: new Date("2026-07-21T12:00:00Z") });
+  assert.equal(first.actionable, true, "first goal-only pass emits a research wave");
+  assert.equal(first.stopHint, null);
+  assert.equal(readSteeringState(board, "Proj").goalOnlyStreak, 1);
+
+  // Pass 2: still nothing concrete → the auto-stop valve can finally fire.
+  const second = steerProject(board, "Proj", { now: new Date("2026-07-21T13:00:00Z") });
+  assert.equal(second.actionable, false, "a goal must NOT keep steering actionable forever");
+  assert.match(second.stopHint, /do not spin/);
+  assert.equal(readSteeringState(board, "Proj").goalOnlyStreak, 2);
+
+  // New Done work appears → concrete review resets the streak, actionable again.
+  done(board, "Alpha");
+  const third = steerProject(board, "Proj", { now: new Date("2026-07-21T14:00:00Z") });
+  assert.equal(third.actionable, true, "fresh Done work makes steering actionable again");
+  assert.equal(readSteeringState(board, "Proj").goalOnlyStreak, 0);
+
+  // ...and after that wave is reviewed, one more goal-only wave, then stop again.
+  const fourth = steerProject(board, "Proj", { now: new Date("2026-07-21T15:00:00Z") });
+  assert.equal(fourth.actionable, true, "one goal-only wave allowed after the reset");
+  const fifth = steerProject(board, "Proj", { now: new Date("2026-07-21T16:00:00Z") });
+  assert.equal(fifth.actionable, false, "second consecutive goal-only pass is non-actionable");
+});
+
+test("FBMCPB-45: dryRun does not advance the goal-only streak", () => {
+  const { board } = tmpBoard();
+  setProjectConfig(board, "Proj", { goal: "ship it" });
+  steerProject(board, "Proj", { now: new Date("2026-07-21T12:00:00Z") }); // streak → 1
+  const preview = steerProject(board, "Proj", { now: new Date("2026-07-21T12:30:00Z"), dryRun: true });
+  assert.equal(preview.actionable, false, "preview reflects the would-be non-actionable pass");
+  assert.equal(readSteeringState(board, "Proj").goalOnlyStreak, 1, "dryRun must not persist streak advance");
 });
 
 test("no goal → research pass tells the agent to ask ONCE and store it", () => {
