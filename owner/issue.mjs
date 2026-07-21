@@ -33,3 +33,14 @@ export function yearsFromToday(years = 1) {
   d.setFullYear(d.getFullYear() + years);
   return d.toISOString().split("T")[0];
 }
+
+/**
+ * ISO date exactly `days` from today. Used for shorter billing cycles (e.g. monthly
+ * subscriptions): a monthly key is issued a little longer than one interval so it
+ * survives a late renewal, and each renewal's order.paid re-issues a fresh key.
+ */
+export function daysFromToday(days = 30) {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toISOString().split("T")[0];
+}
