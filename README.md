@@ -84,7 +84,10 @@ on the board, useful for keeping an eye on an unattended churn run. It also repo
 
 **Knowledge base** — `add_kb_doc` · `list_kb_docs` · `get_kb_doc` · `search_kb` (a per-project
 kb/ folder of markdown docs, beyond the scratchpad — keyword-matched into `get_work_packet`'s
-`kbMatches` automatically)
+`kbMatches` automatically). `rag_search` is the retrieval layer over kb + repo
+docs + Done-ticket summaries: BM25 always, and HYBRID (BM25 + local MiniLM embeddings via the
+optional `@xenova/transformers` dep, reciprocal-rank fusion) when installed — the ~25MB model
+downloads once on first use then runs offline forever; without it, pure lexical, zero network.
 
 **Audit timeline** — `get_ticket_history` (per-ticket chronological log: `set_status`/
 `update_task`/`assign_sprint` append status, priority, label, sprint, and due-date change events

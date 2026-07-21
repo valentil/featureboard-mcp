@@ -34,6 +34,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { embedTexts, cosine, rrfFuse, unavailableReason } from "./vectors.js";
 
 // ---------------------------------------------------------------------------
 // Tokenizer
@@ -331,6 +332,54 @@ export function ragSearch(board, project, query, opts = {}) {
     heading: r.heading,
     text: r.text,
   }));
+}
+
+/**
+ * FBMCPF-315: two-stage HYBRID retrieval. BM25 preselects a candidate pool
+ * (top max(k*8, 40)), the local embedding model (vectors.js — optional dep,
+ * model downloaded once on first use) embeds query + candidates, and
+ * reciprocal-rank fusion blends the BM25 and cosine rankings. Falls back to
+ * the plain lexical result — same shape, mode:"lexical" — whenever semantic
+ * mode is unavailable or fails; never throws for that reason.
+ *
+ * Async on purpose: only the rag_search tool calls this. Work-packet
+ * injection (getWorkPacket.ragChunks) stays on the sync lexical ragSearch.
+ */
+export async function ragSearchHybrid(board, project, query, opts = {}) {
+  const k = opts.k != null ? opts.k : 5;
+  const index = buildIndex(board, project, { codeLocation: opts.codeLocation });
+  const pool = search(index, query, Math.max(k * 8, 40), { exclude: opts.exclude });
+  const lexical = pool.slice(0, Math.max(0, k)).map((r) => ({
+    score: Math.round(r.score * 10000) / 10000,
+    source: r.source, heading: r.heading, text: r.text,
+  }));
+  if (opts.mode === "lexical" || !pool.length) {
+    return { mode: "lexical", note: opts.mode === "lexical" ? "lexical mode requested" : undefined, results: lexical };
+  }
+
+  const vecs = await embedTexts([query, ...pool.map((c) => `${c.heading} ${c.text}`)], { dataDir: board.dataDir });
+  if (!vecs) {
+    return { mode: "lexical", note: unavailableReason() || "semantic embeddings unavailable — BM25 only", results: lexical };
+  }
+  const [qVec, ...cVecs] = vecs;
+  const ids = pool.map((c, i) => `${i}`);
+  const bm25Ranking = ids; // pool is already BM25-sorted
+  const cosRanking = ids
+    .map((id, i) => ({ id, cos: cosine(qVec, cVecs[i]) }))
+    .sort((a, b) => b.cos - a.cos || a.id.localeCompare(b.id))
+    .map((x) => x.id);
+  const fused = rrfFuse([bm25Ranking, cosRanking]);
+
+  const results = fused.slice(0, Math.max(0, k)).map(({ id, score }) => {
+    const i = Number(id);
+    return {
+      score,
+      bm25: Math.round(pool[i].score * 10000) / 10000,
+      cosine: Math.round(cosine(qVec, cVecs[i]) * 10000) / 10000,
+      source: pool[i].source, heading: pool[i].heading, text: pool[i].text,
+    };
+  });
+  return { mode: "hybrid", model: "Xenova/all-MiniLM-L6-v2", results };
 }
 
 /** Test/maintenance hook: drop the in-memory index cache (all projects, or one by name). */

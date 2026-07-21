@@ -1,6 +1,6 @@
 // Auto-extracted from server/index.js (FBMCPF-224). Registration blocks moved verbatim.
 export function registerAnalyticsTools(server, ctx) {
-  const { Board, addKbDoc, agentMonitorV2, appendEvent, appendHeartbeat, applyDriftRemediation, blendStatus, driftReport, estimateTicketMinutes, existsSync, getBoard, getGitConfig, getGlobalConfig, getHistoryMap, getKbDoc, getLiveActivity, getLatestUpdate, getPricing, getVoiceProfile, lastDispatchForTicket, lintVoice, listKbDocs, listSprints, maybeLint, meta, nodePath, postProjectUpdate, predictDueDates, reconcileChurn, recordDriftScore, rollupCost, prepareResearch, ragSearch, searchKb, setSite, startDriftRun, suggestHistoricalFiles, tryTool, writeTool, z } = ctx;
+  const { Board, addKbDoc, agentMonitorV2, appendEvent, appendHeartbeat, applyDriftRemediation, blendStatus, driftReport, estimateTicketMinutes, existsSync, getBoard, getGitConfig, getGlobalConfig, getHistoryMap, getKbDoc, getLiveActivity, getLatestUpdate, getPricing, getVoiceProfile, lastDispatchForTicket, lintVoice, listKbDocs, listSprints, maybeLint, meta, nodePath, postProjectUpdate, predictDueDates, reconcileChurn, recordDriftScore, rollupCost, prepareResearch, ragSearch, ragSearchHybrid, searchKb, setSite, startDriftRun, suggestHistoricalFiles, tryTool, writeTool, z } = ctx;
 
 // analytics & metadata (v0.3) ----------------------------------------------
 
@@ -764,15 +764,16 @@ server.registerTool(
   {
     title: "Local lexical RAG search",
     description:
-      "FBMCPF-264: local lexical retrieval (BM25) over this board's KB docs (incl. research briefs), the code repo's docs/ + root README, and Done tickets' title+completionSummary — zero tokens, zero network. Returns top-k [{score, source, heading, text}]. Use it to ground research and find prior art in the repo. Honest scope: this is KEYWORD matching (shared vocabulary), not semantic/embedding search.",
+      "FBMCPF-264/315: local retrieval over this board's KB docs (incl. research briefs), the code repo's docs/ + root README, and Done tickets' title+completionSummary — zero model tokens. Two-stage HYBRID by default: BM25 preselects candidates, a LOCAL embedding model (Xenova/all-MiniLM-L6-v2 via the optional @xenova/transformers dependency; ~25MB model auto-downloaded ONCE on first semantic query, then cached and offline forever) re-ranks by cosine similarity, reciprocal-rank fusion blends the two. Response carries mode: \"hybrid\" or \"lexical\" — it falls back to pure BM25 (identical to the old behavior) whenever the optional dep isn't installed, FEATUREBOARD_NO_SEMANTIC=1, or embedding fails, with a note saying why. Pass mode:\"lexical\" to skip embeddings deliberately (deterministic/offline runs).",
     inputSchema: {
       project: z.string(),
       query: z.string().describe("What to retrieve context for."),
       k: z.coerce.number().int().min(1).max(20).optional().default(5).describe("How many chunks to return (default 5, max 20)."),
+      mode: z.enum(["hybrid", "lexical"]).optional().default("hybrid").describe("hybrid (default): BM25 + local embeddings when available. lexical: BM25 only, no model, fully deterministic."),
     },
-    annotations: { readOnlyHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: true, openWorldHint: true },
   },
-  tryTool(({ project, query, k }) => ({ results: ragSearch(getBoard(), project, query, { k }) }))
+  tryTool(async ({ project, query, k, mode }) => ragSearchHybrid(getBoard(), project, query, { k, mode }))
 );
 
 server.registerTool(

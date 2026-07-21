@@ -72,6 +72,13 @@ code repo on disk) and makes no network call.
   privacy policy; the product only ever receives the resulting license key, which is
   verified offline. Purchase records (licensee, email, key) are kept by the licensor,
   not inside your installation.
+- `rag_search` (hybrid mode, FBMCPF-315): the FIRST semantic query after installing the
+  optional `@xenova/transformers` dependency downloads the local embedding model
+  (Xenova/all-MiniLM-L6-v2, ~25MB) from the Hugging Face CDN (`huggingface.co`), once,
+  to a local cache — after that every embedding runs fully offline, forever. Nothing
+  about you, your boards, or your queries is sent: it is a plain public-file GET, the
+  same as any npm install. Skip the dependency, or set `FEATUREBOARD_NO_SEMANTIC=1`,
+  and `rag_search` stays pure local BM25 with zero network calls (mode:"lexical").
 - `check_updates` is an explicitly-invoked, user/agent-initiated version check: a single plain GET of a public
   JSON file (`https://featureboard.ai/downloads/latest.json`), and only when this tool is called — never on a
   timer, on startup, or automatically in the background. No identifying data is sent (no body, no board contents,
