@@ -39,9 +39,55 @@ export const LICENSE_CONTACT_EMAIL =
 
 // Published self-serve pricing (FBMCPF-208). Seat-year USD; checkout is the Polar
 // storefront behind the stable featureboard.ai/buy redirect. Override for tests/staging.
-export const PRICE_PER_SEAT_YEAR_USD = 119;
+export const PRICE_PER_SEAT_YEAR_USD = 99.99;
 export const CHECKOUT_URL =
   process.env.FEATUREBOARD_CHECKOUT_URL || "https://featureboard.ai/buy";
+
+// --- Free-tier feature cap (FBMCPF-294) --------------------------------------
+// The free ("personal") tier is metered by TOP-LEVEL feature count across all
+// boards in the data dir. Breaking a feature into subtasks via decompose_feature
+// (those carry a 🔗 parent link) does NOT count, and bugs never count — only real
+// top-level feature requests. Soft cap warns; hard cap freezes writes (reads always
+// stay). Both env-overridable so the dial can move without a release. OSS/"public"
+// and licensed commercial users are never capped.
+export const FREE_FEATURE_SOFT = Math.max(0, parseInt(process.env.FEATUREBOARD_FREE_FEATURE_SOFT || "25", 10) || 25);
+export const FREE_FEATURE_HARD = Math.max(FREE_FEATURE_SOFT, parseInt(process.env.FEATUREBOARD_FREE_FEATURE_HARD || "30", 10) || 30);
+
+// A top-level feature line in featurelist.md: checkbox + [PREFIX-<n>] id, and no
+// 🔗 link token (decompose subtasks link back to their parent).
+const TOP_LEVEL_FEATURE_RE = /^\s*-\s*\[[ xXpPrR\-]\]\s*\[[A-Z][A-Z0-9\-]*\d+\]/;
+
+/** Count top-level features across every board under dataDir (bugs + subtasks excluded). */
+export function countTopLevelFeatures(dataDir) {
+  let count = 0;
+  let entries;
+  try {
+    entries = fs.readdirSync(dataDir, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  for (const e of entries) {
+    if (!e.isDirectory() || e.name === STATE_DIR) continue;
+    let text;
+    try {
+      text = fs.readFileSync(path.join(dataDir, e.name, "featurelist.md"), "utf8");
+    } catch {
+      continue;
+    }
+    for (const line of text.split(/\r?\n/)) {
+      if (TOP_LEVEL_FEATURE_RE.test(line) && !line.includes("🔗")) count++;
+    }
+  }
+  return count;
+}
+
+/** Pure quota evaluation. state: "ok" | "soft" (warn) | "hard" (freeze writes). */
+export function featureQuota(count, { soft = FREE_FEATURE_SOFT, hard = FREE_FEATURE_HARD } = {}) {
+  const n = Number(count) || 0;
+  if (n >= hard) return { state: "hard", count: n, soft, hard, allowWrites: false };
+  if (n >= soft) return { state: "soft", count: n, soft, hard, allowWrites: true };
+  return { state: "ok", count: n, soft, hard, allowWrites: true };
+}
 
 // Activation-by-order (FBMCPF-274): claim a signed key from the featureboard.ai
 // claim API using the receipt email + order id, instead of pasting a key. The
@@ -287,8 +333,44 @@ export function evaluate(dataDir) {
     };
   }
 
-  if (type === "personal" || type === "public") {
-    return { status: type, configured: true, allowWrites: true, tier: type };
+  if (type === "personal") {
+    const featureCount = countTopLevelFeatures(dataDir);
+    const q = featureQuota(featureCount);
+    if (q.state === "hard") {
+      return {
+        status: "free-limit-reached",
+        configured: true,
+        allowWrites: false,
+        tier: "personal",
+        featureCount,
+        featureCap: q.hard,
+        checkoutUrl: CHECKOUT_URL,
+        message:
+          `Free tier limit reached: ${featureCount} of ${q.hard} features. Reads still work; new writes are frozen. ` +
+          `Keep going with a license (US$${PRICE_PER_SEAT_YEAR_USD}/seat/yr) at ${CHECKOUT_URL}, then run activate_license. ` +
+          `Open-source projects and verified students are free and uncapped — set usage type "public" if that applies.`,
+      };
+    }
+    if (q.state === "soft") {
+      return {
+        status: "personal",
+        configured: true,
+        allowWrites: true,
+        tier: "personal",
+        featureCount,
+        featureCap: q.hard,
+        warn: true,
+        message:
+          `You're at ${featureCount} of ${q.hard} free features — writes freeze at ${q.hard}. ` +
+          `Grab a license (US$${PRICE_PER_SEAT_YEAR_USD}/seat/yr) at ${CHECKOUT_URL} to keep going uninterrupted.`,
+      };
+    }
+    return { status: "personal", configured: true, allowWrites: true, tier: "personal", featureCount, featureCap: q.hard };
+  }
+
+  if (type === "public") {
+    // Open-source / nonprofit — genuinely free and uncapped (funnel + goodwill).
+    return { status: "public", configured: true, allowWrites: true, tier: "public" };
   }
 
   // A valid key always grants full commercial access -- unless it's been revoked.

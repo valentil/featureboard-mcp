@@ -3,7 +3,7 @@
   "name": "ai.featureboard/featureboard",
   "title": "FeatureBoard",
   "description": "A local, file-backed feature/bug board an AI agent runs for you: markdown featurelist.md / buglist.md boards that Claude or any MCP client plans, prioritizes, works, and commits per ticket.",
-  "version": "0.6.2",
+  "version": "0.7.0",
   "websiteUrl": "https://featureboard.ai",
   "packages": [
     {
