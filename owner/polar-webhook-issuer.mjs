@@ -5,7 +5,8 @@
  *
  * A tiny no-dependency HTTP listener for Polar webhooks (standard-webhooks spec):
  *   - verifies the webhook signature (HMAC-SHA256 over "id.timestamp.body")
- *   - on order.paid, issues a signed key sized to the billing interval:
+ *   - on order.paid, issues a signed key sized to the billing interval
+ *     (the signed payload embeds the Polar order id so refund revocations match):
  *       yearly / one-time  -> 1-year key   (annual plan; unchanged default)
  *       monthly            -> ~38-day key  (1 month + buffer; each renewal's
  *                            order.paid re-issues, so it auto-extends; on cancel
@@ -107,16 +108,27 @@ export function orderToLicense(event, productAllowlist = []) {
 const REVOKE_EVENTS = new Set(["order.refunded", "subscription.revoked"]);
 
 /** Build a revocation record from a refund/revoke event, or null. Format matches the
- *  matcher fields license.js isRevoked() reads (orderId / licensee / issued). */
+ *  matcher fields license.js isRevoked() reads (orderId / licensee / issued).
+ *
+ *  Matcher semantics are ALL-specified-fields-must-match, so we emit the single
+ *  most precise field that can actually match a key payload — never a combined
+ *  {orderId, licensee} matcher (a payload missing either field would then never
+ *  match, silently disabling the revocation):
+ *    - order.* events: data IS the order — use its id as orderId (payloads
+ *      issued since FBMCPF-298 embed orderId).
+ *    - subscription.revoked: data is a SUBSCRIPTION object — its id is a sub id,
+ *      NOT an order id, and would never match any key. Use the order id only if
+ *      the payload nests one; otherwise fall back to a licensee matcher (kills
+ *      that customer's keys, which is the intent of a hard revoke). */
 export function revocationFromEvent(event) {
   if (!event || !REVOKE_EVENTS.has(event.type)) return null;
   const d = event.data || {};
-  const orderId = d.id || d.order_id || (d.order && d.order.id) || null;
+  const isOrderEvent = String(event.type).startsWith("order.");
+  const orderId = d.order_id || (d.order && d.order.id) || (isOrderEvent ? d.id : null) || null;
   const licensee = (d.customer && (d.customer.name || d.customer.email)) || d.customer_email || null;
   if (!orderId && !licensee) return null;
   return {
-    ...(orderId ? { orderId } : {}),
-    ...(licensee ? { licensee } : {}),
+    ...(orderId ? { orderId } : { licensee }),
     reason: event.type,
     at: new Date().toISOString(),
   };

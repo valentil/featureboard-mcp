@@ -59,15 +59,16 @@ day). Tampering with the payload breaks the signature.
 The manual CRM pipeline above stays for POs/enterprise. The self-serve path is:
 
 **Customer** buys at https://featureboard.ai/buy (redirect to the Polar checkout,
-US$119/seat/year, quantity = seats) → **Polar** fires an `order.paid` webhook →
-**`polar-webhook-issuer.mjs`** verifies it, issues a signed 1-year key, logs it to
+US$99.99/seat/year or US$9.99/seat/month, quantity = seats) → **Polar** fires an
+`order.paid` webhook → **`polar-webhook-issuer.mjs`** verifies it, issues a signed key
+sized to the billing interval (1 year, or ~38 days for monthly — each renewal re-issues), logs it to
 `owner/issued-keys.json` (gitignored — holds customer emails + keys), and emails the
 key via Resend (or prints it for manual delivery).
 
 ### One-time Polar setup
 
-1. Create a Polar organization and a product: "FeatureBoard Commercial License",
-   $119/year, per-unit pricing with quantity = seats. Polar is the merchant of
+1. Create a Polar organization and two products: "FeatureBoard Commercial License"
+   at $99.99/year and $9.99/month, per-unit pricing with quantity = seats. Polar is the merchant of
    record — they handle global VAT/sales tax.
 2. Point featureboard.ai/buy at the product's checkout link.
 3. Add a webhook (Settings → Webhooks): event `order.paid`, URL = wherever the

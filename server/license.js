@@ -12,7 +12,7 @@
  * Keys are verified OFFLINE with an embedded Ed25519 public key — no phone-home.
  * The matching private key lives only with the owner (see /owner). A key is:
  *     base64url(JSON payload) + "." + base64url(signature)
- * payload = { licensee, type:"commercial", seats?, issued, expires|null, v:1 }
+ * payload = { licensee, type:"commercial", seats?, orderId?, issued, expires|null, v:1 }
  */
 
 import fs from "node:fs";

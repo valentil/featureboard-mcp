@@ -13,9 +13,10 @@ import {
   evaluate,
 } from "../server/license.js";
 
-// FBMCPF-208: published pricing surfaced from the license module.
-test("published price is $119/seat/year", () => {
-  assert.equal(PRICE_PER_SEAT_YEAR_USD, 119);
+// FBMCPF-208 (repriced by FBMCPF-294/295): published pricing surfaced from the
+// license module. $99.99/seat/yr since 2026-07-20 ($9.99/mo lives checkout-side).
+test("published price is $99.99/seat/year", () => {
+  assert.equal(PRICE_PER_SEAT_YEAR_USD, 99.99);
 });
 
 test("checkout URL defaults to the stable featureboard.ai/buy redirect", () => {

@@ -6,7 +6,7 @@ Point FeatureBoard at a folder; each subfolder that contains a `featurelist.md` 
 
 ## Install
 
-- [Claude Cowork / Desktop plugin (v0.7.0)](https://featureboard.ai/downloads/featureboard.plugin): download and open it in Claude Cowork, then press Save to activate the MCP server plus the featureboarding skills.
+- [Claude Cowork / Desktop plugin (v0.6.2)](https://featureboard.ai/downloads/featureboard.plugin): download and open it in Claude Cowork, then press Save to activate the MCP server plus the featureboarding skills.
 - [MCP server zip for other IDEs](https://featureboard.ai/downloads/featureboard-mcp.zip): unzip and point your MCP config at `server/index.js` (requires Node.js >= 18, dependencies `@modelcontextprotocol/sdk` + `zod`). For Cursor, Grok Build, and other non-Claude hosts, set `FEATUREBOARD_CORE_ONLY=1` and `FEATUREBOARD_CLIENT_NEUTRAL=1`.
 - The command every MCP client runs is the same: `node /absolute/path/to/featureboard-mcp/server/index.js` over stdio.
 

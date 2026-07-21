@@ -4,14 +4,22 @@
  */
 import crypto from "node:crypto";
 
-/** Build the canonical license payload. expires: "YYYY-MM-DD" | null (perpetual). */
-export function buildPayload({ licensee, seats, expires }) {
+/**
+ * Build the canonical license payload. expires: "YYYY-MM-DD" | null (perpetual).
+ * orderId (optional) is embedded in the signed payload so a local revocation
+ * matcher written from a Polar refund webhook ({ orderId: ... }) can actually
+ * match the key — server/license.js isRevoked() compares matcher fields against
+ * THIS payload. Keys issued before orderId existed simply lack the field and
+ * can only be revoked by licensee/issued.
+ */
+export function buildPayload({ licensee, seats, expires, orderId }) {
   if (!licensee || !String(licensee).trim()) throw new Error("licensee is required");
   const s = parseInt(seats, 10) || undefined;
   return {
     licensee: String(licensee).trim(),
     type: "commercial",
     ...(s ? { seats: s } : {}),
+    ...(orderId ? { orderId: String(orderId) } : {}),
     issued: new Date().toISOString().split("T")[0],
     expires: expires || null,
     v: 1,

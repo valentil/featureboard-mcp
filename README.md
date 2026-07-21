@@ -268,7 +268,7 @@ agent churn loops mid-run. The onboarding screen reminds you of this on first us
 FeatureBoard is source-available (see `LICENSE.md`): free for private non-commercial and
 public/nonprofit use (PolyForm Noncommercial), with a free 24-hour commercial trial after which
 **write** tools freeze (reads keep working) until a commercial key is activated. Commercial
-keys are **US$119/seat/year**, self-serve at <https://featureboard.ai/buy>. Activate with
+keys are **US$99.99/seat/year** (or US$9.99/seat/month), self-serve at <https://featureboard.ai/buy>. Activate with
 `activate_license` in either mode: paste the key itself, or pass the `email` + order id from your
 Polar purchase receipt and the server fetches the signed key for you from the featureboard.ai
 claim API — no copy-pasting a key required. You can also retrieve a key manually anytime with

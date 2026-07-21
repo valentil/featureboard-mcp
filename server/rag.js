@@ -337,6 +337,6 @@ export function ragSearch(board, project, query, opts = {}) {
 export function clearIndexCache(project) {
   if (!project) { indexCache.clear(); return; }
   for (const key of [...indexCache.keys()]) {
-    if (key.endsWith(` ${project}`)) indexCache.delete(key);
+    if (key.endsWith(`\u0000${project}`)) indexCache.delete(key);
   }
 }
