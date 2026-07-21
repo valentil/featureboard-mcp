@@ -175,7 +175,7 @@ fs.writeFileSync(
     "- Boards live in `~/FeatureBoard` (override: `FEATUREBOARD_DATA_DIR`). Node.js >= 18.",
     "",
     "Full instructions: https://featureboard.ai/install.html · https://github.com/valentil/featureboard-mcp",
-    "Licensing: free for personal & public work; commercial use US$119/seat/yr — https://featureboard.ai/buy.html. See LICENSE.md.",
+    "Licensing: free for personal & public work; commercial use US$99.99/seat/yr (or US$9.99/mo) — https://featureboard.ai/buy.html. See LICENSE.md.",
     "",
   ].join("\n")
 );
