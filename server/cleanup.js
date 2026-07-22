@@ -65,6 +65,26 @@ function ticketNum(id) {
  * ticket (Done > In Progress > Todo), tie-broken by the lowest (oldest) number —
  * and lists the rest as removal candidates. Returns only groups with >1 member.
  */
+/**
+ * FBMCPB-43: two tickets are a DELIBERATE paired experiment (A/B trial record),
+ * not accidental duplicates, when they are both marked as experiment arms
+ * (`experiment:board` / `experiment:chat`) or share the same `pair:<id>` label.
+ * Such pairs have near-identical titles by design ("Chat trial p10" vs "Packet
+ * trial p10 (with packet)") and must NOT be nominated for removal — deleting one
+ * destroys experiment history.
+ */
+function isPairedExperimentDuo(a, b) {
+  const la = (a.labels || []).map((l) => String(l).toLowerCase());
+  const lb = (b.labels || []).map((l) => String(l).toLowerCase());
+  const expA = la.some((l) => l.startsWith("experiment:"));
+  const expB = lb.some((l) => l.startsWith("experiment:"));
+  if (expA && expB) return true; // two deliberate experiment-arm records
+  const pairA = la.find((l) => l.startsWith("pair:"));
+  const pairB = lb.find((l) => l.startsWith("pair:"));
+  if (pairA && pairA === pairB) return true; // same explicit pair id
+  return false;
+}
+
 export function findDuplicateGroups(tasks, { threshold = 0.7 } = {}) {
   const n = tasks.length;
   const parent = tasks.map((_, i) => i);
@@ -82,7 +102,8 @@ export function findDuplicateGroups(tasks, { threshold = 0.7 } = {}) {
   };
   for (let i = 0; i < n; i++) {
     for (let j = i + 1; j < n; j++) {
-      if (titleSimilarity(tasks[i].title, tasks[j].title) >= threshold) union(i, j);
+      if (titleSimilarity(tasks[i].title, tasks[j].title) >= threshold
+          && !isPairedExperimentDuo(tasks[i], tasks[j])) union(i, j);
     }
   }
   const groups = new Map();

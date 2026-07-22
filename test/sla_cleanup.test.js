@@ -4,7 +4,29 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Board } from "../server/storage.js";
-import { findSlaBreaches, resolveSlaThresholds, DEFAULT_SLA_THRESHOLDS, scanBoardCleanup } from "../server/cleanup.js";
+import { findSlaBreaches, resolveSlaThresholds, DEFAULT_SLA_THRESHOLDS, scanBoardCleanup, findDuplicateGroups } from "../server/cleanup.js";
+
+// FBMCPB-43 — deliberate paired A/B experiment records (experiment:board /
+// experiment:chat, or a shared pair:<id> label) have near-identical titles by
+// design and must NOT be nominated as duplicates.
+test("FBMCPB-43: paired experiment arms are not grouped as duplicates", () => {
+  const chat = { ticketNumber: "FBMCPF-174", title: "Chat trial p10: fix the thing", status: "Done", labels: ["experiment:chat", "pair:p10"] };
+  const packet = { ticketNumber: "FBMCPF-184", title: "Packet trial p10: fix the thing (with packet)", status: "Done", labels: ["experiment:board", "pair:p10"] };
+  assert.equal(findDuplicateGroups([chat, packet], { threshold: 0.6 }).length, 0, "experiment arms must not be flagged");
+
+  // same explicit pair id, even without experiment: labels, is also protected
+  const a = { ticketNumber: "FBF-1", title: "Trial variant A of the flow", status: "Todo", labels: ["pair:pX"] };
+  const b = { ticketNumber: "FBF-2", title: "Trial variant A of the flow", status: "Todo", labels: ["pair:pX"] };
+  assert.equal(findDuplicateGroups([a, b], { threshold: 0.7 }).length, 0);
+});
+
+test("FBMCPB-43: genuine duplicates without experiment labels are still grouped", () => {
+  const a = { ticketNumber: "FBF-3", title: "Add dark mode toggle to settings", status: "Todo", labels: [] };
+  const b = { ticketNumber: "FBF-4", title: "Add dark mode toggle to settings", status: "Todo", labels: [] };
+  const groups = findDuplicateGroups([a, b], { threshold: 0.7 });
+  assert.equal(groups.length, 1, "real duplicates are still caught");
+  assert.equal(groups[0].removeCandidates.length, 1);
+});
 
 // FBMCPF-198 — priority-scaled SLA / stale escalation on scan_board_cleanup.
 const NOW = new Date("2026-07-17T12:00:00Z");
