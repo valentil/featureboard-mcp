@@ -135,7 +135,16 @@ server.registerTool(
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
-  writeTool(({ project, dryRun }) => steerProject(getBoard(), project, { dryRun: !!dryRun })),
+  writeTool(({ project, dryRun }) => {
+    const res = steerProject(getBoard(), project, { dryRun: !!dryRun });
+    // FBMCPF-320: best-effort steering digest to Slack. notifySlack self-gates
+    // on slackWebhook + slackEvents "summary", so this is a no-op unless the
+    // project opted in; fire-and-forget so it never blocks or breaks the pass.
+    if (!dryRun && res && res.digest) {
+      Promise.resolve(notifySlack(getBoard(), project, { text: res.digest, event: "summary" })).catch(() => {});
+    }
+    return res;
+  }),
 );
 
 server.registerTool(

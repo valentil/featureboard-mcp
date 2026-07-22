@@ -137,6 +137,22 @@ test("FBMCPB-44: goalless steer surfaces goalMissing and leads the research pass
   assert.match(research2.instruction, /Research toward the goal/);
 });
 
+test("FBMCPF-320: steer_project returns a one-line digest of the pass", () => {
+  const { board } = tmpBoard();
+  done(board, "Alpha");
+  setProjectConfig(board, "Proj", { goal: "ship it" });
+  const out = steerProject(board, "Proj", { now: new Date("2026-07-21T12:00:00Z") });
+  assert.equal(typeof out.digest, "string");
+  assert.match(out.digest, /Steering Proj/);
+  assert.match(out.digest, /1 to review/);
+  assert.match(out.digest, /open/);
+  assert.match(out.digest, /goal set/);
+
+  const { board: b2 } = tmpBoard();
+  const g = steerProject(b2, "Proj", { now: new Date("2026-07-21T12:00:00Z") });
+  assert.match(g.digest, /NO GOAL/, "goalless pass says so in the digest");
+});
+
 test("FBMCPF-319: get_steering_status reports state without running a pass", () => {
   const { board } = tmpBoard();
 

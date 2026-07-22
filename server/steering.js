@@ -181,12 +181,22 @@ export function steerProject(board, project, { now = new Date(), dryRun = false 
     });
   }
 
+  // FBMCPF-320: a one-line human-readable digest of what this pass surfaced —
+  // returned on the response and (in the tool handler) optionally pushed to
+  // Slack via the project's slackEvents "summary" hook.
+  const tighten = cleanup.length + strengthen.length;
+  const digest =
+    `Steering ${project}: ${review.length} to review · ${tighten} hygiene finding${tighten === 1 ? "" : "s"} · ` +
+    `${open.length} open · ${goal ? "goal set" : "NO GOAL — set one via set_project_config"} · ` +
+    `${actionable ? "actionable" : "not actionable (stop if the next pass is also empty)"}`;
+
   return {
     project,
     steeredAt: now.toISOString(),
     lastSteeringAt: state.lastSteeringAt,
     goal,
     goalMissing: !goal, // FBMCPB-44: surfaced so a goalless steer prompts the user to set one
+    digest, // FBMCPF-320
     standard: { level: std.level, locked: !!std.locked, ...(std.mandate ? { mandate: std.mandate } : {}) },
     openTickets: open.length,
     actionable,
