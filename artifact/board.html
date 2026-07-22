@@ -2054,6 +2054,12 @@ function tlPrep(s, nowMs) {
   let s1 = p(s.completedAt) != null ? p(s.completedAt) : p(s.lastActivity);
   if (s0 == null && s1 != null) s0 = s1;           // completion-day-only block
   if (s0 == null) return null;                      // undated ticket → skip
+  // FBMCPF-330: an OPEN ticket (not Done) is still running — stretch its bar to
+  // "now" so in-progress work reads as an ongoing span rather than a stub block.
+  if (s.status !== "Done") {
+    const nowT = nowMs != null ? nowMs : Date.now();
+    if (s1 == null || s1 < nowT) s1 = nowT;
+  }
   if (s1 == null || s1 <= s0) s1 = s0 + DAY;        // min one-day block
   // FBMCPB-18: belt-and-braces clamp — getTimelineData already clamps a Done
   // ticket's completedAt to its own "now", but this covers the date-only
@@ -2340,19 +2346,31 @@ function tlDraw() {
   if (tx >= gutterW && tx <= cw) { lx.strokeStyle = C.today; lx.lineWidth = 1.5; lx.beginPath(); lx.moveTo(tx + .5, 0); lx.lineTo(tx + .5, canvasH); lx.stroke(); }
 
   // clips
+  // FBMCPF-330: minimum on-screen width for a clip so rapid-fire tickets
+  // (created & finished within minutes) render as a readable "start card"
+  // anchored at their start, never a 1px sliver.
+  const MIN_CLIP_W = 26;
   tl.rects = [];
   for (const lane of lanes) {
     for (const s of lane.items) {
       let x0 = timeToX(s._s0), x1 = timeToX(s._s1);
+      // FBMCPF-330: grow the card rightward from its start to the min width.
+      if (x1 - x0 < MIN_CLIP_W) x1 = x0 + MIN_CLIP_W;
       if (x1 < gutterW || x0 > cw) continue;
       const cx = Math.max(x0, gutterW), cxe = Math.min(x1, cw);
-      const w = Math.max(cxe - cx, 3);
+      const w = Math.max(cxe - cx, MIN_CLIP_W);
       const cy = lane.y + tl.clipGap + s._row * (tl.clipH + tl.clipGap);
       const col = tlClipColor(s, C);
       const sel = tl.pinned === s.ticket;
       lx.fillStyle = col; lx.globalAlpha = s.status === "Done" ? 0.92 : 0.82;
       tlRound(lx, cx, cy, w, tl.clipH, 4); lx.fill();
       lx.globalAlpha = 1;
+      // FBMCPF-330: finished tickets get a finish marker capping the card's
+      // right edge, so "Done" reads differently from an open bar running to now.
+      if (s.status === "Done") {
+        lx.fillStyle = dark ? "#eaf2ff" : "#1c2333";
+        lx.fillRect(cx + w - 2.5, cy, 2.5, tl.clipH);
+      }
       if (sel) { lx.lineWidth = 2; lx.strokeStyle = dark ? "#fff" : "#1c2333"; tlRound(lx, cx + 1, cy + 1, w - 2, tl.clipH - 2, 3); lx.stroke(); }
       if (w > 44) {
         lx.fillStyle = C.clipText; lx.font = '600 10.5px -apple-system,Segoe UI,Roboto,sans-serif';
