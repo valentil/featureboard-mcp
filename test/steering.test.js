@@ -118,6 +118,25 @@ test("no goal → research pass tells the agent to ask ONCE and store it", () =>
   assert.match(research.questions[0], /set_project_config goal/);
 });
 
+test("FBMCPB-44: goalless steer surfaces goalMissing and leads the research pass with a set-goal notice", () => {
+  const { board } = tmpBoard();
+  const out = steerProject(board, "Proj", { now: new Date("2026-07-21T12:00:00Z") });
+  assert.equal(out.goalMissing, true, "top-level goalMissing flag is set when no goal");
+  const research = out.passes.find((p) => p.pass === "research");
+  assert.equal(research.goalMissing, true);
+  assert.match(research.instruction, /NO PROJECT GOAL IS SET/);
+  assert.match(research.instruction, /set_project_config goal/);
+  assert.match(research.instruction, /don't invent a wave/i);
+
+  // With a goal set, the flag clears and the instruction is the normal research directive.
+  setProjectConfig(board, "Proj", { goal: "ship the thing" });
+  const out2 = steerProject(board, "Proj", { now: new Date("2026-07-21T13:00:00Z") });
+  assert.equal(out2.goalMissing, false);
+  const research2 = out2.passes.find((p) => p.pass === "research");
+  assert.equal(research2.goalMissing, false);
+  assert.match(research2.instruction, /Research toward the goal/);
+});
+
 test("empty board + no goal → not actionable, stopHint present, resume pass last", () => {
   const { board } = tmpBoard();
   const out = steerProject(board, "Proj", { now: new Date("2026-07-21T12:00:00Z") });

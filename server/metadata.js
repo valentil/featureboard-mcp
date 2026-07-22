@@ -817,6 +817,10 @@ export function getWorkPacket(board, project, ticket, opts = {}) {
       agentModel: cfg.agentModel || null,
       website: cfg.website || null,
     },
+    // FBMCPB-44: soft guardrail — flag when the project has no north star so the
+    // orchestrator can prompt the user to set one (set_project_config goal:"...")
+    // instead of silently working/researching as if directed.
+    goalMissing: !(cfg.goal && String(cfg.goal).trim()),
     filesToRead,
     gitTargets: resolveGitTargets(board, project),
     scratchpadMentions,

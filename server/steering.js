@@ -137,10 +137,12 @@ export function steerProject(board, project, { now = new Date(), dryRun = false 
     },
     {
       pass: "research",
-      instruction:
-        `Research toward the goal at the project's standard ("${std.level}"${std.mandate ? `, mandate: ${std.mandate}` : ""}). ` +
-        "Answer the questions below (rag_search for prior art first; web where the standard calls for competitors/whitepapers/UX guides), then file the next wave: add_feature per proposal, each description citing what the research found and how it serves the goal. Cap the wave at what one churn run can finish.",
+      instruction: goal
+        ? `Research toward the goal at the project's standard ("${std.level}"${std.mandate ? `, mandate: ${std.mandate}` : ""}). ` +
+          "Answer the questions below (rag_search for prior art first; web where the standard calls for competitors/whitepapers/UX guides), then file the next wave: add_feature per proposal, each description citing what the research found and how it serves the goal. Cap the wave at what one churn run can finish."
+        : "NO PROJECT GOAL IS SET — do this FIRST: ask the user for the project's north star ONCE, then store it with set_project_config goal:\"...\". Steering research has no direction to aim at until a goal exists, so don't invent a wave of features as if directed; set the goal, then re-run steer_project.",
       goal,
+      goalMissing: !goal,
       standard: std.level,
       questions: researchQuestions,
     },
@@ -184,6 +186,7 @@ export function steerProject(board, project, { now = new Date(), dryRun = false 
     steeredAt: now.toISOString(),
     lastSteeringAt: state.lastSteeringAt,
     goal,
+    goalMissing: !goal, // FBMCPB-44: surfaced so a goalless steer prompts the user to set one
     standard: { level: std.level, locked: !!std.locked, ...(std.mandate ? { mandate: std.mandate } : {}) },
     openTickets: open.length,
     actionable,

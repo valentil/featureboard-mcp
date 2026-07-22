@@ -104,6 +104,18 @@ test("getWorkPacket injects the standard and polished extends the DoD", () => {
   assert.equal(packet.standard.level, "prototype");
 });
 
+test("FBMCPB-44: work packet carries a soft goalMissing flag until a goal is set", () => {
+  const { board } = tmpBoard();
+  const t = board.addTask("Proj", "feature", { title: "Do a thing" });
+  let packet = getWorkPacket(board, "Proj", t.ticketNumber);
+  assert.equal(packet.goalMissing, true, "no goal configured → goalMissing true");
+  assert.equal(packet.project.goal, null);
+  setProjectConfig(board, "Proj", { goal: "become the default agent board" });
+  packet = getWorkPacket(board, "Proj", t.ticketNumber);
+  assert.equal(packet.goalMissing, false);
+  assert.equal(packet.project.goal, "become the default agent board");
+});
+
 test("research: polished forces it on with expanded questions; prototype skips", () => {
   const { board } = tmpBoard();
   const t = board.addTask("Proj", "feature", { title: "Comparables for the pricing page" });
