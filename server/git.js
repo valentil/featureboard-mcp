@@ -931,8 +931,19 @@ export function reconcileChurn(board, project, { exec = defaultExec, allowGit = 
     const tk = t.ticketNumber;
 
     let loggedAdd = 0, loggedDel = 0;
+    // FBMCPB-52: a ticket's churn is commonly written TWICE — once by set_status
+    // Done's completion metadata (register/tasks.js) and once by an explicit
+    // log_work with the same additions/deletions — which doubled loggedAdd/
+    // loggedDel (driftRatio ~1 board-wide). De-dupe non-enrichment self-report
+    // lines by date+churn so the same change counts once (same ticket/day/+/-
+    // equivalence findDuplicateWorkEntry already uses).
+    const seenChurn = new Set();
     for (const w of (workByTicket.get(tk) || [])) {
       if (w.hash) continue; // FBMCPF-188 enrichment line = git-actual, not self-report
+      if (w.additions == null && w.deletions == null) continue; // no churn to reconcile
+      const key = `${w.date}|${w.additions || 0}|${w.deletions || 0}`;
+      if (seenChurn.has(key)) continue; // set_status-Done metadata + log_work duplicate
+      seenChurn.add(key);
       loggedAdd += w.additions || 0;
       loggedDel += w.deletions || 0;
     }

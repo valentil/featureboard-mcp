@@ -46,6 +46,35 @@ test("recorded commit events supply git-actual churn; logged self-report is comp
   assert.equal(row.driftRatio, Math.round((24 / 86) * 1000) / 1000); // |110-86|/86
 });
 
+test("FBMCPB-52: set_status-Done metrics + a log_work with the same churn count ONCE, not doubled", () => {
+  const b = tmpBoard();
+  const tk = done(b, "Double logged");
+  // Real-world flow that produced the 2x drift: set_status Done writes a
+  // completion-metadata work-log line, and the agent ALSO calls log_work with
+  // the same additions/deletions on the same day.
+  logWork(b, "Proj", { ticket: tk, summary: `Completed ${tk}`, additions: 120, deletions: 12, model: "opus" });
+  logWork(b, "Proj", { ticket: tk, summary: "did the work", additions: 120, deletions: 12, model: "opus" });
+  appendEvent(b, "Proj", { ticket: tk, field: "commit", to: "h", hash: "hhhh1", shortHash: "h", additions: 120, deletions: 12, source: "commit_feature" });
+
+  const r = reconcileChurn(b, "Proj");
+  const row = r.tickets[0];
+  assert.equal(row.loggedAdd, 120, "the duplicate set_status/log_work churn must count once, not 240");
+  assert.equal(row.loggedDel, 12);
+  assert.equal(row.driftRatio, 0, "logged now matches git-actual instead of reading 2x");
+});
+
+test("FBMCPB-52: two DISTINCT same-day log_work chunks with different churn still both count", () => {
+  const b = tmpBoard();
+  const tk = done(b, "Two real chunks");
+  logWork(b, "Proj", { ticket: tk, summary: "part 1", additions: 30, deletions: 3 });
+  logWork(b, "Proj", { ticket: tk, summary: "part 2", additions: 70, deletions: 7 });
+  appendEvent(b, "Proj", { ticket: tk, field: "commit", to: "h2", hash: "hhhh2", shortHash: "h2", additions: 100, deletions: 10, source: "commit_feature" });
+  const r = reconcileChurn(b, "Proj");
+  assert.equal(r.tickets[0].loggedAdd, 100, "distinct churn values are not collapsed");
+  assert.equal(r.tickets[0].loggedDel, 10);
+  assert.equal(r.tickets[0].driftRatio, 0);
+});
+
 test("commit-enrichment work-log lines (carrying a hash) are excluded from logged self-report", () => {
   const b = tmpBoard();
   const tk = done(b, "Enrichment excluded");
