@@ -201,8 +201,6 @@
   .bpWarn { color: #b3261e; font-size: 12px; margin: 2px 0; }
   html[data-theme="dark"] .bpWarn { color: #e88f7a; }
   .empty { color: #9aa1b3; font-size: 12px; text-align: center; padding: 18px 0; }
-  .card[draggable="true"] { cursor: grab; }
-  .card.dragging { opacity: .45; }
   .card { position: relative; }
   .card .del { position: absolute; top: 6px; right: 6px; border: 0; background: transparent; color: #b7bcc9; font-size: 14px; line-height: 1; padding: 2px 5px; border-radius: 6px; cursor: pointer; opacity: 0; }
   .card:hover .del { opacity: 1; }
@@ -234,15 +232,12 @@
   .card .reject:hover { background: #fdeee6; color: #b3591e; }
   html[data-theme="dark"] .card .approve:hover { background: #26372c; color: #6fbf8f; }
   html[data-theme="dark"] .card .reject:hover { background: #3a2e26; color: #e0a58a; }
-  .card.reorder-target { border-top: 2px solid #4b5bdc; }
   .upnext { display: inline-block; font-size: 10px; font-weight: 700; color: #fff; background: #4b5bdc; border-radius: 5px; padding: 1px 6px; margin-left: 6px; vertical-align: middle; }
   .prio { font-size: 10px; font-weight: 700; color: #6a7288; background: #eef0f5; border-radius: 5px; padding: 1px 5px; }
   #addBtn { background: #4b5bdc; color: #fff; border-color: #4b5bdc; font-weight: 600; }
   html[data-theme="dark"] .card .del:hover { background: #3a2e2a; color: #e88f7a; }
   html[data-theme="dark"] .upnext, html[data-theme="dark"] #addBtn { background: #d97757; color: #241f1c; }
   html[data-theme="dark"] .prio { background: #3a3830; color: #c8c3b5; }
-  html[data-theme="dark"] .card.reorder-target { border-top-color: #d97757; }
-  .col.over { outline: 2px dashed #4b5bdc; outline-offset: -2px; background: #e7eaf6; }
   .hint { color: #9aa1b3; font-size: 11px; margin: 2px 6px 8px; }
   .sprintbar {
     margin: 10px 16px -6px; padding: 8px 12px; border-radius: 10px; font-size: 12px;
@@ -317,8 +312,6 @@
   html[data-theme="dark"] .rangeInfo, html[data-theme="dark"] .loading, html[data-theme="dark"] .empty,
   html[data-theme="dark"] .subbar .lbl, html[data-theme="dark"] .modal p { color: #a8a49a; }
   html[data-theme="dark"] .showmore { background: #34332e; color: #e0876a; }
-  html[data-theme="dark"] .card.dragging { opacity: .5; }
-  html[data-theme="dark"] .col.over { outline-color: #d97757; background: #33322c; }
   /* FBMCPF-251: subtle "working" indicator for In Progress cards — pulse dot +
      a faint accent border, reusing the amber already used elsewhere for an
      "in flight"/medium state (badge.trial, chip.eff-medium) rather than a new color. */
@@ -1298,7 +1291,7 @@ function renderBoard(tasks) {
         : '<button class="showmore" onclick="toggleCol(\'' + c + '\')">Show ' + (list.length - CAP) + ' more</button>';
     }
     const sub = c === "Done" ? '<span class="colsub">' + rangeLabel() + (doneTotal > list.length ? " · " + doneTotal + " total" : "") + '</span>' : "";
-    return '<div class="col" data-status="' + c + '" ondragover="allow(event)" ondragleave="unhi(event)" ondrop="drop(event,\'' + c + '\')">' +
+    return '<div class="col" data-status="' + c + '">' +
       '<h2>' + c + '<span>' + list.length + '</span></h2>' + sub + cards + more + '</div>';
   }).join("");
   $("#content").innerHTML = sprintBar + hint + '<div class="board' + (cols.length > 3 ? ' four' : '') + '">' + html + '</div>';
@@ -1344,10 +1337,10 @@ function cardHTML(t, opts) {
   }
   (t.labels || []).forEach((l) => { if (SPRINT_RE.test(String(l)) || CAP_RE.test(String(l)) || MDL_RE.test(String(l)) || EFF_RE.test(String(l))) return; meta.push('<span class="chip">' + esc(l) + '</span>'); });
   const canW = state.canWrite;
-  const dragAttrs = canW
-    ? ' draggable="true" ondragstart="drag(event,\'' + t.ticket + '\')" ondragend="dragEnd(event)"' +
-      ' ondragover="cardOver(event)" ondragleave="cardOut(event)" ondrop="cardDrop(event,\'' + t.ticket + '\')"'
-    : ' draggable="false"';
+  // UX: card dragging removed — in this mode drag-to-status only mutated a marker
+  // without dispatching work, so the board is a pure view; status is driven by the
+  // agent/chat flow (next_task → set_status). Cards are non-draggable.
+  const dragAttrs = ' draggable="false"';
   const del = canW ? '<button class="del" title="Delete" onclick="deleteCard(event,\'' + t.ticket + '\')">✕</button>' : "";
   const split = (canW && t.type === "feature" && t.status !== "Done")
     ? '<button class="split" title="Decompose into subtasks" onclick="openDecompose(event,\'' + t.ticket + '\')">⋔</button>' : "";
@@ -1523,61 +1516,8 @@ async function openHistory(e, ticket) {
 
 /* ---------- drag and drop ---------- */
 let dragTicket = null;
-function drag(e, ticket) {
-  if (!state.canWrite) { e.preventDefault(); return; }
-  dragTicket = ticket;
-  e.dataTransfer.effectAllowed = "move";
-  try { e.dataTransfer.setData("text/plain", ticket); } catch {}
-  e.currentTarget.classList.add("dragging");
-}
-function dragEnd(e) { e.currentTarget.classList.remove("dragging"); }
-function allow(e) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; e.currentTarget.classList.add("over"); }
-function unhi(e) { e.currentTarget.classList.remove("over"); }
-function drop(e, status) {
-  e.preventDefault();
-  e.currentTarget.classList.remove("over");
-  const ticket = dragTicket || (e.dataTransfer && e.dataTransfer.getData("text/plain"));
-  dragTicket = null;
-  if (!ticket) return;
-  const src = state.tasks.find((t) => t.ticket === ticket);
-  if (src && src.status === status) return; // dropped on own column empty area — no-op
-  move(ticket, status);
-}
-
-// card-level drop enables within-column reordering (insert before the target card)
-function cardOver(e) { e.preventDefault(); e.stopPropagation(); e.currentTarget.classList.add("reorder-target"); }
-function cardOut(e) { e.currentTarget.classList.remove("reorder-target"); }
-function cardDrop(e, targetTicket) {
-  e.preventDefault(); e.stopPropagation();
-  e.currentTarget.classList.remove("reorder-target");
-  const ticket = dragTicket || (e.dataTransfer && e.dataTransfer.getData("text/plain"));
-  dragTicket = null;
-  if (!ticket || ticket === targetTicket) return;
-  const src = state.tasks.find((t) => t.ticket === ticket);
-  const tgt = state.tasks.find((t) => t.ticket === targetTicket);
-  if (!src || !tgt) return;
-  if (src.status !== tgt.status) { move(ticket, tgt.status); return; } // cross-column: status change
-  reorder(ticket, targetTicket, tgt.status);
-}
-
-async function reorder(ticket, targetTicket, col) {
-  let list = state.tasks.filter((t) => t.status === col && (!state.product || t.product === state.product) && inSprint(t));
-  list = sortForColumn(list, col);
-  const ids = list.map((t) => t.ticket).filter((x) => x !== ticket);
-  const at = ids.indexOf(targetTicket);
-  ids.splice(at < 0 ? ids.length : at, 0, ticket); // insert before target
-  const byId = Object.fromEntries(list.map((t) => [t.ticket, t]));
-  const writes = [];
-  ids.forEach((id, i) => {
-    const want = i + 1;
-    const t = byId[id];
-    if (t && t.priority !== want) writes.push(call("update_task", { project: state.board, ticket: id, priority: want }));
-  });
-  if (!writes.length) return;
-  try { await Promise.all(writes); toast("Reordered"); }
-  catch (e) { toast("Reorder needs the updated server (repack + restart): " + e.message.slice(0, 70)); }
-  await refresh(true);
-}
+// Card dragging removed (board is a pure view in this mode). dragTicket stays
+// declared above as a harmless no-op guard still read by keyboard/refresh handlers.
 
 /* ---------- add / delete tasks ---------- */
 function openAdd() {
@@ -2669,17 +2609,6 @@ async function saveNotes() {
     await call("set_scratchpad", { project: state.board, content: $("#spBody").value });
     closeModal(); toast("Notes saved");
   } catch (e) { toast(e.message.slice(0, 120)); }
-}
-
-async function move(ticket, status) {
-  try {
-    await call("set_status", { project: state.board, ticket, status });
-    toast(ticket + " → " + status);
-    await refresh();
-  } catch (e) {
-    toast(e.message.slice(0, 120));
-    state.license = await loadLicense(); renderLicense();
-  }
 }
 
 /* ---------- onboarding / licensing modals ---------- */
