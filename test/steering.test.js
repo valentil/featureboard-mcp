@@ -8,7 +8,7 @@ import path from "node:path";
 import { Board } from "../server/storage.js";
 import { setProjectConfig } from "../server/metadata.js";
 import { applyStandard } from "../server/standards.js";
-import { steerProject, readSteeringState, unreviewedDone } from "../server/steering.js";
+import { steerProject, readSteeringState, unreviewedDone, getSteeringStatus } from "../server/steering.js";
 
 function tmpBoard() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fb-steer-"));
@@ -135,6 +135,35 @@ test("FBMCPB-44: goalless steer surfaces goalMissing and leads the research pass
   const research2 = out2.passes.find((p) => p.pass === "research");
   assert.equal(research2.goalMissing, false);
   assert.match(research2.instruction, /Research toward the goal/);
+});
+
+test("FBMCPF-319: get_steering_status reports state without running a pass", () => {
+  const { board } = tmpBoard();
+
+  // Never steered yet.
+  let s = getSteeringStatus(board, "Proj");
+  assert.equal(s.everSteered, false);
+  assert.equal(s.lastSteeringAt, null);
+  assert.equal(s.reviewedCount, 0);
+  assert.equal(s.goalOnlyStreak, 0);
+  assert.equal(s.goalMissing, true);
+
+  const a = done(board, "Alpha");
+  s = getSteeringStatus(board, "Proj");
+  assert.equal(s.unreviewedDoneCount, 1, "Alpha is Done but not yet reviewed");
+  assert.equal(s.reviewedCount, 0, "read-only status must NOT claim/review anything");
+  assert.equal(readSteeringState(board, "Proj").lastSteeringAt, null, "get_steering_status must not write state");
+
+  // Run a real pass, then status reflects it.
+  setProjectConfig(board, "Proj", { goal: "ship it" });
+  steerProject(board, "Proj", { now: new Date("2026-07-21T12:00:00Z") });
+  s = getSteeringStatus(board, "Proj");
+  assert.equal(s.everSteered, true);
+  assert.equal(s.lastSteeringAt, "2026-07-21T12:00:00.000Z");
+  assert.equal(s.reviewedCount, 1, "Alpha was claimed by the pass");
+  assert.ok(s.reviewedTickets.includes(a));
+  assert.equal(s.goalMissing, false);
+  assert.equal(s.unreviewedDoneCount, 0);
 });
 
 test("empty board + no goal → not actionable, stopHint present, resume pass last", () => {

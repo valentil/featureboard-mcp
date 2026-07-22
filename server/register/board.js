@@ -1,6 +1,6 @@
 // Auto-extracted from server/index.js (FBMCPF-224). Registration blocks moved verbatim.
 export function registerBoardTools(server, ctx) {
-  const { BOARD_HTML_PATH, RAG_EXPLORER_HTML_PATH, Board, applyStandard, steerProject, resolveStandard, standardPacketBlock, StatusEnum, applyTriage, autoAssignSprintFields, blendStatus, compactView, completedAtForTask, computeWaves, createFeedbackTickets, estimateTicketMinutes, evaluateRules, extractBoardToolNames, fail, fullView, getBoard, getGlobalConfig, isBlocked, meta, notifySlack, parseFeedback, parseImport, parsePmImport, readFileSync, sprintOfTask, suggestModel, ticketsWithUnresolvedReviews, tryTool, withOrchestrationLabels, writeTool, z } = ctx;
+  const { BOARD_HTML_PATH, RAG_EXPLORER_HTML_PATH, Board, applyStandard, steerProject, getSteeringStatus, resolveStandard, standardPacketBlock, StatusEnum, applyTriage, autoAssignSprintFields, blendStatus, compactView, completedAtForTask, computeWaves, createFeedbackTickets, estimateTicketMinutes, evaluateRules, extractBoardToolNames, fail, fullView, getBoard, getGlobalConfig, isBlocked, meta, notifySlack, parseFeedback, parseImport, parsePmImport, readFileSync, sprintOfTask, suggestModel, ticketsWithUnresolvedReviews, tryTool, withOrchestrationLabels, writeTool, z } = ctx;
 
 // projects -----------------------------------------------------------------
 
@@ -136,6 +136,22 @@ server.registerTool(
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   writeTool(({ project, dryRun }) => steerProject(getBoard(), project, { dryRun: !!dryRun })),
+);
+
+server.registerTool(
+  "get_steering_status",
+  {
+    title: "Steering status (observability, no pass)",
+    description:
+      "FBMCPF-319: read-only observability into the steering loop for a project — WITHOUT running or mutating a pass (unlike steer_project). " +
+      "Returns the persisted steering.json state (lastSteeringAt, everSteered, how many Done tickets have been claimed/reviewed + the recent " +
+      "reviewed ids, and goalOnlyStreak — the consecutive goal-only passes that gate the auto-stop) plus a live snapshot: goal/goalMissing, " +
+      "open-ticket count, how many Done tickets are still unreviewed, and the tickets filed since the last steering pass (a proxy for what the " +
+      "last pass produced). Use it to answer 'where is steering at?' without kicking off a new wave.",
+    inputSchema: { project: z.string() },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project }) => getSteeringStatus(getBoard(), project)),
 );
 
 server.registerTool(

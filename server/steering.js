@@ -197,3 +197,46 @@ export function steerProject(board, project, { now = new Date(), dryRun = false 
     passes,
   };
 }
+
+/**
+ * FBMCPF-319: read-only observability into the steering loop for a project —
+ * without running (or mutating) a pass. Surfaces the persisted steering.json
+ * state (lastSteeringAt, how many Done tickets have been claimed/reviewed, and
+ * the goalOnlyStreak that gates the auto-stop) alongside a live snapshot: goal /
+ * goalMissing, open-ticket count, how many Done tickets are still unreviewed,
+ * and the tickets FILED SINCE the last steering pass (a proxy for "what the last
+ * pass produced", since steering itself doesn't author tickets — the agent
+ * does). Pure read; never writes steering.json.
+ */
+export function getSteeringStatus(board, project) {
+  const cfg = getProjectConfig(board, project);
+  const state = readSteeringState(board, project);
+  const goal = (cfg.goal || "").trim() || null;
+
+  const tasks = board.listTasks(project, {});
+  const reviewed = new Set(state.reviewedTickets);
+  const unreviewedDoneCount = tasks.filter((t) => t.status === "Done" && !reviewed.has(t.ticketNumber)).length;
+  const openTickets = tasks.filter((t) => t.status !== "Done").length;
+
+  // Items filed on/after the last steering pass (local calendar day compare).
+  const sinceDay = state.lastSteeringAt ? state.lastSteeringAt.slice(0, 10) : null;
+  const filedSinceLastSteering = sinceDay
+    ? tasks
+        .filter((t) => t.createdDate && t.createdDate >= sinceDay)
+        .map((t) => ({ ticket: t.ticketNumber, title: t.title, status: t.status, created: t.createdDate }))
+    : [];
+
+  return {
+    project,
+    goal,
+    goalMissing: !goal,
+    lastSteeringAt: state.lastSteeringAt,
+    everSteered: !!state.lastSteeringAt,
+    reviewedCount: state.reviewedTickets.length,
+    reviewedTickets: state.reviewedTickets.slice(-50), // most recent, capped for context
+    goalOnlyStreak: state.goalOnlyStreak,              // consecutive goal-only (non-actionable-bound) passes
+    unreviewedDoneCount,
+    openTickets,
+    filedSinceLastSteering,
+  };
+}
