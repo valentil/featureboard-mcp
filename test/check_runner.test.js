@@ -7,7 +7,7 @@ import { spawnSync } from "node:child_process";
 
 import { runChecksPipeline } from "../scripts/run-checks.mjs";
 import {
-  startChecks, getCheckResults, evaluateChecksGate, resolveChecksConfig,
+  startChecks, getCheckResults, evaluateChecksGate, resolveChecksConfig, stageRunner,
 } from "../server/checks.js";
 import { setProjectConfig } from "../server/metadata.js";
 import { eventsForTicket } from "../server/events.js";
@@ -16,6 +16,19 @@ import { Board } from "../server/storage.js";
 // FBMCPF-261 — async background static-check runner.
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// FBMCPB-39 — the runner is executed from a copy staged in the project's own
+// checks dir, not directly from the app-managed bundle (which triggers desktop
+// file-preview/security popups on some hosts).
+test("FBMCPB-39: stageRunner copies the runner into the target dir and runs from there", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fbchecks-stage-"));
+  const staged = stageRunner(dir);
+  assert.equal(path.dirname(staged), dir, "runner is staged in the given (user-owned) dir, not the app bundle");
+  assert.equal(path.basename(staged), "run-checks.mjs");
+  assert.ok(fs.existsSync(staged), "staged runner file exists");
+  assert.match(fs.readFileSync(staged, "utf8"), /run-checks\.mjs .* standalone background static-check runner/,
+    "staged copy is the real runner");
+});
 
 function tmpBoard() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fbchecks-board-"));

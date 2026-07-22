@@ -109,6 +109,26 @@ function runnerScriptPath() {
 }
 
 /**
+ * FBMCPB-39: don't execute the runner directly from the app-managed Claude
+ * Extensions dir. On some hosts (Windows especially) spawning node on a script
+ * inside the app bundle triggers desktop file-preview / security popups and
+ * looks hostile to host hardening. run-checks.mjs imports only node builtins, so
+ * we stage a copy into the project's own checks dir — a user-owned location
+ * outside the app bundle — and run THAT. Falls back to the in-bundle script if
+ * staging fails, so checks never silently stop.
+ */
+export function stageRunner(dir) {
+  const src = runnerScriptPath();
+  try {
+    const dest = path.join(dir, "run-checks.mjs");
+    fs.copyFileSync(src, dest);
+    return dest;
+  } catch {
+    return src; // best-effort: fall back to the in-bundle runner
+  }
+}
+
+/**
  * Fire-and-forget: spawn the detached background check runner for a project.
  * Allocates a runId, writes the runner's args file, spawns run-checks.mjs
  * detached (stdio ignored, unref'd) so it survives this process moving on, and
@@ -146,7 +166,9 @@ export function startChecks(board, project, { ticket = null, revision = null, ch
   };
   atomicWrite(argsFile, JSON.stringify(args, null, 2) + "\n");
 
-  const child = spawn(process.execPath, [runnerScriptPath(), argsFile], {
+  // FBMCPB-39: run a staged copy from the project's checks dir, not the app bundle.
+  const runner = stageRunner(dir);
+  const child = spawn(process.execPath, [runner, argsFile], {
     cwd: repo,
     detached: true,
     stdio: "ignore",
