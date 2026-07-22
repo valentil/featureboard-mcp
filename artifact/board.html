@@ -351,6 +351,7 @@
 </header>
 
 <div id="banner"></div>
+<div id="diagBanner"></div>
 <div id="stallBanner"></div>
 <div id="liveBanner"></div>
 <div class="subbar">
@@ -423,11 +424,38 @@ document.getElementById("themeBtn").addEventListener("click", () => {
 });
 
 async function call(tool, args = {}) {
-  const r = await window.cowork.callMcpTool(FB + tool, args);
+  let r;
+  try {
+    r = await window.cowork.callMcpTool(FB + tool, args);
+  } catch (err) {
+    // callMcpTool rejects outright when the tool isn't in the artifact's grants.
+    maybeFlagGrantError(tool, (err && err.message) || String(err));
+    throw err;
+  }
   const text = r && r.content && r.content[0] && r.content[0].text;
-  if (r && r.isError) { const e = new Error(text || "Tool error"); e.tool = tool; throw e; }
+  if (r && r.isError) { const e = new Error(text || "Tool error"); e.tool = tool; maybeFlagGrantError(tool, e.message); throw e; }
   if (r && r.structuredContent !== undefined && r.structuredContent !== null) return r.structuredContent;
   try { return JSON.parse(text); } catch { return text; }
+}
+
+// FBMCPB-38: self-diagnose orphaned artifact tool grants. A plugin update or
+// re-install can zero an artifact's mcp_tools allowlist, after which every panel
+// fails with a raw "…allowlist" error. Instead of each panel spraying that, the
+// FIRST grant-shaped failure raises one friendly, persistent banner telling the
+// user how to recover (recreate the board artifact / restart). The pattern is
+// deliberately tight — allowlist/grant wording only — so genuine server errors
+// (e.g. a ReferenceError from a tool handler) are NOT misdiagnosed as a grants
+// problem.
+let _grantErrorShown = false;
+function maybeFlagGrantError(tool, msg) {
+  if (_grantErrorShown) return;
+  if (!/allowlist|not in this artifact|mcp[_ ]?tools|not granted|permission (?:denied|to call)/i.test(String(msg || ""))) return;
+  _grantErrorShown = true;
+  const el = document.getElementById("diagBanner");
+  if (el) el.innerHTML = '<div class="banner stop">🔌 <div><b>This board\'s tool access was reset.</b> ' +
+    'A plugin update or re-install can orphan an artifact\'s MCP tool grants, so its panels can\'t load data. ' +
+    'Fix: ask Claude to <b>recreate the board artifact</b> (a fresh board binds new grants), or restart Claude Desktop. ' +
+    '<span class="hint">First blocked tool: <code>' + (tool || "?") + '</code></span></div></div>';
 }
 
 function toast(msg) {
