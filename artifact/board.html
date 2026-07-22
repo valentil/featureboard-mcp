@@ -378,6 +378,7 @@
   <button class="ghost" id="timelineBtn" title="Piano-roll ticket timeline (worked spans, zoom/pan, datastream overlays)">🎹 Timeline</button>
   <button class="ghost" id="reportsBtn" title="Sprint close-out reports (marketing / sales / technical / executive)">📄 Reports</button>
   <button class="ghost" id="prioBtn" title="Auto-prioritize Todo by due date">⚡ Prioritize</button>
+  <button class="ghost" id="knowledgeBtn" title="Project knowledge: vector index status, corpus contents, semantic search">📚 Knowledge</button>
   <button class="ghost" id="notesBtn" title="Project scratchpad">📝 Notes</button>
   <button class="ghost" id="settingsBtn" title="Board settings">⚙ Settings</button>
   <button class="ghost" id="reportBugBtn" title="Report a bug in this board UI">🐞 Report bug</button>
@@ -2941,11 +2942,85 @@ $("#dailyPlanBtn").addEventListener("click", openDailyPlan);
 $("#churnBtn").addEventListener("click", openChurn);
 $("#addBtn").addEventListener("click", openAdd);
 $("#settingsBtn").addEventListener("click", openSettings);
+// FBMCPF-329: Knowledge panel — surfaces this project's local corpus (the "RAG")
+// AS A CARD on the one board: vector-index status (hybrid semantic vs lexical +
+// model), per-source contents counts, and a semantic query box that shows each
+// hit's cosine + bm25 contributions. Counts from list_kb_docs + a Done list_tasks
+// count + a rag_search hybrid probe (mode/model), consistent with the RAG explorer.
+async function openKnowledge() {
+  showModal(
+    '<h3>📚 Knowledge &amp; contents</h3>' +
+    '<div id="kwStatus" class="hint">Loading corpus…</div>' +
+    '<div style="display:flex;gap:6px;margin:10px 0 8px">' +
+      '<input id="kwQ" placeholder="Search this project\'s knowledge (semantic + keyword)…" style="flex:1">' +
+      '<button class="primary" id="kwGo">Search</button></div>' +
+    '<div id="kwResults" style="max-height:44vh;overflow:auto"></div>' +
+    '<div class="actions"><button class="primary" onclick="closeModal()">Close</button></div>'
+  );
+  const go = () => runKnowledgeQuery();
+  document.getElementById("kwGo").addEventListener("click", go);
+  document.getElementById("kwQ").addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+  try {
+    const [docsR, doneR, probe] = await Promise.all([
+      call("list_kb_docs", { project: state.board }),
+      call("list_tasks", { project: state.board, type: "all", status: "Done", limit: 1 }),
+      call("rag_search", { project: state.board, query: "project overview contents", k: 1 }),
+    ]);
+    const kb = docsR.docs || docsR.kbDocs || (Array.isArray(docsR) ? docsR : []) || [];
+    const research = kb.filter((d) => /^research[-/]/.test(d.slug || "")).length;
+    const kbDocs = kb.length - research;
+    const done = doneR.total != null ? doneR.total : ((doneR.tasks || []).length);
+    const hybrid = probe.mode === "hybrid";
+    const modePill = hybrid
+      ? '<span class="chip" style="color:#1a7d47;border-color:#1a7d47">🧠 semantic · hybrid</span>'
+      : '<span class="chip" style="color:#7a5310;border-color:#f0d28a">🔤 lexical · BM25 only</span>';
+    const modelBit = hybrid ? ' · <code>' + esc(probe.model || "MiniLM") + '</code>' : (probe.reason ? ' · ' + esc(probe.reason) : '');
+    document.getElementById("kwStatus").innerHTML =
+      '<div class="banner info" style="margin:0">📚 <div>' +
+      '<b>Vector index:</b> ' + modePill + modelBit + '<br>' +
+      '<b>Corpus:</b> ' + kbDocs + ' kb doc' + (kbDocs === 1 ? '' : 's') + ' · ' +
+      research + ' research brief' + (research === 1 ? '' : 's') + ' · ' +
+      done + ' done-ticket summar' + (done === 1 ? 'y' : 'ies') + ' · repo docs/ + README' +
+      '<div class="hint" style="margin-top:2px">Indexed locally, zero tokens. ' +
+      (hybrid ? 'Queries re-rank by cosine similarity over MiniLM embeddings, fused with BM25.' : 'Semantic re-rank unavailable — pure keyword ranking.') +
+      '</div></div></div>';
+  } catch (e) {
+    document.getElementById("kwStatus").innerHTML = '<span class="hint">Couldn\'t load corpus: ' + esc(String(e.message).slice(0, 160)) + '</span>';
+  }
+}
+
+async function runKnowledgeQuery() {
+  const q = (document.getElementById("kwQ").value || "").trim();
+  const box = document.getElementById("kwResults");
+  if (!box) return;
+  if (!q) { box.innerHTML = ""; return; }
+  box.innerHTML = '<span class="hint">Searching…</span>';
+  try {
+    const r = await call("rag_search", { project: state.board, query: q, k: 8 });
+    const items = r.results || [];
+    if (!items.length) { box.innerHTML = '<span class="hint">No hits. Retrieval favours the vocabulary the docs use.</span>'; return; }
+    box.innerHTML = items.map((x) => {
+      const chips =
+        (x.cosine != null ? '<span class="chip" title="cosine similarity (semantic)">cos ' + (Math.round(x.cosine * 100) / 100) + '</span>' : '') +
+        (x.bm25 != null ? '<span class="chip" title="BM25 lexical score">bm25 ' + (Math.round(x.bm25 * 10) / 10) + '</span>' : '') +
+        (x.score != null ? '<span class="chip" title="fused rank score">fused ' + (Math.round(x.score * 1e4) / 1e4) + '</span>' : '');
+      const snip = (x.text || '').slice(0, 320);
+      return '<div style="padding:8px 0;border-top:1px solid #eef0f5">' +
+        '<div style="font-size:12px"><b>' + esc(x.source || '') + '</b> ' +
+        '<span class="hint">' + esc(x.heading || '') + '</span> ' + chips + '</div>' +
+        '<div class="hint" style="margin-top:2px;white-space:pre-wrap">' + esc(snip) + (x.text && x.text.length > 320 ? '…' : '') + '</div></div>';
+    }).join("");
+  } catch (e) {
+    box.innerHTML = '<span class="hint">Search failed: ' + esc(String(e.message).slice(0, 160)) + '</span>';
+  }
+}
+
 $("#notesBtn").addEventListener("click", openNotes);
 $("#brainstormBtn").addEventListener("click", openBrainstorm);
 $("#importBtn").addEventListener("click", openImport);
 $("#linksBtn").addEventListener("click", openLinks);
 $("#testsBtn").addEventListener("click", openTests);
+$("#knowledgeBtn").addEventListener("click", openKnowledge);
 $("#analyticsBtn").addEventListener("click", openAnalytics);
 $("#timelineBtn").addEventListener("click", openTimeline);
 $("#reportsBtn").addEventListener("click", openReports);

@@ -133,6 +133,7 @@ form.add textarea{min-height:280px;font-family:var(--mono);font-size:12.5px}
       and every <b>Done ticket's title + completion summary</b>; those two sources are queryable from the
       🔍 Query tab but only kb/ docs are editable here.
     </div>
+    <div class="note" id="corpusSummary" style="border-left-color:var(--violet)">Loading contents…</div>
     <div class="row" style="margin-bottom:12px">
       <input type="text" id="filter" placeholder="Filter docs by title/slug…" style="flex:1;min-width:220px">
       <button id="reload">↻ Refresh</button>
@@ -253,15 +254,43 @@ async function loadProjects() {
 
 async function probeRag() {
   try {
-    await call("rag_search", { project: state.project, query: "probe", k: 1 });
+    // FBMCPF-329: the probe response carries the VECTOR-DB status (mode/model),
+    // so surface hybrid-semantic vs lexical instead of assuming BM25-only.
+    const r = await call("rag_search", { project: state.project, query: "probe", k: 1 });
     state.ragAvailable = true;
-    $("#cap").textContent = "full RAG (kb + docs + tickets)"; $("#cap").className = "pill ok";
-    $("#qMode").innerHTML = "Querying the <b>full BM25 index</b>: kb docs, repo docs/ + README, Done-ticket summaries.";
+    state.ragMode = r.mode || "lexical";
+    state.ragModel = r.model || null;
+    const hybrid = state.ragMode === "hybrid";
+    $("#cap").textContent = hybrid ? "hybrid vector RAG" : "lexical RAG (BM25)";
+    $("#cap").className = "pill " + (hybrid ? "ok" : "warn");
+    $("#qMode").innerHTML = hybrid
+      ? "Querying the <b>hybrid vector index</b>: BM25 preselects, then <b>cosine re-rank</b> over <code>" + esc(state.ragModel || "MiniLM") + "</code> embeddings (kb docs, repo docs/ + README, Done-ticket summaries). Hits show cos / bm25 / fused."
+      : ("Querying the <b>BM25 lexical index</b> (kb docs, repo docs/ + README, Done-ticket summaries). Semantic re-rank unavailable" + (r.reason ? " — " + esc(r.reason) : "") + ".");
+    updateCorpusSummary();
   } catch {
     state.ragAvailable = false;
+    state.ragMode = null;
     $("#cap").textContent = "kb-only (server pre-0.7)"; $("#cap").className = "pill warn";
     $("#qMode").innerHTML = "<b>rag_search isn't exposed by the running server yet</b> (needs the 0.7.0 build + a Claude Desktop restart) — falling back to kb-doc keyword search only.";
+    updateCorpusSummary();
   }
+}
+
+// FBMCPF-329: compact "what's in this project" line — kb/research counts (from
+// the loaded docs) plus the live vector-index status. Rendered in the Contents
+// tab; refreshed by both renderDocs (counts) and probeRag (vector status).
+function updateCorpusSummary() {
+  const el = document.getElementById("corpusSummary");
+  if (!el) return;
+  const research = state.docs.filter((d) => /^research[-/]/.test(d.slug || "")).length;
+  const kb = state.docs.length - research;
+  const hybrid = state.ragMode === "hybrid";
+  const vec = hybrid
+    ? "🧠 hybrid — cosine + BM25 · " + esc(state.ragModel || "MiniLM")
+    : (state.ragAvailable === false ? "…" : "🔤 lexical — BM25");
+  el.innerHTML = "<b>Contents:</b> " + kb + " kb doc" + (kb === 1 ? "" : "s") + " · " +
+    research + " research brief" + (research === 1 ? "" : "s") +
+    " · repo docs/ + README · Done-ticket summaries &nbsp;|&nbsp; <b>Vector index:</b> " + vec;
 }
 
 /* ---------- contents ---------- */
@@ -278,6 +307,7 @@ function renderDocs() {
   const docs = state.docs.filter((d) =>
     !f || (d.title || "").toLowerCase().includes(f) || (d.slug || "").toLowerCase().includes(f));
   $("#docCount").textContent = docs.length + " doc" + (docs.length === 1 ? "" : "s");
+  updateCorpusSummary();
   const box = $("#docs"); box.innerHTML = "";
   $("#docsEmpty").style.display = docs.length ? "none" : "";
   docs.forEach((d) => {
@@ -336,7 +366,8 @@ async function runQuery() {
       const r = await call("rag_search", { project: state.project, query: q, k });
       const max = Math.max(0.0001, ...(r.results || []).map((x) => x.score || 0));
       items = (r.results || []).map((x) => ({
-        source: x.source, heading: x.heading, text: x.text, score: x.score, pct: Math.round(100 * (x.score || 0) / max),
+        source: x.source, heading: x.heading, text: x.text, score: x.score,
+        cosine: x.cosine, bm25: x.bm25, pct: Math.round(100 * (x.score || 0) / max),
       }));
     } else {
       const r = await call("search_kb", { project: state.project, query: q, limit: k });
@@ -356,6 +387,8 @@ async function runQuery() {
           <span class="head">${esc(x.heading || "")}</span>
           <div class="spacer" style="flex:1"></div>
           ${x.pct != null ? '<div class="scorebar"><i style="width:' + x.pct + '%"></i></div>' : ""}
+          ${x.cosine != null ? '<span class="score" title="cosine similarity (semantic)">cos ' + (Math.round(x.cosine * 100) / 100) + '</span>' : ""}
+          ${x.bm25 != null ? '<span class="score" title="BM25 lexical score">bm25 ' + (Math.round(x.bm25 * 10) / 10) + '</span>' : ""}
           ${x.score != null ? '<span class="score">' + x.score + "</span>" : ""}
         </div>
         <div class="txt">${highlight(x.text || "", terms)}</div>`;
