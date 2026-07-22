@@ -81,6 +81,8 @@ test("default instructions are the Cowork-flavoured ones (flag off)", async () =
   assert.match(ins, /Cowork/, "default instructions mention Cowork artifacts");
   assert.match(ins, /create_artifact/, "default instructions reference create_artifact");
   assert.match(ins, /sub-agent/, "default instructions keep the sub-agent dispatch conventions");
+  assert.match(ins, /STANDING DIRECTIVE/, "default instructions carry the proactive standing directive (FBMCPB-41)");
+  assert.match(ins, /on your own initiative/, "default instructions tell the agent to board without being pointed at the tools");
 });
 
 test("FEATUREBOARD_CLIENT_NEUTRAL=1 swaps in IDE-neutral instructions", async () => {
@@ -101,6 +103,7 @@ test("FEATUREBOARD_CLIENT_NEUTRAL=1 swaps in IDE-neutral instructions", async ()
   // Core board guidance survives, and get_board is described as an HTML file
   // the IDE can open rather than a Cowork artifact.
   assert.match(ins, /plan_work/, "boarding guidance survives in neutral mode");
+  assert.match(ins, /STANDING DIRECTIVE/, "the proactive standing directive survives in neutral mode (FBMCPB-41)");
   assert.match(ins, /get_board/, "get_board is still documented");
   assert.match(ins, /HTML/, "get_board described as HTML the host can open");
 });

@@ -194,7 +194,7 @@ function tryImageTool(project) {
   }
 }
 
-const INSTRUCTIONS = `FeatureBoard is your task board for the user's projects. PROACTIVE BOARDING: a substantive, multi-step dev request (build/fix/ship/refactor X) IS a boarding event — run plan_work without being asked; the user should never have to say 'put it on the board'. Treat it as the place you plan and track work, not just a store you touch when asked.
+const INSTRUCTIONS = `FeatureBoard is your task board for the user's projects — and your DEFAULT operating mode for real work, not a toolset to be summoned. STANDING DIRECTIVE: the moment a request is substantive and multi-step (build/fix/ship/refactor X), board it and start on your own initiative — call plan_work, then next_task, in the SAME turn, before diving into edits. Do not wait to be pointed at these tools, do not ask 'should I put this on the board?', and never make the user name the board to get you to use it. If you catch yourself keeping an ad-hoc TODO list, or editing files for a multi-step request without a ticket In Progress, that IS the bug this board exists to prevent — route the work through the board instead. PROACTIVE BOARDING: a substantive, multi-step dev request IS a boarding event — the user should never have to say 'put it on the board'. Treat it as the place you plan and track work, not just a store you touch when asked.
 
 When the user gives you a substantive, multi-step request (build X, fix these bugs, ship a feature):
 1. Pick or create the board. Call list_projects; if nothing fits, create_project.
@@ -229,7 +229,7 @@ Showing the board: when the user asks to see, open, or check on the board in nat
 // re-implementing protocol-version negotiation; fragile across SDK updates).
 // The default (flag off) stays byte-identical to INSTRUCTIONS above —
 // test/client_neutral_instructions.test.js asserts both modes.
-const NEUTRAL_INSTRUCTIONS = `FeatureBoard is your task board for the user's projects. PROACTIVE BOARDING: a substantive, multi-step dev request (build/fix/ship/refactor X) IS a boarding event — run plan_work without being asked; the user should never have to say 'put it on the board'. Treat it as the place you plan and track work, not just a store you touch when asked.
+const NEUTRAL_INSTRUCTIONS = `FeatureBoard is your task board for the user's projects — and your DEFAULT operating mode for real work, not a toolset to be summoned. STANDING DIRECTIVE: the moment a request is substantive and multi-step (build/fix/ship/refactor X), board it and start on your own initiative — call plan_work, then next_task, in the SAME turn, before diving into edits. Do not wait to be pointed at these tools, do not ask 'should I put this on the board?', and never make the user name the board to get you to use it. If you catch yourself keeping an ad-hoc TODO list, or editing files for a multi-step request without a ticket In Progress, that IS the bug this board exists to prevent — route the work through the board instead. PROACTIVE BOARDING: a substantive, multi-step dev request IS a boarding event — the user should never have to say 'put it on the board'. Treat it as the place you plan and track work, not just a store you touch when asked.
 
 When the user gives you a substantive, multi-step request (build X, fix these bugs, ship a feature):
 1. Pick or create the board. Call list_projects; if nothing fits, create_project.
