@@ -44,6 +44,43 @@ server.registerPrompt(
   })
 );
 
+// FBMCPF-316: when a chat gets long or hits a wall, turn everything the current
+// session knows into ONE copy-paste starter message that lets a fresh session
+// resume with zero back-scrolling. Claude already has the session in context;
+// this prompt directs it to synthesize durable state (from the board, not the
+// chat scrollback) into a self-contained handoff.
+server.registerPrompt(
+  "restart_handoff",
+  {
+    title: "Generate a restart handoff",
+    description:
+      "This chat needs to restart (too long, or stuck) — produce a single, copy-paste starter message that lets a fresh session resume exactly where we are, sourced from the board's durable state rather than the chat scrollback.",
+    argsSchema: {
+      project: z.string().optional().describe("The active board. If omitted, infer it from what we've been working on."),
+    },
+  },
+  ({ project } = {}) => ({
+    messages: [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text:
+            "Our session needs to restart. Produce ONE self-contained starter message I can paste into a fresh chat to resume exactly where we are — no back-scrolling required. Build it from durable state, not this chat's scrollback:\n" +
+            `1. Identify the active board${project ? ` (it's "${project}")` : " (infer it from what we've been doing)"} and read its state: list_tasks for anything In Progress or Review, get_steering_status (or get_metrics) for where the loop is, and the recent work log / last commits for what THIS session just did.\n` +
+            "2. Capture the durable context the new session must not rediscover: the project goal and standard, key conventions from the project config / customPrompt (git mode, code location, any host/environment quirks), and anything half-finished (uncommitted edits, tickets in Review awaiting verification).\n" +
+            "3. Write the handoff as a ready-to-paste block, in this shape:\n" +
+            "   - a one-line 'Resume work on <project>' preamble;\n" +
+            "   - **Where we are**: 2–5 bullets of current state (what's Done this session, what's In Progress/Review, any blockers);\n" +
+            "   - **Context to carry**: the goal, standard, and must-know conventions/quirks;\n" +
+            "   - **Next actions**: a short numbered list of the exact next steps, most important first.\n" +
+            "4. Keep it tight and specific — ticket ids, file paths, and commit hashes over prose. Output ONLY the paste-ready block (in a code fence) so I can copy it verbatim.",
+        },
+      },
+    ],
+  })
+);
+
 server.registerPrompt(
   "process_next",
   {

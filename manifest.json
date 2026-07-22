@@ -897,6 +897,14 @@
       "text": "Turn our conversation so far into a FeatureBoard project. If a name is given use it, otherwise propose one. Extract features (new work) and bugs (issues raised) and call plan_work once with createProject:true to persist them, then show the created tickets grouped by feature/bug."
     },
     {
+      "name": "restart_handoff",
+      "description": "This chat needs to restart (too long, or stuck) — produce a single, copy-paste starter message that lets a fresh session resume exactly where we are, sourced from the board's durable state rather than the chat scrollback.",
+      "arguments": [
+        "project"
+      ],
+      "text": "This chat needs to restart (too long, or stuck) — produce a single, copy-paste starter message that lets a fresh session resume exactly where we are, sourced from the board's durable state rather than the chat scrollback."
+    },
+    {
       "name": "process_next",
       "description": "Pull the top ticket off the board's priority queue and work it end-to-end with the FeatureBoard work-packet loop.",
       "arguments": [
