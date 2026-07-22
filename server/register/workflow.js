@@ -1,6 +1,6 @@
 // Auto-extracted from server/index.js (FBMCPF-224). Registration blocks moved verbatim.
 export function registerWorkflowTools(server, ctx) {
-  const { addDecision, addReviewComment, appendEvent, assignSprint, blendPlan, checkAcceptance, closeSprint, createSprint, dailyPlan, decisionsForTicket, estimateWork, evalReport, evaluateRules, exportBoard, exportMetricsSeries, exportWorkLog, getBoard, getGlobalConfig, getRequirements, getSprintReport, getTicketDiff, getTicketHistory, getTimelineData, graduateProject, listDecisions, listReviewComments, listSprints, meta, notifySlack, planBudget, resolveReviewComment, setRequirements, sprintOfTask, tryTool, writeHandoff, writeTool, z } = ctx;
+  const { applyRollover, planRollover, addDecision, addReviewComment, appendEvent, assignSprint, blendPlan, checkAcceptance, closeSprint, createSprint, dailyPlan, decisionsForTicket, estimateWork, evalReport, evaluateRules, exportBoard, exportMetricsSeries, exportWorkLog, getBoard, getGlobalConfig, getRequirements, getSprintReport, getTicketDiff, getTicketHistory, getTimelineData, graduateProject, listDecisions, listReviewComments, listSprints, meta, notifySlack, planBudget, resolveReviewComment, setRequirements, sprintOfTask, tryTool, writeHandoff, writeTool, z } = ctx;
 
 // sprints (FBMCPF-120) -------------------------------------------------------
 server.registerTool(

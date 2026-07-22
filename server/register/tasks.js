@@ -1,6 +1,6 @@
 // Auto-extracted from server/index.js (FBMCPF-224). Registration blocks moved verbatim.
 export function registerTaskTools(server, ctx) {
-  const { StatusEnum, codeFileMap, dismissCleanupFinding, evaluateChecksGate, evaluateCommitGate, evaluateDoneGates, evaluateRules, existsSync, getBoard, listCodeTree, meta, mirrorGraduatedPad, nodePath, notifySlack, notifyTicketEvent, pruneBoard, readCodeFile, readFileSync, readdirSync, scanBoardCleanup, suggestFileSplit, tryTool, writeHandoff, writeTool, z } = ctx;
+  const { scanTestFiles, StatusEnum, codeFileMap, dismissCleanupFinding, evaluateChecksGate, evaluateCommitGate, evaluateDoneGates, evaluateRules, existsSync, getBoard, listCodeTree, meta, mirrorGraduatedPad, nodePath, notifySlack, notifyTicketEvent, pruneBoard, readCodeFile, readFileSync, readdirSync, scanBoardCleanup, suggestFileSplit, tryTool, writeHandoff, writeTool, z } = ctx;
 
 // duplicate-id repair (FBMCPB-11) --------------------------------------------
 server.registerTool(

@@ -1,6 +1,6 @@
 // Auto-extracted from server/index.js (FBMCPF-224). Registration blocks moved verbatim.
 export function registerTestingTools(server, ctx) {
-  const { appendEvidence, bugImpactScan, existsSync, fail, formatEvidenceSection, generateMultiModelTests, generateTestFromPrompt, getBoard, getPricing, getTestPage, listTestPages, listVariants, meta, nodePath, readdirSync, removeTestPage, runVariantMatrix, saveGeneratedTests, saveTestPage, suggestTestStub, tryTool, writeTool, z } = ctx;
+  const { coverageByProduct, groupBySuite, appendEvidence, bugImpactScan, computeRegressions, existsSync, fail, formatEvidenceSection, generateMultiModelTests, generateTestFromPrompt, getBoard, getPricing, getTestPage, listTestPages, listVariants, meta, nodePath, readdirSync, removeTestPage, runVariantMatrix, saveGeneratedTests, saveTestPage, suggestTestStub, tryTool, writeTool, z } = ctx;
 
 // testing (FBMCPF-63/34/35/36) ---------------------------------------------
 
