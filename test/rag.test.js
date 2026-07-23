@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { Board } from "../server/storage.js";
 import { addKbDoc } from "../server/kb.js";
-import { setProjectConfig, getWorkPacket } from "../server/metadata.js";
+import { setProjectConfig, getWorkPacket, setScratchpad } from "../server/metadata.js";
 import { tokenize, chunkMarkdown, buildIndex, search, ragSearch, clearIndexCache } from "../server/rag.js";
 import { researchSlug } from "../server/research.js";
 
@@ -148,4 +148,32 @@ test("ragInPackets:false disables ragChunks on the packet", () => {
   const t = b.addTask("Proj", "feature", { title: "Payment retries", description: "backoff" });
   const packet = getWorkPacket(b, "Proj", t.ticketNumber);
   assert.equal(packet.ragChunks, undefined);
+});
+
+test("FBMCPB-54: the project scratchpad is part of the corpus and is retrievable", () => {
+  const b = tmpBoard();
+  // Research condensation that lives in the scratchpad, NOT in kb/.
+  setScratchpad(
+    b,
+    "Proj",
+    "# Known walls\n\nThe 2-adic conjugacy of the Collatz map to the shift is a solenoid conjugacy; the binary viewpoint has not yielded a cycle bound.",
+  );
+  clearIndexCache();
+
+  const idx = buildIndex(b, "Proj");
+  const sources = new Set(idx.docs.map((d) => d.source));
+  assert.ok(sources.has("scratchpad"), "scratchpad is in the corpus");
+
+  // Retrievable by its own vocabulary (would have returned [] before the fix).
+  const hit = ragSearch(b, "Proj", "solenoid conjugacy cycle bound", { k: 5 });
+  assert.ok(hit.some((r) => r.source === "scratchpad"), "scratchpad content is retrievable");
+});
+
+test("FBMCPB-54: an empty scratchpad contributes nothing to the corpus", () => {
+  const b = tmpBoard();
+  setScratchpad(b, "Proj", "   \n  ");
+  addKbDoc(b, "Proj", "Doc", "alpha beta gamma");
+  clearIndexCache();
+  const idx = buildIndex(b, "Proj");
+  assert.ok(!idx.docs.some((d) => d.source === "scratchpad"), "empty scratchpad excluded");
 });

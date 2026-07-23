@@ -7,8 +7,10 @@
  *
  *   (a) every kb/ doc of the project (architecture notes, gotchas, and the
  *       research briefs FBMCPF-263 writes as research-<ticket> docs),
- *   (b) *.md under the code repo's docs/ plus the root README, and
- *   (c) Done tickets' title + completionSummary from the board.
+ *   (b) the project's freeform scratchpad.md (research condensations + notes
+ *       that live outside kb/ — FBMCPB-54),
+ *   (c) *.md under the code repo's docs/ plus the root README, and
+ *   (d) Done tickets' title + completionSummary from the board.
  *
  * Retrieval is Okapi BM25 (k1=1.5, b=0.75) over heading/paragraph chunks — a
  * classic, well-understood lexical ranker. Be honest about what this is: it is
@@ -218,6 +220,26 @@ function safeIsDir(p) {
   try { return fs.statSync(p).isDirectory(); } catch { return false; }
 }
 
+/**
+ * The project's freeform scratchpad (scratchpad.md) as chunk records
+ * (source = "scratchpad"). This is where research condensations, "known walls",
+ * and running notes accumulate outside kb/ — without this they never reach the
+ * index (FBMCPB-54). Chunked like any markdown doc so long scratchpads stay
+ * retrievable section-by-section.
+ */
+function scratchpadChunks(board, project, fingerprintParts) {
+  const p = path.join(board.projectDir(project), "scratchpad.md");
+  let stat, raw;
+  try {
+    stat = fs.statSync(p);
+    if (stat.size > MAX_FILE_BYTES) return [];
+    raw = fs.readFileSync(p, "utf8");
+  } catch { return []; }
+  if (!raw.trim()) return [];
+  fingerprintParts.push(`scratchpad:${stat.mtimeMs}:${stat.size}`);
+  return chunkMarkdown(raw, "scratchpad");
+}
+
 /** Done tickets' title + completionSummary as chunk records (source = ticket id). */
 function doneTicketChunks(board, project, fingerprintParts) {
   const out = [];
@@ -250,7 +272,7 @@ function cacheKeyFor(board, project) {
 
 /**
  * Build (or return a cached) BM25 index for a project. The corpus is KB docs +
- * docs/*.md + Done ticket summaries. The built index is cached in memory keyed
+ * the scratchpad + docs/*.md + Done ticket summaries. The built index is cached in memory keyed
  * by board+project and only rebuilt when a cheap mtime/count fingerprint changes.
  */
 export function buildIndex(board, project, opts = {}) {
@@ -258,6 +280,7 @@ export function buildIndex(board, project, opts = {}) {
   const fingerprintParts = [];
   const chunks = [
     ...kbChunks(board, project, fingerprintParts),
+    ...scratchpadChunks(board, project, fingerprintParts),
     ...docsChunks(codeLocation, fingerprintParts),
     ...doneTicketChunks(board, project, fingerprintParts),
   ];
