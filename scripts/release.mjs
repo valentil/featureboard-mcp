@@ -75,9 +75,12 @@ export function bumpVersion(current, { patch = false } = {}) {
 
 /** "0.6.0" -> "v0.6" — matches the repo's existing minor-only tag style. */
 export function tagFromVersion(version) {
-  const m = /^(\d+)\.(\d+)\.\d+$/.exec(String(version).trim());
+  const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(String(version).trim());
   if (!m) throw new Error(`Not a plain semver "X.Y.Z": ${version}`);
-  return `v${m[1]}.${m[2]}`;
+  // Minor releases keep the repo's minor-only tag style (v0.6, v0.7); a patch
+  // release carries the full tag (v0.7.1) so it never collides with the minor
+  // tag that already exists from the .0 release.
+  return m[3] === "0" ? `v${m[1]}.${m[2]}` : `v${m[1]}.${m[2]}.${m[3]}`;
 }
 
 /** Count entries in manifest.json's tools array (accepts parsed object or raw text). */
@@ -134,8 +137,12 @@ export function formatReleaseNotes({ commitCount, prevTag, toolsPrev, toolsNow, 
 }
 
 /** Build the exact `gh release create` argv (used both to print and to run it). */
-export function buildGhArgs({ tag, mcpbPath, title, notes }) {
-  return ["release", "create", tag, mcpbPath, "--title", title, "--notes", notes];
+export function buildGhArgs({ tag, assets, mcpbPath, title, notes }) {
+  // Accept a list of asset paths (stable-named .plugin/.zip/latest.json + the
+  // versioned .mcpb) so the release carries durable `releases/latest/download`
+  // URLs. Back-compat: a single mcpbPath still works.
+  const files = (assets && assets.length ? assets : [mcpbPath]).filter(Boolean);
+  return ["release", "create", tag, ...files, "--title", title, "--notes", notes];
 }
 
 /** Quote a single argv entry for human-readable command printing (display only). */
@@ -237,7 +244,7 @@ function main() {
     console.log("\n--dry-run: no files written, nothing committed/tagged/released.\n");
     console.log(`README.md numeric claims would change: ${changed}`);
     console.log(`manifest.json/package.json version would become: ${newVersion}`);
-    console.log("Would run: npm run docs (if present), then npm run build && npm run bundle");
+    console.log("Would run: npm run docs (if present), then npm run build && npm run bundle && npm run plugin");
     const mcpbPath = rel(`featureboard-${newVersion}.mcpb`);
 
     if (!opts.themes) {
@@ -248,7 +255,8 @@ function main() {
         toolsPrev, toolsNow, testsPrev, testsNow, themes: opts.themes,
       });
       const title = `FeatureBoard ${newVersion}`;
-      const ghArgs = buildGhArgs({ tag, mcpbPath, title, notes });
+      const assets = [mcpbPath, rel("releases/featureboard.plugin"), rel("releases/featureboard-mcp.zip"), rel("releases/latest.json")];
+      const ghArgs = buildGhArgs({ tag, assets, title, notes });
       console.log(`\nCommit message: release: v${newVersion} — ${opts.themes}`);
       console.log(`Tag: ${tag}`);
       console.log(`Release notes: ${notes}`);
@@ -296,6 +304,13 @@ function main() {
   }
   console.log(`Packed ${path.basename(mcpbPath)}.`);
 
+  // 4b. Build the stable-named Cowork plugin + IDE zip + latest.json so the
+  // GitHub release carries durable `releases/latest/download/<name>` URLs.
+  sh("npm run plugin");
+  const pluginPath = rel("releases/featureboard.plugin");
+  const ideZipPath = rel("releases/featureboard-mcp.zip");
+  const latestManifestPath = rel("releases/latest.json");
+
   // 5. Release notes.
   const notes = formatReleaseNotes({
     commitCount: commitCount ?? "0", prevTag: prevTag ?? "(none)",
@@ -311,7 +326,16 @@ function main() {
   execFileSync("git", ["tag", tag], { cwd: root, stdio: "inherit" });
   console.log(`Committed and tagged ${tag}.`);
 
-  const ghArgs = buildGhArgs({ tag, mcpbPath, title, notes });
+  // Stamp the published manifest with this version + notes, then attach the
+  // stable-named assets alongside the versioned .mcpb.
+  try {
+    const lm = JSON.parse(fs.readFileSync(latestManifestPath, "utf8"));
+    lm.version = newVersion;
+    lm.notes = notes;
+    fs.writeFileSync(latestManifestPath, JSON.stringify(lm, null, 2) + "\n", "utf8");
+  } catch { /* manifest stamp is best-effort */ }
+  const assets = [mcpbPath, pluginPath, ideZipPath, latestManifestPath].filter((f) => fs.existsSync(f));
+  const ghArgs = buildGhArgs({ tag, assets, title, notes });
   console.log(`Running: ${formatGhCommand(ghArgs)}`);
   execFileSync("gh", ghArgs, { cwd: root, stdio: "inherit" });
   console.log(`\nReleased ${tag}.`);

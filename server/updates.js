@@ -129,7 +129,7 @@ export function getLatestUpdate(board, project, { now = new Date(), staleDays = 
  * identifying data; it is a plain GET of a public JSON file.
  */
 
-const UPDATES_CHECK_URL = "https://featureboard.ai/downloads/latest.json";
+const UPDATES_CHECK_URL = "https://github.com/valentil/featureboard-mcp/releases/latest/download/latest.json";
 const CHECK_TIMEOUT_MS = 5000;
 
 /**
@@ -228,8 +228,8 @@ export async function checkUpdates({ fetchImpl, currentVersion, url = UPDATES_CH
   const updateAvailable = compareVersions(current, latest) < 0;
   const artifacts = (manifest && manifest.artifacts) || {};
   const downloads = {
-    plugin: artifacts.plugin || "https://featureboard.ai/downloads/featureboard.plugin",
-    mcpZip: artifacts.mcpZip || "https://featureboard.ai/downloads/featureboard-mcp.zip",
+    plugin: artifacts.plugin || "https://github.com/valentil/featureboard-mcp/releases/latest/download/featureboard.plugin",
+    mcpZip: artifacts.mcpZip || "https://github.com/valentil/featureboard-mcp/releases/latest/download/featureboard-mcp.zip",
   };
   const recommendation = updateAvailable
     ? `Update available: v${latest} (you run v${current}) — Claude Cowork users: reinstall featureboard.plugin; Cursor/Grok users: featureboard-mcp.zip.`

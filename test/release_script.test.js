@@ -45,9 +45,14 @@ test("bumpVersion rejects non-semver input", () => {
   assert.throws(() => bumpVersion("not-a-version"), /semver/);
 });
 
-test("tagFromVersion drops the patch component", () => {
+test("tagFromVersion: minor releases drop the patch, patch releases keep it", () => {
+  // .0 releases use the repo's minor-only tag style …
   assert.equal(tagFromVersion("0.6.0"), "v0.6");
-  assert.equal(tagFromVersion("1.2.9"), "v1.2");
+  assert.equal(tagFromVersion("1.2.0"), "v1.2");
+  // … but a patch release carries the full tag so it can't collide with the
+  // minor tag that already exists (e.g. v0.7 from 0.7.0 → v0.7.1 for 0.7.1).
+  assert.equal(tagFromVersion("0.7.1"), "v0.7.1");
+  assert.equal(tagFromVersion("1.2.9"), "v1.2.9");
 });
 
 test("countManifestTools counts the tools array from an object or raw JSON text", () => {

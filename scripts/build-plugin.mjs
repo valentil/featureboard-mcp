@@ -198,8 +198,8 @@ const manifest = {
   version: pkg.version,
   releasedAt: new Date().toISOString(),
   artifacts: {
-    plugin: "https://featureboard.ai/downloads/featureboard.plugin",
-    mcpZip: "https://featureboard.ai/downloads/featureboard-mcp.zip",
+    plugin: "https://github.com/valentil/featureboard-mcp/releases/latest/download/featureboard.plugin",
+    mcpZip: "https://github.com/valentil/featureboard-mcp/releases/latest/download/featureboard-mcp.zip",
   },
   notes: "",
 };

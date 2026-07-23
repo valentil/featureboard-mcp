@@ -109,7 +109,7 @@ test("checkUpdates: update available", async () => {
 
   assert.equal(impl.calls.length, 1);
   const call = impl.calls[0];
-  assert.equal(call.url, "https://featureboard.ai/downloads/latest.json");
+  assert.equal(call.url, "https://github.com/valentil/featureboard-mcp/releases/latest/download/latest.json");
   assert.equal(call.opts.method, "GET");
   assert.ok(call.opts.signal, "an AbortController signal is passed");
 });
