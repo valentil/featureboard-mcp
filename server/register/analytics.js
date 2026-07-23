@@ -1,6 +1,6 @@
 // Auto-extracted from server/index.js (FBMCPF-224). Registration blocks moved verbatim.
 export function registerAnalyticsTools(server, ctx) {
-  const { Board, addKbDoc, agentMonitorV2, appendEvent, appendHeartbeat, applyDriftRemediation, blendStatus, driftReport, estimateTicketMinutes, existsSync, getBoard, getGitConfig, getGlobalConfig, getHistoryMap, getKbDoc, getLiveActivity, getLatestUpdate, getPricing, getVoiceProfile, lastDispatchForTicket, lintVoice, listKbDocs, listSprints, maybeLint, meta, nodePath, postProjectUpdate, predictDueDates, reconcileChurn, recordDriftScore, rollupCost, prepareResearch, ragSearch, ragSearchHybrid, searchKb, setSite, startDriftRun, suggestHistoricalFiles, tryTool, writeTool, z } = ctx;
+  const { Board, addKbDoc, agentMonitorV2, appendEvent, appendHeartbeat, applyDriftRemediation, blendStatus, driftReport, estimateTicketMinutes, existsSync, getBoard, getGitConfig, getGlobalConfig, getHistoryMap, getKbDoc, getLiveActivity, getLatestUpdate, getPricing, getVoiceProfile, lastDispatchForTicket, lintVoice, listKbDocs, listSprints, maybeLint, meta, nodePath, postProjectUpdate, predictDueDates, reconcileChurn, recordDriftScore, rollupCost, prepareResearch, appendResearch, ragSearch, ragSearchHybrid, searchKb, setSite, startDriftRun, suggestHistoricalFiles, tryTool, writeTool, z } = ctx;
 
 // analytics & metadata (v0.3) ----------------------------------------------
 
@@ -355,6 +355,22 @@ server.registerTool(
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
   tryTool(({ project, query, limit }) => ({ results: searchKb(getBoard(), project, query, { limit }) }))
+);
+
+server.registerTool(
+  "append_research",
+  {
+    title: "Append a research finding",
+    description:
+      "Capture ONE research finding into a ticket's durable research doc AS YOU GO (FBMCPF-333). Appends to the same kb doc get_work_packet auto-attaches downstream (research-<ticket>), creating it on the first call and appending on later ones — so findings accrue in the always-indexed kb/ knowledge base instead of the ephemeral scratchpad. Prefer this over append_scratchpad for anything worth remembering across tickets: call it repeatedly during research rather than saving one brief only at the end.",
+    inputSchema: {
+      project: z.string(),
+      ticket: z.string().describe("Ticket the finding belongs to (e.g. FBF-12)."),
+      finding: z.string().describe("One finding / note, markdown; stored verbatim as its own paragraph."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  writeTool(({ project, ticket, finding }) => appendResearch(getBoard(), project, ticket, finding))
 );
 
 

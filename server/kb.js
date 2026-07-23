@@ -148,6 +148,32 @@ export function addKbDoc(board, project, title, content, opts = {}) {
   return { slug, title: t, path: p, bytes: Buffer.byteLength(rendered, "utf8"), created, updated: !created };
 }
 
+/**
+ * Append to a kb doc's body, creating it if absent. Unlike addKbDoc (which
+ * overwrites), this preserves the existing body and adds `content` after it
+ * (separated by a blank line), then bumps updatedAt. This is the durable,
+ * always-indexed "capture as you go" primitive behind append_research
+ * (FBMCPF-333) — so findings accrue in kb/ instead of the ephemeral scratchpad.
+ * Matching is by title (case-insensitive); a same-slug doc with a DIFFERENT
+ * title is treated as absent so we never append into the wrong doc.
+ */
+export function appendKbDoc(board, project, title, content, opts = {}) {
+  const t = String(title || "").trim();
+  if (!t) throw new Error("A kb doc title is required.");
+  const addition = content == null ? "" : String(content);
+
+  const existing = getKbDoc(board, project, t);
+  const match = existing && String(existing.title || "").toLowerCase() === t.toLowerCase();
+  let body = addition;
+  if (match) {
+    const sep = opts.separator != null ? opts.separator : "\n\n";
+    const prev = String(existing.content || "").replace(/\s+$/, "");
+    body = prev ? `${prev}${sep}${addition}` : addition;
+  }
+  const res = addKbDoc(board, project, t, body);
+  return { ...res, created: !match, appended: !!match };
+}
+
 // ---------------------------------------------------------------------------
 // Reading
 // ---------------------------------------------------------------------------

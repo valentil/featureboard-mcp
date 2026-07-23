@@ -22,11 +22,33 @@
 import { getProjectConfig, DISPATCH_EFFORT_RE } from "./metadata.js";
 import { resolveStandard, researchProfile } from "./standards.js";
 import { ragSearch } from "./rag.js";
-import { searchKb, slugify } from "./kb.js";
+import { searchKb, slugify, appendKbDoc } from "./kb.js";
 
 /** The kb slug a ticket's research brief lives under: research-<ticket-lowercased>. */
 export function researchSlug(ticket) {
   return slugify(`research ${ticket}`);
+}
+
+/**
+ * Append one research finding to a ticket's durable research doc (FBMCPF-333).
+ * Writes to the SAME kb slug getWorkPacket auto-attaches (research-<ticket>),
+ * creating it on first call and appending on later ones — so findings accrue
+ * incrementally in the always-indexed kb/, not the ephemeral scratchpad. The
+ * finding is stored verbatim as its own paragraph.
+ */
+export function appendResearch(board, project, ticket, finding) {
+  const task = board.getTask(project, ticket);
+  if (!task) throw new Error(`Ticket ${ticket} not found in "${project}".`);
+  const text = String(finding == null ? "" : finding).trim();
+  if (!text) throw new Error("A finding is required.");
+  const res = appendKbDoc(board, project, `research/${task.ticketNumber}`, text);
+  return {
+    ticket: task.ticketNumber,
+    slug: researchSlug(task.ticketNumber),
+    created: res.created,
+    appended: res.appended,
+    bytes: res.bytes,
+  };
 }
 
 /** Effort from a ticket's effort:<low|medium|high> label, or null. */
@@ -143,11 +165,12 @@ export function prepareResearch(board, project, ticket, opts = {}) {
       priorArt, // rag_search top-3 [{ score, source, heading, text }]
       web,
     },
-    deliverable: "A collated markdown brief ≤ ~150 lines: recommended approach + runners-up, prior-art pointers (file/ticket refs), one competitor idea, and a short risks/invariants checklist.",
+    deliverable: "A collated markdown brief ≤ ~150 lines: recommended approach + runners-up, prior-art pointers (file/ticket refs), one competitor idea, and a short risks/invariants checklist. Capture findings AS YOU GO with append_research(project, ticket, finding) — one call per finding as you discover it — so nothing gets stranded in the scratchpad; the final brief just consolidates what you already captured.",
     saveInstruction:
-      `Orchestrator saves the returned brief via add_kb_doc(project, title="research/${task.ticketNumber}", content=<brief>) — ` +
-      `stored at kb slug "${researchSlug(task.ticketNumber)}". getWorkPacket then auto-attaches it to this ticket's implementation packet as researchBrief. ` +
-      `Sub-agents NEVER write the board or KB themselves.`,
+      `Capture findings INCREMENTALLY as you research: append_research(project, ticket="${task.ticketNumber}", finding=<one finding>) appends to kb slug ` +
+      `"${researchSlug(task.ticketNumber)}" (creating it on the first call), so knowledge lands in the always-indexed kb/ immediately instead of the ephemeral scratchpad. ` +
+      `At the end the orchestrator consolidates into the same doc via add_kb_doc(project, title="research/${task.ticketNumber}", content=<brief>); getWorkPacket then auto-attaches it as researchBrief. ` +
+      `Sub-agents NEVER write the board or KB themselves — they hand findings back to the orchestrator, which calls append_research / add_kb_doc.`,
     suggestedModel: suggestResearchModel(task),
   };
 }

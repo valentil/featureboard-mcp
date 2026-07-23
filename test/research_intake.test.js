@@ -6,7 +6,8 @@ import path from "node:path";
 import { Board } from "../server/storage.js";
 import { addKbDoc } from "../server/kb.js";
 import { getProjectConfig, setProjectConfig, getWorkPacket } from "../server/metadata.js";
-import { prepareResearch, resolveResearchOnIntake, researchSlug } from "../server/research.js";
+import { prepareResearch, resolveResearchOnIntake, researchSlug, appendResearch } from "../server/research.js";
+import { ragSearch, clearIndexCache } from "../server/rag.js";
 
 // FBMCPF-263 — research-on-intake: an optional (default ON) research phase that
 // runs BEFORE implementation; prepare_research assembles the request packet and
@@ -137,4 +138,42 @@ test("no researchBrief attached when no brief doc exists (back-compat)", () => {
   const t = b.addTask("Proj", "feature", { title: "Plain ticket" });
   const packet = getWorkPacket(b, "Proj", t.ticketNumber);
   assert.equal(packet.researchBrief, undefined);
+});
+
+test("FBMCPF-333: appendResearch writes the research-<ticket> kb doc and is RAG-retrievable", () => {
+  const b = tmpBoard();
+  const t = b.addTask("Proj", "feature", { title: "Export metrics", description: "csv export" });
+
+  const r1 = appendResearch(b, "Proj", t.ticketNumber, "Approach: stream rows to avoid buffering the whole export.");
+  assert.equal(r1.created, true);
+  assert.equal(r1.slug, researchSlug(t.ticketNumber), "lands on the slug the packet auto-attaches");
+
+  const r2 = appendResearch(b, "Proj", t.ticketNumber, "Risk: the pandas dependency bloats cold start.");
+  assert.equal(r2.appended, true);
+
+  // Both findings retrievable from the RAG (they now live in the indexed kb/).
+  clearIndexCache();
+  const hitA = ragSearch(b, "Proj", "stream rows buffering export", { k: 5 });
+  const hitB = ragSearch(b, "Proj", "pandas dependency cold start", { k: 5 });
+  const brief = `kb/${researchSlug(t.ticketNumber)}`;
+  assert.ok(hitA.some((h) => h.source === brief), "first finding indexed");
+  assert.ok(hitB.some((h) => h.source === brief), "second finding indexed");
+});
+
+test("FBMCPF-333: appendResearch validates ticket + finding", () => {
+  const b = tmpBoard();
+  const t = b.addTask("Proj", "feature", { title: "X" });
+  assert.throws(() => appendResearch(b, "Proj", "NOPE-1", "x"), /not found/);
+  assert.throws(() => appendResearch(b, "Proj", t.ticketNumber, "   "), /finding is required/);
+});
+
+test("FBMCPF-334: prepare_research nudges incremental capture via append_research", () => {
+  const b = tmpBoard();
+  const t = b.addTask("Proj", "feature", { title: "Add export", description: "csv" });
+  const packet = prepareResearch(b, "Proj", t.ticketNumber);
+  assert.equal(packet.skip, false);
+  assert.match(packet.deliverable, /append_research/, "deliverable points at append_research");
+  assert.match(packet.deliverable, /AS YOU GO/i, "deliverable stresses incremental capture");
+  assert.match(packet.saveInstruction, /append_research/, "saveInstruction points at append_research");
+  assert.match(packet.saveInstruction, new RegExp(researchSlug(t.ticketNumber)), "still names the research slug");
 });

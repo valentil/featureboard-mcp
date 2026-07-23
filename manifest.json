@@ -327,6 +327,10 @@
       "description": "Keyword search across a board's kb doc titles + content, ranked (title hits weighted above content hits). Returns matches with a short excerpt around the first hit and the doc's path. This is the same matcher get_work_packet uses to inject relevant docs into a ticket's packet (kbMatches)."
     },
     {
+      "name": "append_research",
+      "description": "Capture ONE research finding into a ticket's durable research doc AS YOU GO (FBMCPF-333). Appends to the same kb doc get_work_packet auto-attaches downstream (research-<ticket>), creating it on the first call and appending on later ones — so findings accrue in the always-indexed kb/ knowledge base instead of the ephemeral scratchpad. Prefer this over append_scratchpad for anything worth remembering across tickets: call it repeatedly during research rather than saving one brief only at the end."
+    },
+    {
       "name": "drift_start",
       "description": "Begin a drift-evaluation run over a board's Done tickets. mode 'sample' evaluates a seeded random subset (fast statistical estimate); mode 'full' evaluates every Done ticket. Returns a runId + the tickets to score. Then, for each ticket, compare its scope/description/DoD + work log against the actual code it touched (use get_work_packet and the project's codeLocation) and call drift_record with a 0–100 fidelity score; finish with drift_report. Use the evaluate_drift prompt to run the whole loop."
     },

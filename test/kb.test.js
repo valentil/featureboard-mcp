@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Board } from "../server/storage.js";
-import { addKbDoc, listKbDocs, getKbDoc, searchKb, slugify, matchKbForTicket } from "../server/kb.js";
+import { addKbDoc, appendKbDoc, listKbDocs, getKbDoc, searchKb, slugify, matchKbForTicket } from "../server/kb.js";
 import { getWorkPacket } from "../server/metadata.js";
 
 // FBMCPF-141 — project knowledge base: per-project kb/ folder of markdown
@@ -192,4 +192,28 @@ test("getWorkPacket omits kbMatches when kb docs exist but none match the ticket
   const t = b.addTask("Proj", "feature", { title: "Unrelated widget styling tweak" });
   const packet = getWorkPacket(b, "Proj", t.ticketNumber);
   assert.equal(packet.kbMatches, undefined);
+});
+
+test("FBMCPF-333: appendKbDoc creates on first call, appends (not overwrites) after", () => {
+  const b = tmpBoard();
+  const first = appendKbDoc(b, "Proj", "research/FBF-9", "Finding one: uses BM25.");
+  assert.equal(first.created, true);
+  assert.equal(first.appended, false);
+
+  const second = appendKbDoc(b, "Proj", "research/FBF-9", "Finding two: cosine fusion.");
+  assert.equal(second.created, false);
+  assert.equal(second.appended, true);
+  assert.equal(second.slug, first.slug, "same doc reused");
+
+  const doc = getKbDoc(b, "Proj", first.slug);
+  assert.match(doc.content, /Finding one: uses BM25\./, "first finding preserved");
+  assert.match(doc.content, /Finding two: cosine fusion\./, "second finding appended");
+  assert.ok(doc.content.indexOf("Finding one") < doc.content.indexOf("Finding two"), "order preserved");
+});
+
+test("FBMCPF-333: appendKbDoc requires a title and tolerates a missing doc", () => {
+  const b = tmpBoard();
+  assert.throws(() => appendKbDoc(b, "Proj", "", "x"), /title is required/);
+  const r = appendKbDoc(b, "Proj", "Fresh Doc", "body");
+  assert.equal(r.created, true);
 });
