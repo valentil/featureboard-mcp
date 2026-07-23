@@ -1,6 +1,6 @@
 // Auto-extracted from server/index.js (FBMCPF-224). Registration blocks moved verbatim.
 export function registerAnalyticsTools(server, ctx) {
-  const { Board, addKbDoc, agentMonitorV2, appendEvent, appendHeartbeat, applyDriftRemediation, blendStatus, driftReport, estimateTicketMinutes, existsSync, getBoard, getGitConfig, getGlobalConfig, getHistoryMap, getKbDoc, getLiveActivity, getLatestUpdate, getPricing, getVoiceProfile, lastDispatchForTicket, lintVoice, listKbDocs, listSprints, maybeLint, meta, nodePath, postProjectUpdate, predictDueDates, reconcileChurn, recordDriftScore, rollupCost, prepareResearch, appendResearch, addSource, listSources, getSource, ragSearch, ragSearchHybrid, searchKb, setSite, startDriftRun, suggestHistoricalFiles, tryTool, writeTool, z } = ctx;
+  const { Board, addKbDoc, agentMonitorV2, appendEvent, appendHeartbeat, applyDriftRemediation, blendStatus, driftReport, estimateTicketMinutes, existsSync, getBoard, getGitConfig, getGlobalConfig, getHistoryMap, getKbDoc, getLiveActivity, getLatestUpdate, getPricing, getVoiceProfile, lastDispatchForTicket, lintVoice, listKbDocs, listSprints, maybeLint, meta, nodePath, postProjectUpdate, predictDueDates, reconcileChurn, recordDriftScore, rollupCost, prepareResearch, appendResearch, addSource, addSourceFromUrl, addSourceFromFile, listSources, getSource, ragSearch, ragSearchHybrid, searchKb, setSite, startDriftRun, suggestHistoricalFiles, tryTool, writeTool, z } = ctx;
 
 // analytics & metadata (v0.3) ----------------------------------------------
 
@@ -380,20 +380,24 @@ server.registerTool(
   {
     title: "Add/update a research source",
     description:
-      "Save the RAW text of a research source (a paper, article, or reference) into a board's sources/ library — one file per source, kept separate from the synthesized kb/ notes. Stores the raw text under a citation header (title, source/author, url, linked ticket, tags). Calling again with the SAME title updates it in place (preserving its addedAt). The body is indexed into the RAG (source/<slug>) so the material is searchable and grounds work packets. Use this to keep papers/sources you researched; use add_kb_doc / append_research for YOUR notes and findings about them.",
+      "Save a research source (paper, article, reference) into a board's sources/ library — one file per source, separate from the synthesized kb/ notes, stored under a citation header (title, source/author, url, ticket, tags) and indexed into the RAG (source/<slug>). THREE ways to supply the text, in priority order: (1) path= a local file — .pdf (optional pdf-parse dep), .html, or any text/markdown is read + extracted automatically; (2) url= a web page or PDF — fetched and extracted automatically (title/source auto-filled); (3) text= the raw text directly. With url/path, title/source are auto-detected (override by passing them). If a PDF is scanned or a page is JS-rendered, the tool returns { needsText: true, reason } — read it yourself and call again with text=. Calling again with the SAME title updates in place. Use this for the sources; use add_kb_doc / append_research for YOUR notes about them.",
     inputSchema: {
       project: z.string(),
-      title: z.string().describe("Human title of the source; slugified to the filename."),
-      text: z.string().describe("The raw text of the paper/article/reference."),
-      source: z.string().optional().describe("Author / publication / origin."),
-      url: z.string().optional().describe("Where it came from."),
+      title: z.string().optional().describe("Human title; auto-detected from url/path when omitted. Slugified to the filename."),
+      text: z.string().optional().describe("Raw text, if supplying it directly instead of url/path."),
+      url: z.string().optional().describe("Web page or PDF to fetch + extract automatically."),
+      path: z.string().optional().describe("Local file (.pdf/.html/.txt/.md) to read + extract automatically."),
+      source: z.string().optional().describe("Author / publication / origin (auto-filled from url host when omitted)."),
       ticket: z.string().optional().describe("Ticket this source supports (e.g. FBF-12)."),
       tags: z.array(z.string()).optional().describe("Topical tags."),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  writeTool(({ project, title, text, source, url, ticket, tags }) =>
-    addSource(getBoard(), project, { title, text, source, url, ticket, tags }))
+  writeTool(async ({ project, title, text, url, path, source, ticket, tags }) => {
+    if (path) return addSourceFromFile(getBoard(), project, path, { title, source, url, ticket, tags });
+    if (url && !text) return addSourceFromUrl(getBoard(), project, url, { title, source, ticket, tags });
+    return addSource(getBoard(), project, { title, text, source, url, ticket, tags });
+  })
 );
 
 server.registerTool(

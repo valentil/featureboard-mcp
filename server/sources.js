@@ -33,6 +33,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { slugify } from "./kb.js";
+import { ingestUrl, ingestFile } from "./ingest.js";
 
 function readFileSafe(p) {
   try { return fs.readFileSync(p, "utf8"); } catch { return null; }
@@ -210,4 +211,39 @@ export function getSource(board, project, slug) {
     content: doc.content,
     path: p,
   };
+}
+
+
+// ---------------------------------------------------------------------------
+// Auto-ingest (FBMCPF-336): pull the raw text from a URL or a local file, then
+// store it as a source. Returns { needsText, reason } (no throw) when the text
+// can't be extracted server-side, so the caller supplies text= directly.
+// ---------------------------------------------------------------------------
+
+/** Merge caller-supplied metadata over what ingestion auto-detected. */
+function mergeSourceOpts(ing, opts, fallbackUrl) {
+  return {
+    title: opts.title || ing.title || fallbackUrl,
+    text: ing.text,
+    source: opts.source || ing.source,
+    url: opts.url || ing.url || fallbackUrl,
+    ticket: opts.ticket,
+    tags: opts.tags,
+  };
+}
+
+/** Fetch a URL, extract text, and store it as a source. */
+export async function addSourceFromUrl(board, project, url, opts = {}, deps = {}) {
+  if (!url) throw new Error("A url is required.");
+  const ing = await ingestUrl(url, deps);
+  if (ing.needsText) return { needsText: true, reason: ing.reason, url: ing.url || url };
+  return addSource(board, project, mergeSourceOpts(ing, opts, url));
+}
+
+/** Read a local file, extract text, and store it as a source. */
+export async function addSourceFromFile(board, project, filePath, opts = {}, deps = {}) {
+  if (!filePath) throw new Error("A path is required.");
+  const ing = await ingestFile(filePath, deps);
+  if (ing.needsText) return { needsText: true, reason: ing.reason, path: filePath };
+  return addSource(board, project, mergeSourceOpts(ing, { ...opts, url: opts.url }, ""));
 }

@@ -175,5 +175,7 @@ test("FBMCPF-334: prepare_research nudges incremental capture via append_researc
   assert.match(packet.deliverable, /append_research/, "deliverable points at append_research");
   assert.match(packet.deliverable, /AS YOU GO/i, "deliverable stresses incremental capture");
   assert.match(packet.saveInstruction, /append_research/, "saveInstruction points at append_research");
+  assert.match(packet.deliverable, /add_source/, "deliverable tells you to capture sources");
+  assert.match(packet.saveInstruction, /add_source/, "saveInstruction points at add_source for raw sources");
   assert.match(packet.saveInstruction, new RegExp(researchSlug(t.ticketNumber)), "still names the research slug");
 });

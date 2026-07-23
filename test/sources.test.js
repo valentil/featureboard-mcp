@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Board } from "../server/storage.js";
-import { addSource, listSources, getSource } from "../server/sources.js";
+import { addSource, addSourceFromUrl, addSourceFromFile, listSources, getSource } from "../server/sources.js";
 import { ragSearch, clearIndexCache } from "../server/rag.js";
 
 // FBMCPF-335 — research sources library: per-project sources/ folder holding the
@@ -84,4 +84,53 @@ test("FBMCPF-335: sources are indexed into the RAG and retrievable by raw-text v
   clearIndexCache();
   const hits = ragSearch(b, "Proj", "probabilistic pointwise bounded values", { k: 5 });
   assert.ok(hits.some((h) => h.source === "source/tao-2019"), "raw source text is retrievable");
+});
+
+function fakeFetch(body, { contentType = "text/html", status = 200, url = "https://ex.com/x" } = {}) {
+  const buf = Buffer.isBuffer(body) ? body : Buffer.from(String(body), "utf8");
+  return async () => ({
+    status, url,
+    headers: { get: (h) => (h.toLowerCase() === "content-type" ? contentType : null) },
+    arrayBuffer: async () => buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength),
+  });
+}
+
+test("FBMCPF-336: addSourceFromUrl fetches, stores, and is RAG-indexed", async () => {
+  const b = tmpBoard();
+  const html = "<title>Tao 2019</title><body><p>Almost all Collatz orbits attain almost bounded values.</p></body>";
+  const r = await addSourceFromUrl(b, "Proj", "https://arxiv.org/abs/1909.03562",
+    { ticket: "TXPOF-4" },
+    { fetchImpl: fakeFetch(html, { contentType: "text/html", url: "https://arxiv.org/abs/1909.03562" }) });
+  assert.equal(r.created, true);
+  const doc = getSource(b, "Proj", r.slug);
+  assert.equal(doc.title, "Tao 2019");
+  assert.equal(doc.source, "arxiv.org");
+  assert.equal(doc.ticket, "TXPOF-4");
+  assert.equal(doc.url, "https://arxiv.org/abs/1909.03562");
+  assert.match(doc.content, /almost bounded values/);
+
+  clearIndexCache();
+  const hits = ragSearch(b, "Proj", "almost bounded values orbits", { k: 5 });
+  assert.ok(hits.some((h) => h.source === `source/${r.slug}`), "ingested source is retrievable");
+});
+
+test("FBMCPF-336: addSourceFromUrl passes through needsText without storing", async () => {
+  const b = tmpBoard();
+  const r = await addSourceFromUrl(b, "Proj", "https://ex.com/scan.pdf", {},
+    { fetchImpl: fakeFetch(Buffer.from("%PDF-1.4"), { contentType: "application/pdf" }),
+      extractPdf: async () => "" });
+  assert.equal(r.needsText, true);
+  assert.equal(listSources(b, "Proj").length, 0, "nothing stored on needsText");
+});
+
+test("FBMCPF-336: addSourceFromFile ingests a local file", async () => {
+  const b = tmpBoard();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fbsrc-file-"));
+  const f = path.join(dir, "lagarias.md");
+  fs.writeFileSync(f, "# Lagarias\n\nAnnotated bibliography of the 3x+1 problem.");
+  const r = await addSourceFromFile(b, "Proj", f, { ticket: "TXPOF-4" });
+  assert.equal(r.created, true);
+  const doc = getSource(b, "Proj", r.slug);
+  assert.match(doc.content, /Annotated bibliography/);
+  assert.equal(doc.source, f);
 });

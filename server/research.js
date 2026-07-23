@@ -165,12 +165,13 @@ export function prepareResearch(board, project, ticket, opts = {}) {
       priorArt, // rag_search top-3 [{ score, source, heading, text }]
       web,
     },
-    deliverable: "A collated markdown brief ≤ ~150 lines: recommended approach + runners-up, prior-art pointers (file/ticket refs), one competitor idea, and a short risks/invariants checklist. Capture findings AS YOU GO with append_research(project, ticket, finding) — one call per finding as you discover it — so nothing gets stranded in the scratchpad; the final brief just consolidates what you already captured.",
+    deliverable: "A collated markdown brief ≤ ~150 lines: recommended approach + runners-up, prior-art pointers (file/ticket refs), one competitor idea, and a short risks/invariants checklist. Capture findings AS YOU GO with append_research(project, ticket, finding) — one call per finding as you discover it — so nothing gets stranded in the scratchpad; the final brief just consolidates what you already captured. And keep the SOURCES: every paper/page you actually rely on, capture with add_source(project, ticket, url=<link>) (or path=<file>) as you read it — the raw text is fetched + indexed automatically, so the material is preserved, not just your notes about it.",
     saveInstruction:
       `Capture findings INCREMENTALLY as you research: append_research(project, ticket="${task.ticketNumber}", finding=<one finding>) appends to kb slug ` +
       `"${researchSlug(task.ticketNumber)}" (creating it on the first call), so knowledge lands in the always-indexed kb/ immediately instead of the ephemeral scratchpad. ` +
       `At the end the orchestrator consolidates into the same doc via add_kb_doc(project, title="research/${task.ticketNumber}", content=<brief>); getWorkPacket then auto-attaches it as researchBrief. ` +
-      `Sub-agents NEVER write the board or KB themselves — they hand findings back to the orchestrator, which calls append_research / add_kb_doc.`,
+      `Also capture each SOURCE you rely on as you read it: add_source(project, url="<link>", ticket="${task.ticketNumber}") fetches + extracts the raw text into the sources/ library (RAG-indexed) automatically — findings go to append_research, the raw material goes to add_source. ` +
+      `Sub-agents NEVER write the board or KB themselves — they hand findings + source links back to the orchestrator, which calls append_research / add_kb_doc / add_source.`,
     suggestedModel: suggestResearchModel(task),
   };
 }
