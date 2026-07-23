@@ -331,6 +331,18 @@
       "description": "Capture ONE research finding into a ticket's durable research doc AS YOU GO (FBMCPF-333). Appends to the same kb doc get_work_packet auto-attaches downstream (research-<ticket>), creating it on the first call and appending on later ones — so findings accrue in the always-indexed kb/ knowledge base instead of the ephemeral scratchpad. Prefer this over append_scratchpad for anything worth remembering across tickets: call it repeatedly during research rather than saving one brief only at the end."
     },
     {
+      "name": "add_source",
+      "description": "Save the RAW text of a research source (a paper, article, or reference) into a board's sources/ library — one file per source, kept separate from the synthesized kb/ notes. Stores the raw text under a citation header (title, source/author, url, linked ticket, tags). Calling again with the SAME title updates it in place (preserving its addedAt). The body is indexed into the RAG (source/<slug>) so the material is searchable and grounds work packets. Use this to keep papers/sources you researched; use add_kb_doc / append_research for YOUR notes and findings about them."
+    },
+    {
+      "name": "list_sources",
+      "description": "List a board's sources/ library: slug, title, source, url, linked ticket, tags, dates, size, and a short excerpt of each (not the full raw text — use get_source for that)."
+    },
+    {
+      "name": "get_source",
+      "description": "Read one source's full raw text + citation fields by slug (or title — it gets slugified). Returns null-ish (not found) when no such source exists."
+    },
+    {
       "name": "drift_start",
       "description": "Begin a drift-evaluation run over a board's Done tickets. mode 'sample' evaluates a seeded random subset (fast statistical estimate); mode 'full' evaluates every Done ticket. Returns a runId + the tickets to score. Then, for each ticket, compare its scope/description/DoD + work log against the actual code it touched (use get_work_packet and the project's codeLocation) and call drift_record with a 0–100 fidelity score; finish with drift_report. Use the evaluate_drift prompt to run the whole loop."
     },

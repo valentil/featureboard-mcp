@@ -1,6 +1,6 @@
 // Auto-extracted from server/index.js (FBMCPF-224). Registration blocks moved verbatim.
 export function registerAnalyticsTools(server, ctx) {
-  const { Board, addKbDoc, agentMonitorV2, appendEvent, appendHeartbeat, applyDriftRemediation, blendStatus, driftReport, estimateTicketMinutes, existsSync, getBoard, getGitConfig, getGlobalConfig, getHistoryMap, getKbDoc, getLiveActivity, getLatestUpdate, getPricing, getVoiceProfile, lastDispatchForTicket, lintVoice, listKbDocs, listSprints, maybeLint, meta, nodePath, postProjectUpdate, predictDueDates, reconcileChurn, recordDriftScore, rollupCost, prepareResearch, appendResearch, ragSearch, ragSearchHybrid, searchKb, setSite, startDriftRun, suggestHistoricalFiles, tryTool, writeTool, z } = ctx;
+  const { Board, addKbDoc, agentMonitorV2, appendEvent, appendHeartbeat, applyDriftRemediation, blendStatus, driftReport, estimateTicketMinutes, existsSync, getBoard, getGitConfig, getGlobalConfig, getHistoryMap, getKbDoc, getLiveActivity, getLatestUpdate, getPricing, getVoiceProfile, lastDispatchForTicket, lintVoice, listKbDocs, listSprints, maybeLint, meta, nodePath, postProjectUpdate, predictDueDates, reconcileChurn, recordDriftScore, rollupCost, prepareResearch, appendResearch, addSource, listSources, getSource, ragSearch, ragSearchHybrid, searchKb, setSite, startDriftRun, suggestHistoricalFiles, tryTool, writeTool, z } = ctx;
 
 // analytics & metadata (v0.3) ----------------------------------------------
 
@@ -371,6 +371,51 @@ server.registerTool(
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   writeTool(({ project, ticket, finding }) => appendResearch(getBoard(), project, ticket, finding))
+);
+
+/* ---------- research sources library (FBMCPF-335) ---------- */
+
+server.registerTool(
+  "add_source",
+  {
+    title: "Add/update a research source",
+    description:
+      "Save the RAW text of a research source (a paper, article, or reference) into a board's sources/ library — one file per source, kept separate from the synthesized kb/ notes. Stores the raw text under a citation header (title, source/author, url, linked ticket, tags). Calling again with the SAME title updates it in place (preserving its addedAt). The body is indexed into the RAG (source/<slug>) so the material is searchable and grounds work packets. Use this to keep papers/sources you researched; use add_kb_doc / append_research for YOUR notes and findings about them.",
+    inputSchema: {
+      project: z.string(),
+      title: z.string().describe("Human title of the source; slugified to the filename."),
+      text: z.string().describe("The raw text of the paper/article/reference."),
+      source: z.string().optional().describe("Author / publication / origin."),
+      url: z.string().optional().describe("Where it came from."),
+      ticket: z.string().optional().describe("Ticket this source supports (e.g. FBF-12)."),
+      tags: z.array(z.string()).optional().describe("Topical tags."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  writeTool(({ project, title, text, source, url, ticket, tags }) =>
+    addSource(getBoard(), project, { title, text, source, url, ticket, tags }))
+);
+
+server.registerTool(
+  "list_sources",
+  {
+    title: "List research sources",
+    description: "List a board's sources/ library: slug, title, source, url, linked ticket, tags, dates, size, and a short excerpt of each (not the full raw text — use get_source for that).",
+    inputSchema: { project: z.string() },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project }) => ({ sources: listSources(getBoard(), project) }))
+);
+
+server.registerTool(
+  "get_source",
+  {
+    title: "Get a research source",
+    description: "Read one source's full raw text + citation fields by slug (or title — it gets slugified). Returns null-ish (not found) when no such source exists.",
+    inputSchema: { project: z.string(), slug: z.string().describe("Source slug or title.") },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project, slug }) => getSource(getBoard(), project, slug))
 );
 
 

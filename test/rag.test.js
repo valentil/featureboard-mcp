@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { Board } from "../server/storage.js";
 import { addKbDoc } from "../server/kb.js";
+import { addSource } from "../server/sources.js";
 import { setProjectConfig, getWorkPacket, setScratchpad } from "../server/metadata.js";
 import { tokenize, chunkMarkdown, buildIndex, search, ragSearch, clearIndexCache } from "../server/rag.js";
 import { researchSlug } from "../server/research.js";
@@ -176,4 +177,15 @@ test("FBMCPB-54: an empty scratchpad contributes nothing to the corpus", () => {
   clearIndexCache();
   const idx = buildIndex(b, "Proj");
   assert.ok(!idx.docs.some((d) => d.source === "scratchpad"), "empty scratchpad excluded");
+});
+
+test("FBMCPB-54/FBMCPF-335: scratchpad and sources both join the corpus", () => {
+  const b = tmpBoard();
+  addSource(b, "Proj", { title: "Ref Doc", text: "solenoid conjugacy of the 2-adic shift map." });
+  clearIndexCache();
+  const idx = buildIndex(b, "Proj");
+  const sources = new Set(idx.docs.map((d) => d.source));
+  assert.ok(sources.has("source/ref-doc"), "sources/*.md in corpus");
+  const hit = ragSearch(b, "Proj", "solenoid conjugacy shift map", { k: 5 });
+  assert.ok(hit.some((r) => r.source === "source/ref-doc"));
 });

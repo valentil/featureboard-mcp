@@ -9,8 +9,10 @@
  *       research briefs FBMCPF-263 writes as research-<ticket> docs),
  *   (b) the project's freeform scratchpad.md (research condensations + notes
  *       that live outside kb/ — FBMCPB-54),
- *   (c) *.md under the code repo's docs/ plus the root README, and
- *   (d) Done tickets' title + completionSummary from the board.
+ *   (c) the project's raw research sources (sources/*.md — the papers/articles
+ *       we keep verbatim, FBMCPF-335),
+ *   (d) *.md under the code repo's docs/ plus the root README, and
+ *   (e) Done tickets' title + completionSummary from the board.
  *
  * Retrieval is Okapi BM25 (k1=1.5, b=0.75) over heading/paragraph chunks — a
  * classic, well-understood lexical ranker. Be honest about what this is: it is
@@ -64,6 +66,7 @@ export function tokenize(s) {
 const CHUNK_MIN = 400;
 const CHUNK_MAX = 800;
 const MAX_FILE_BYTES = 100 * 1024; // skip files larger than ~100KB
+const MAX_SOURCE_BYTES = 1024 * 1024; // sources/ holds raw papers — index up to ~1MB
 const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build", ".featureboard", "coverage"]);
 
 /**
@@ -221,6 +224,49 @@ function safeIsDir(p) {
 }
 
 /**
+ * The project's raw research sources (sources/<slug>.md — FBMCPF-335) as chunk
+ * records (source = "source/<slug>"). This is the RAW material (papers,
+ * articles, references) kept alongside the board, separate from the synthesized
+ * kb/ notes. Frontmatter is parsed off and the title/citation prepended so a
+ * title match still ranks; the raw body is chunked like any markdown doc. Uses
+ * a larger byte cap than docs/kb because full papers are the whole point.
+ */
+function sourceChunks(board, project, fingerprintParts) {
+  const dir = path.join(board.projectDir(project), "sources");
+  const out = [];
+  let files;
+  try {
+    files = fs.readdirSync(dir).filter((f) => f.endsWith(".md")).sort();
+  } catch {
+    return out;
+  }
+  for (const f of files) {
+    const p = path.join(dir, f);
+    let stat, raw;
+    try {
+      stat = fs.statSync(p);
+      if (stat.size > MAX_SOURCE_BYTES) continue;
+      raw = fs.readFileSync(p, "utf8");
+    } catch { continue; }
+    fingerprintParts.push(`sources/${f}:${stat.mtimeMs}:${stat.size}`);
+    const slug = f.replace(/\.md$/, "");
+    const doc = parseKbDoc(raw, slug); // frontmatter -> { title, content }; tolerant
+    const source = `source/${slug}`;
+    // Pull the citation line (source/url) out of frontmatter so it rides along.
+    const fm = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+    const cite = fm
+      ? [fm[1].match(/^source:\s*(.*)$/m), fm[1].match(/^url:\s*(.*)$/m)]
+          .map((mm) => (mm ? mm[1].trim() : ""))
+          .filter(Boolean)
+          .join(" — ")
+      : "";
+    const head = `# ${doc.title}${cite ? `\n\n${cite}` : ""}\n\n`;
+    for (const c of chunkMarkdown(head + doc.content, source)) out.push(c);
+  }
+  return out;
+}
+
+/**
  * The project's freeform scratchpad (scratchpad.md) as chunk records
  * (source = "scratchpad"). This is where research condensations, "known walls",
  * and running notes accumulate outside kb/ — without this they never reach the
@@ -272,7 +318,7 @@ function cacheKeyFor(board, project) {
 
 /**
  * Build (or return a cached) BM25 index for a project. The corpus is KB docs +
- * the scratchpad + docs/*.md + Done ticket summaries. The built index is cached in memory keyed
+ * the scratchpad + raw sources + docs/*.md + Done ticket summaries. The built index is cached in memory keyed
  * by board+project and only rebuilt when a cheap mtime/count fingerprint changes.
  */
 export function buildIndex(board, project, opts = {}) {
@@ -281,6 +327,7 @@ export function buildIndex(board, project, opts = {}) {
   const chunks = [
     ...kbChunks(board, project, fingerprintParts),
     ...scratchpadChunks(board, project, fingerprintParts),
+    ...sourceChunks(board, project, fingerprintParts),
     ...docsChunks(codeLocation, fingerprintParts),
     ...doneTicketChunks(board, project, fingerprintParts),
   ];
