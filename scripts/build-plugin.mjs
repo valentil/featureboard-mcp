@@ -76,17 +76,48 @@ fs.writeFileSync(
   )}\n`
 );
 
+// FBMCPB-60: stage ONLY the production dependency closure, never the whole
+// node_modules. Since the optional embedding/PDF deps landed locally,
+// node_modules carries ~385MB of multi-platform binaries and a cached ONNX
+// model with pathologically deep paths — blanket fs.cpSync of it aborts
+// outright on Windows/Node 24 (0xC0000409), and even succeeding it would
+// ship the closure FBMCPB-59 just excluded from the .mcpb. BFS from
+// package.json `dependencies` through each dep's own `dependencies`
+// (dev/optional omitted — same shape as `npm i --omit=dev --omit=optional`,
+// which is exactly what every release through 0.7.0 effectively shipped).
+function prodDepNames() {
+  const seen = new Set();
+  const queue = Object.keys(pkg.dependencies || {});
+  while (queue.length) {
+    const name = queue.shift();
+    if (seen.has(name)) continue;
+    const pj = rel(path.join("node_modules", name, "package.json"));
+    if (!fs.existsSync(pj)) {
+      console.error(`✗ prod dep ${name} missing from node_modules — run npm install`);
+      process.exit(1);
+    }
+    seen.add(name);
+    const dp = JSON.parse(fs.readFileSync(pj, "utf8"));
+    for (const d of Object.keys(dp.dependencies || {})) queue.push(d);
+  }
+  return [...seen].sort();
+}
+
 // Copies: the server and everything it resolves at runtime, plus skills.
 const copies = [
   ["server", "server"],
   ["artifact", "artifact"], // BOARD_HTML_PATH resolves ../artifact/board.html
-  ["node_modules", "node_modules"], // all-prod deps (@modelcontextprotocol/sdk, zod)
   ["package.json", "package.json"], // "type": "module" — required for ESM resolution
   ["skills/featureboarding", "skills/featureboarding"],
   ["skills/daily-plan", "skills/daily-plan"],
   ["LICENSE.md", "LICENSE.md"],
   ["icon.png", "icon.png"],
 ];
+const depNames = prodDepNames();
+for (const name of depNames) {
+  copies.push([path.join("node_modules", name), path.join("node_modules", name)]);
+}
+console.log(`staging ${depNames.length} prod deps (optional/dev omitted)`);
 for (const [src, dst] of copies) {
   const from = rel(src);
   if (!fs.existsSync(from)) {
