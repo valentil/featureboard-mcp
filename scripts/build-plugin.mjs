@@ -155,15 +155,28 @@ fs.rmSync(outFile, { force: true });
 // Zip into the OS temp dir first, then copy into releases/ — synced/mounted
 // folders often refuse zip's in-place tempfile+rename dance.
 function zipTo(dest) {
-  const tmpZip = path.join(os.tmpdir(), path.basename(dest) + ".tmpzip");
+  // FBMCPB-61: the temp name MUST end in .zip — Windows PowerShell's
+  // Compress-Archive hard-rejects any other destination extension
+  // ("'.tmpzip' is not a supported archive file format"). POSIX zip never
+  // cared, which is why the old .tmpzip name only broke the Windows path.
+  const tmpZip = path.join(os.tmpdir(), `${path.basename(dest)}.${process.pid}.zip`);
   fs.rmSync(tmpZip, { force: true });
   let ok;
   if (process.platform === "win32") {
-    const r = spawnSync(
-      "powershell.exe",
-      ["-NoProfile", "-Command", `Compress-Archive -Path '${stage}\\*' -DestinationPath '${tmpZip}' -Force`],
-      { stdio: "inherit" }
-    );
+    // FBMCPB-61: prefer tar.exe (bsdtar, ships with Windows 10+) — it writes
+    // standard forward-slash zip entries and includes dotfiles via ".".
+    // Compress-Archive stays as the fallback, but note its 5.1 version emits
+    // BACKSLASH entry names, which macOS/Linux extractors treat as literal
+    // filename characters — a problem for the IDE zip's non-Windows users.
+    let r = spawnSync("tar", ["-a", "-c", "-f", tmpZip, "."], { cwd: stage, stdio: "inherit" });
+    if (r.status !== 0 || r.error) {
+      console.error("tar.exe zip failed — falling back to Compress-Archive (entry names may use backslashes)");
+      r = spawnSync(
+        "powershell.exe",
+        ["-NoProfile", "-Command", `Compress-Archive -Path '${stage}\\*' -DestinationPath '${tmpZip}' -Force`],
+        { stdio: "inherit" }
+      );
+    }
     ok = r.status === 0;
   } else {
     const r = spawnSync("zip", ["-qr", tmpZip, "."], { cwd: stage, stdio: "inherit" });
