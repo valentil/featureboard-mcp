@@ -60,3 +60,4 @@ test("getLatestUpdate is null when nothing has been posted", () => {
   const b = tmpBoard();
   assert.equal(getLatestUpdate(b, "Proj"), null);
 });
+

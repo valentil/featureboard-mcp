@@ -129,7 +129,12 @@ export function getLatestUpdate(board, project, { now = new Date(), staleDays = 
  * identifying data; it is a plain GET of a public JSON file.
  */
 
-const UPDATES_CHECK_URL = "https://github.com/valentil/featureboard-mcp/releases/latest/download/latest.json";
+// FBMCPF-311: the GitHub release IS the single source of truth — ask the
+// releases API directly (tag_name/published_at/body) instead of a latest.json
+// asset. Still exactly ONE outbound GET, only when called (egress contract
+// unchanged). The legacy latest.json manifest shape stays parseable for
+// back-compat (custom url overrides, cached copies, older releases).
+const UPDATES_CHECK_URL = "https://api.github.com/repos/valentil/featureboard-mcp/releases/latest";
 const CHECK_TIMEOUT_MS = 5000;
 
 /**
@@ -200,7 +205,12 @@ export async function checkUpdates({ fetchImpl, currentVersion, url = UPDATES_CH
   const timer = setTimeout(() => controller.abort(), CHECK_TIMEOUT_MS);
   let res;
   try {
-    res = await doFetch(url, { method: "GET", signal: controller.signal });
+    res = await doFetch(url, {
+      method: "GET",
+      signal: controller.signal,
+      // GitHub's API rejects requests without a User-Agent; harmless for other hosts.
+      headers: { "User-Agent": "featureboard-update-check", "Accept": "application/vnd.github+json" },
+    });
   } catch (err) {
     clearTimeout(timer);
     const msg = err && err.name === "AbortError" ? `timed out after ${CHECK_TIMEOUT_MS / 1000}s` : (err && err.message) || String(err);
@@ -220,7 +230,14 @@ export async function checkUpdates({ fetchImpl, currentVersion, url = UPDATES_CH
     return { checked: false, reason: "update manifest was not valid JSON", current };
   }
 
-  const latest = manifest && manifest.version != null ? String(manifest.version) : null;
+  // Accept both shapes: GitHub releases API ({ tag_name: "v0.7.1", ... })
+  // and the legacy latest.json manifest ({ version: "0.7.1", ... }).
+  const latest =
+    manifest && manifest.version != null
+      ? String(manifest.version)
+      : manifest && manifest.tag_name
+        ? String(manifest.tag_name).trim().replace(/^v/i, "")
+        : null;
   if (!latest) {
     return { checked: false, reason: "update manifest did not include a version", current };
   }
@@ -240,8 +257,8 @@ export async function checkUpdates({ fetchImpl, currentVersion, url = UPDATES_CH
     current,
     latest,
     updateAvailable,
-    releasedAt: (manifest && manifest.releasedAt) || null,
-    notes: (manifest && manifest.notes) || "",
+    releasedAt: (manifest && (manifest.releasedAt || manifest.published_at)) || null,
+    notes: (manifest && (manifest.notes || manifest.body)) || "",
     downloads,
     recommendation,
   };

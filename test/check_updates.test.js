@@ -109,7 +109,7 @@ test("checkUpdates: update available", async () => {
 
   assert.equal(impl.calls.length, 1);
   const call = impl.calls[0];
-  assert.equal(call.url, "https://github.com/valentil/featureboard-mcp/releases/latest/download/latest.json");
+  assert.equal(call.url, "https://api.github.com/repos/valentil/featureboard-mcp/releases/latest");
   assert.equal(call.opts.method, "GET");
   assert.ok(call.opts.signal, "an AbortController signal is passed");
 });
@@ -193,4 +193,16 @@ test("checkUpdates: defaults currentVersion to resolveCurrentVersion() when omit
   const r = await checkUpdates({ fetchImpl: impl });
   assert.equal(r.current, resolveCurrentVersion());
   assert.equal(r.updateAvailable, true);
+});
+
+test("checkUpdates parses the GitHub releases API shape (tag_name/published_at/body)", async () => {
+  const impl = stubFetch({ json: { tag_name: "v99.0.0", published_at: "2026-07-24T00:00:00Z", body: "big release" } });
+  const r = await checkUpdates({ fetchImpl: impl, currentVersion: "0.7.1" });
+  assert.equal(r.checked, true);
+  assert.equal(r.latest, "99.0.0");
+  assert.equal(r.updateAvailable, true);
+  assert.equal(r.releasedAt, "2026-07-24T00:00:00Z");
+  assert.equal(r.notes, "big release");
+  assert.match(r.downloads.plugin, /releases\/latest\/download\/featureboard\.plugin/);
+  assert.equal(impl.calls[0].opts.headers["User-Agent"], "featureboard-update-check");
 });
