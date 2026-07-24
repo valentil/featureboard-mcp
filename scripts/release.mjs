@@ -342,6 +342,14 @@ function main() {
   execFileSync("git", ["tag", tag], { cwd: root, stdio: "inherit" });
   console.log(`Committed and tagged ${tag}.`);
 
+  // FBMCPB-62: push the branch + tag BEFORE gh release create — current gh
+  // refuses to create a release from a tag that only exists locally ("tag
+  // vX.Y.Z exists locally but has not been pushed"), and an unpushed release
+  // commit would leave the GitHub release pointing at history nobody can see.
+  execFileSync("git", ["push", "origin", "HEAD"], { cwd: root, stdio: "inherit" });
+  execFileSync("git", ["push", "origin", tag], { cwd: root, stdio: "inherit" });
+  console.log(`Pushed HEAD + ${tag} to origin.`);
+
   // Stamp the published manifest with this version + notes, then attach the
   // stable-named assets alongside the versioned .mcpb.
   try {
