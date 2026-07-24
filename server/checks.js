@@ -93,11 +93,38 @@ export function resolveChecksConfig(board, project) {
   return null;
 }
 
-/** Ensure and return <projectDir>/checks/. */
+/** Ensure and return <projectDir>/.featureboard/checks/. */
 function checksDir(board, project) {
   const dir = path.join(board.projectDir(project), CHECKS_DIR);
   fs.mkdirSync(dir, { recursive: true });
+  // FBMCPF-339: keep the runner's transient artifacts (and anything else under
+  // .featureboard/) out of the projectpad git repo — a one-line `*` .gitignore
+  // in .featureboard/ ignores the whole internal dir. Best-effort, idempotent.
+  try {
+    const gi = path.join(path.dirname(dir), ".gitignore");
+    if (!fs.existsSync(gi)) fs.writeFileSync(gi, "*\n");
+  } catch { /* best-effort */ }
   return dir;
+}
+
+/**
+ * FBMCPF-339: keep the checks dir bounded — retain the newest `keep` runs
+ * (result file <runId>.json + its <runId>.args.json) and delete older ones.
+ * runIds are `${Date.now()}-${rand}`, so a lexicographic sort of the result
+ * filenames is newest-first for same-width timestamps. Best-effort; never throws.
+ */
+export function pruneRuns(dir, keep = 20) {
+  try {
+    const results = fs.readdirSync(dir)
+      .filter((n) => /^\d+-[a-z0-9]+\.json$/.test(n)) // <runId>.json (not .args.json)
+      .sort((a, b) => b.localeCompare(a));
+    for (const name of results.slice(keep)) {
+      const base = name.replace(/\.json$/, "");
+      for (const f of [`${base}.json`, `${base}.args.json`]) {
+        try { fs.rmSync(path.join(dir, f), { force: true }); } catch { /* ignore */ }
+      }
+    }
+  } catch { /* best-effort */ }
 }
 
 function resultsFilePath(dir, runId) {
@@ -170,6 +197,7 @@ export function startChecks(board, project, { ticket = null, revision = null, ch
     },
   };
   atomicWrite(argsFile, JSON.stringify(args, null, 2) + "\n");
+  pruneRuns(dir);
 
   // FBMCPB-39: run a staged copy from the project's checks dir, not the app bundle.
   const runner = stageRunner(dir);

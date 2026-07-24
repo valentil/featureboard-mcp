@@ -7,7 +7,7 @@ import { spawnSync } from "node:child_process";
 
 import { runChecksPipeline } from "../scripts/run-checks.mjs";
 import {
-  startChecks, getCheckResults, evaluateChecksGate, resolveChecksConfig, stageRunner,
+  startChecks, getCheckResults, evaluateChecksGate, resolveChecksConfig, stageRunner, pruneRuns,
 } from "../server/checks.js";
 import { setProjectConfig } from "../server/metadata.js";
 import { eventsForTicket } from "../server/events.js";
@@ -131,6 +131,12 @@ test("startChecks spawns a detached runner that finishes to a terminal status", 
   });
   assert.equal(started.started, true);
   assert.ok(started.runId, "returns a runId immediately");
+
+  // FBMCPF-339: the pad's .featureboard/ carries a `*` .gitignore so runner
+  // artifacts never get committed to the projectpad repo.
+  const giPath = path.join(board.projectDir("Proj"), ".featureboard", ".gitignore");
+  assert.ok(fs.existsSync(giPath), ".featureboard/.gitignore written");
+  assert.match(fs.readFileSync(giPath, "utf8"), /^\*/, "ignores everything under .featureboard/");
 
   let final = null;
   const deadline = Date.now() + 9000;
@@ -264,4 +270,20 @@ test("resolveChecksConfig: null without package.json, default with it, explicit 
   assert.equal(cfg.autoOnCommit, false);
   assert.equal(cfg.commands.length, 1);
   assert.equal(cfg.syntaxCheckChangedFiles, true);
+});
+
+test("FBMCPF-339: pruneRuns keeps the newest N runs and their .args.json", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fbprune-"));
+  for (let i = 0; i < 25; i++) {
+    const runId = `17000000000${String(i).padStart(2, "0")}-abc`;
+    fs.writeFileSync(path.join(dir, `${runId}.json`), "{}");
+    fs.writeFileSync(path.join(dir, `${runId}.args.json`), "{}");
+  }
+  pruneRuns(dir, 20);
+  const results = fs.readdirSync(dir).filter((n) => n.endsWith(".json") && !n.endsWith(".args.json"));
+  assert.equal(results.length, 20, "kept the 20 newest result files");
+  // oldest removed (result + args), newest kept
+  assert.ok(!fs.existsSync(path.join(dir, "1700000000000-abc.json")));
+  assert.ok(!fs.existsSync(path.join(dir, "1700000000000-abc.args.json")));
+  assert.ok(fs.existsSync(path.join(dir, "1700000000024-abc.json")));
 });
