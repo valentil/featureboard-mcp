@@ -240,7 +240,7 @@ server.registerTool(
       "Plan TODAY: pick the day's slice of the priority queue (default budget 5M logged tokens \u2248 one day of a 25M week), " +
       "assign each ticket a model from the roster (fable=orchestration/design, opus=architecture/invariants, sonnet=standard implementation, " +
       "haiku=mechanical docs/copy) and an effort level (low/medium/high). apply:true writes model:/effort: labels onto the tickets. " +
-      "Returns dispatch groups: sonnet/haiku tickets safe to run as parallel sub-agents, opus/fable sequential. Pair with the daily_plan prompt to execute.",
+      "Returns dispatch groups: haiku/sonnet/opus tickets safe to run as parallel sub-agents, fable inline in the orchestrator (see server/routing.js). Pair with the daily_plan prompt to execute.",
     inputSchema: {
       project: z.string(),
       budgetTokens: z.number().int().positive().optional().default(650000).describe("Today's logged-token budget (default 650k; ~weekly 25M effective \u00f7 5 days \u00f7 ×8 orchestration multiplier)."),

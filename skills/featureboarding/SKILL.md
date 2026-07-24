@@ -36,7 +36,7 @@ zero network) — so the expensive model starts with context, not a cold read.
 - If `dispatch.subAgent` is set, spawn a sub-agent on `dispatch.model` and hand it the
   work packet as its brief.
 - Parallelize: tickets whose `dispatch.parallelizable` is true AND whose files don't
-  overlap can run as concurrent sub-agents. Tickets on `opus`/`fable` run sequentially
+  overlap can run as concurrent sub-agents. Tickets on `fable` run inline
   in the orchestrator, with review between each.
 
 ## 4. Orchestrator owns the board — always
