@@ -8,7 +8,7 @@ import {
   SITE_DIR, SITE_HTML, SITE_CONFIG,
 } from "../server/website.js";
 import { setProjectConfig, resolveGitTargets } from "../server/metadata.js";
-import { scaffoldSite } from "../server/sitegen.js";
+import { scaffoldSite, findGitRootUp } from "../server/sitegen.js";
 
 // FBMCPF-249 — shipped-website support: a project's site can live outside the
 // pad (its own dir + git repo) via the websiteLocation config key.
@@ -121,4 +121,20 @@ test("scaffoldSite initGit:true is a no-op init when already inside a repo", () 
   assert.ok(res.git);
   assert.equal(res.git.initialized, false);
   assert.equal(res.git.path, path.resolve(repo));
+});
+
+test("FBMCPB-57: a dotfiles repo at or above HOME is not a containing repo", () => {
+  // fake home with a .git at its root; site dir nested well below it
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "fbhome-"));
+  fs.mkdirSync(path.join(home, ".git"));
+  const site = path.join(home, "AppData", "Local", "Temp", "proj", "site");
+  fs.mkdirSync(site, { recursive: true });
+  // home repo is ignored -> no containing repo found
+  assert.equal(findGitRootUp(site, home), null);
+  // but a genuine project repo BELOW home is still honored
+  const proj = path.join(home, "projects", "myrepo");
+  fs.mkdirSync(path.join(proj, ".git"), { recursive: true });
+  const inner = path.join(proj, "site");
+  fs.mkdirSync(inner, { recursive: true });
+  assert.equal(findGitRootUp(inner, home), proj);
 });

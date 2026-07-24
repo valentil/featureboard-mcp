@@ -190,7 +190,9 @@ function main() {
     let out = "";
     let failed = false;
     try {
-      out = execSync("npm test", { cwd: root, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] });
+      // FBMCPB-58: modern Node defaults to the spec reporter, whose output has no
+      // TAP summary for parseTapSummary — force TAP via run-tests.mjs's passthrough.
+      out = execSync("npm test -- --test-reporter=tap", { cwd: root, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] });
     } catch (e) {
       out = `${e.stdout || ""}\n${e.stderr || ""}`;
       failed = true;

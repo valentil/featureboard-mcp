@@ -14,6 +14,7 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { setSite, addPage, getSite, siteRoot } from "./website.js";
 
@@ -21,7 +22,7 @@ import { setSite, addPage, getSite, siteRoot } from "./website.js";
  * FBMCPF-249: walk up from a directory to the nearest ancestor (inclusive) that
  * contains a `.git` entry. Returns that directory, or null if none is found.
  */
-function findGitRootUp(startDir) {
+export function findGitRootUp(startDir, home = os.homedir()) {
   let dir;
   try {
     dir = path.resolve(String(startDir));
@@ -29,7 +30,16 @@ function findGitRootUp(startDir) {
     return null;
   }
   for (let i = 0; i < 64; i++) {
-    if (fs.existsSync(path.join(dir, ".git"))) return dir;
+    if (fs.existsSync(path.join(dir, ".git"))) {
+      // FBMCPB-57: a repo at or above the user's HOME is a dotfiles-style repo,
+      // not a project repo — treating it as "containing" would make every path
+      // on such machines count as inside a repo and initGit could never run.
+      // (A repo at home would also be the root for any further walk up, so
+      // returning null here is equivalent to ignoring all at-or-above-home hits.)
+      const rel = home ? path.relative(dir, path.resolve(home)) : null;
+      const atOrAboveHome = rel !== null && rel !== undefined && !rel.startsWith("..") && !path.isAbsolute(rel);
+      return atOrAboveHome ? null : dir;
+    }
     const parent = path.dirname(dir);
     if (parent === dir) break;
     dir = parent;
