@@ -195,6 +195,20 @@ export function recordDriftScore(board, project, runId, { ticket, score, verdict
  * drift rate, and (for sampling) a 95% Wilson confidence interval on the true drift
  * fraction extrapolated to the Done population. Flags partial/drift tickets w/ gaps.
  */
+/** All drift scores recorded for one ticket across runs (FBMCPF-347 audit export). */
+export function driftScoresForTicket(board, project, ticket) {
+  const tk = String(ticket || "").trim();
+  if (!tk) return [];
+  const store = readStore(board, project);
+  const out = [];
+  for (const run of store.runs || []) {
+    for (const s of run.scores || []) {
+      if (s.ticket === tk) out.push({ runId: run.runId, score: s.score, verdict: s.verdict, gap: s.gap || "", at: s.at || null });
+    }
+  }
+  return out;
+}
+
 export function driftReport(board, project, runId) {
   const store = readStore(board, project);
   const run = findRun(store, runId);

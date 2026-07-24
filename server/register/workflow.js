@@ -1,6 +1,6 @@
 // Auto-extracted from server/index.js (FBMCPF-224). Registration blocks moved verbatim.
 export function registerWorkflowTools(server, ctx) {
-  const { applyRollover, planRollover, addDecision, addReviewComment, appendEvent, assignSprint, blendPlan, checkAcceptance, closeSprint, createSprint, dailyPlan, decisionsForTicket, estimateWork, evalReport, evaluateRules, exportBoard, exportMetricsSeries, exportWorkLog, getBoard, getGlobalConfig, getRequirements, getSprintReport, getTicketDiff, getTicketHistory, getTimelineData, graduateProject, listDecisions, listReviewComments, listSprints, meta, notifySlack, planBudget, resolveReviewComment, setRequirements, sprintOfTask, tryTool, writeHandoff, writeTool, z } = ctx;
+  const { applyRollover, planRollover, addDecision, addReviewComment, appendEvent, assignSprint, blendPlan, checkAcceptance, closeSprint, createSprint, dailyPlan, decisionsForTicket, estimateWork, evalReport, evaluateRules, exportAudit, exportBoard, exportMetricsSeries, exportWorkLog, getBoard, getGlobalConfig, getRequirements, getSprintReport, getTicketDiff, getTicketHistory, getTimelineData, graduateProject, listDecisions, listReviewComments, listSprints, meta, notifySlack, planBudget, resolveReviewComment, setRequirements, sprintOfTask, tryTool, writeHandoff, writeTool, z } = ctx;
 
 // sprints (FBMCPF-120) -------------------------------------------------------
 server.registerTool(
@@ -410,6 +410,26 @@ server.registerTool(
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
   tryTool(({ project, ticket }) => getTicketHistory(getBoard(), project, ticket))
+);
+
+// compliance & traceability export (FBMCPF-347) ------------------------------
+server.registerTool(
+  "export_audit",
+  {
+    title: "Export compliance & traceability report",
+    description:
+      "Unified compliance/traceability export: for one ticket or the whole board, merges the existing audit primitives into a single report \u2014 field-change events (status/priority/label moves), work-log sessions, sub-agent dispatch records, requirements pads with acceptance-criteria state, review comments with resolution, decision-log entries, correlated commits (recorded-first with git log --grep fallback), and drift-harness scores. Includes a board-level compliance summary: status counts, acceptance coverage, unresolved reviews, work totals, drift flags, and Done tickets with no correlated commit. Formats: json (structured), markdown (human-readable dossier), csv (flat chronological trail rows for BI). Read-only.",
+    inputSchema: {
+      project: z.string(),
+      ticket: z.string().optional().describe("Limit the report to one ticket."),
+      format: z.enum(["json", "markdown", "csv"]).optional().describe("Output format (default json)."),
+      maxCommits: z.coerce.number().int().min(1).max(100).optional().describe("Max correlated commits per ticket (default 20)."),
+      includeCommits: z.coerce.boolean().optional().describe("Set false to skip git commit correlation (faster; default true)."),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project, ticket, format, maxCommits, includeCommits }) =>
+    exportAudit(getBoard(), project, { ticket, format, maxCommits, includeCommits }))
 );
 
 // piano-roll timeline data (FBMCPF-158) --------------------------------------

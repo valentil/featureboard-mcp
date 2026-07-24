@@ -183,6 +183,10 @@
       "description": "Full audit timeline for one ticket: recorded field-change events (status moves, priority moves, label/sprint changes, due-date edits — captured automatically by set_status/update_task/assign_sprint) merged in chronological order with that ticket's work-log entries (tokens/additions/deletions per work session). Tolerates tickets with no recorded events yet (pre-FBMCPF-142 tickets still show their work-log history)."
     },
     {
+      "name": "export_audit",
+      "description": "Unified compliance/traceability export: for one ticket or the whole board, merges the existing audit primitives into a single report \\u2014 field-change events (status/priority/label moves), work-log sessions, sub-agent dispatch records, requirements pads with acceptance-criteria state, review comments with resolution, decision-log entries, correlated commits (recorded-first with git log --grep fallback), and drift-harness scores. Includes a board-level compliance summary: status counts, acceptance coverage, unresolved reviews, work totals, drift flags, and Done tickets with no correlated commit. Formats: json (structured), markdown (human-readable dossier), csv (flat chronological trail rows for BI). Read-only."
+    },
+    {
       "name": "get_timeline_data",
       "description": "Per-ticket worked spans for the board's piano-roll Timeline view, in one read pass. For every ticket returns: created date, startedAt (first status→In Progress audit event, falling back to its earliest work-log entry, then createdDate — startedSource says which), completedAt (completionDate or last status→Done event), lastActivity, status/product/type/sprint/priority/model for lane grouping and colour, cumulative tokens/additions/deletions/cost, and per-day work rollups (days[]) for clip intensity. Also returns a board-wide byDate[] rollup (tokens/additions/deletions/cost per day) for the datastream overlay strip. Optional from/to (ISO date or datetime) keep only spans whose worked window overlaps that range. Read-only."
     },
