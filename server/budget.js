@@ -10,14 +10,18 @@
 // budget runs out, and an Opus/Sonnet split with blended cost units.
 
 import * as meta from "./metadata.js";
+import { COST_UNITS, DEFAULT_TIER, isDispatchable } from "./routing.js";
 
 export const CAP_LABEL_RE = /^cap:(\d+(?:\.\d+)?)([km]?)$/i;
 export const MODEL_LABEL_RE = /^model:([a-z0-9._-]+)$/i;
 
 const DEFAULT_ESTIMATE = 60000; // tokens, when no history and no cap label
 const MIN_SAMPLES = 3; // actual spends needed before a median is trusted
-// blended relative cost per token (planning weight, not pricing)
-const COST_UNITS = { fable: 6, opus: 5, sonnet: 1, haiku: 0.25 };
+// Blended relative cost per token (planning weight, not pricing) now comes from
+// routing.js MODEL_TIERS — FBMCPF-350 moved it there so the dispatch path, the
+// budget planner, and intake can't drift apart on what a tier costs. The old
+// local table ({fable:6, opus:5, sonnet:1, haiku:0.25}) priced opus almost at
+// fable; Opus 5's published rate is half of fable's, and the roster now says so.
 
 export function capOfTask(t) {
   for (const l of t.labels || []) {
@@ -43,7 +47,7 @@ export function suggestModel(t) {
   if (hard.test(`${t.title} ${t.description || ""}`)) return { model: "opus", basis: "architecture keywords" };
   const lightProducts = new Set(["Docs & Packaging", "Website", "Board UI", "Board UX", "Media", "Mail & Marketing"]);
   if (t.product && lightProducts.has(t.product)) return { model: "sonnet", basis: "light product" };
-  return { model: t.priority != null && t.priority <= 3 ? "opus" : "sonnet", basis: "priority default" };
+  return { model: t.priority != null && t.priority <= 3 ? "opus" : DEFAULT_TIER, basis: "priority default" };
 }
 
 function median(xs) {
@@ -212,9 +216,11 @@ export function suggestEffort(t, estimate) {
 
 /** Model roster (FBMCPF-152): what each Claude tier is trusted with.
  *  fable  — orchestration, cross-cutting design, spec/architecture review
- *  opus   — architecture, multi-file server changes, storage invariants
+ *  opus   — Opus 5: architecture, multi-file server changes, storage invariants
  *  sonnet — standard implementation: UI, features, most bugs, integrations
- *  haiku  — mechanical work: docs/copy edits, label churn, data reshaping */
+ *  haiku  — mechanical work: docs/copy edits, label churn, data reshaping
+ *  Which of these may leave the orchestrator is routing.js's call, not this
+ *  function's — everything except fable is dispatchable (FBMCPF-350). */
 export function rosterModel(t, effort) {
   const labeled = modelOfTask(t);
   if (labeled) return { model: labeled, basis: "model label" };
@@ -260,9 +266,10 @@ export function dailyPlan(board, project, { budgetTokens = 650_000, sprint = nul
     totals: { tickets: rows.length, tokens: plan.totals.plannedTokens, costUnits: plan.totals.costUnits },
     applied: apply ? applied : 0,
     dispatch: {
-      parallel: rows.filter((r) => r.model === "sonnet" || r.model === "haiku").map((r) => r.ticket),
-      sequential: rows.filter((r) => r.model === "opus" || r.model === "fable").map((r) => r.ticket),
-      note: "sonnet/haiku tickets can run as parallel sub-agents; opus/fable tickets run sequentially with review between.",
+      // FBMCPF-350: derived from routing.js, not a literal model list.
+      parallel: rows.filter((r) => isDispatchable(r.model)).map((r) => r.ticket),
+      sequential: rows.filter((r) => !isDispatchable(r.model)).map((r) => r.ticket),
+      note: "haiku/sonnet/opus tickets can run as parallel sub-agents; fable tickets run inline in the orchestrator with review between.",
     },
   };
 }

@@ -1,6 +1,6 @@
 // Auto-extracted from server/index.js (FBMCPF-224). Registration blocks moved verbatim.
 export function registerWorkflowTools(server, ctx) {
-  const { applyRollover, planRollover, addDecision, addReviewComment, appendEvent, assignSprint, blendPlan, checkAcceptance, closeSprint, createSprint, dailyPlan, decisionsForTicket, estimateWork, evalReport, evaluateRules, exportAudit, exportBoard, exportMetricsSeries, exportWorkLog, getBoard, getGlobalConfig, getRequirements, getSprintReport, getTicketDiff, getTicketHistory, getTimelineData, graduateProject, listDecisions, listReviewComments, listSprints, meta, notifySlack, planBudget, resolveReviewComment, setRequirements, sprintOfTask, tryTool, writeHandoff, writeTool, z } = ctx;
+  const { applyRollover, planRollover, addDecision, addReviewComment, appendEvent, assignSprint, blendPlan, checkAcceptance, closeSprint, createSprint, dailyPlan, decisionsForTicket, estimateWork, evalReport, evaluateRules, exportAudit, exportBoard, exportMetricsSeries, exportWorkLog, getBoard, getGlobalConfig, getRequirements, getSprintReport, getTicketDiff, getTicketHistory, getTimelineData, graduateProject, listDecisions, listReviewComments, listSprints, meta, notifySlack, planBudget, resolveReviewComment, routingScorecard, setRequirements, sprintOfTask, tryTool, writeHandoff, writeTool, z } = ctx;
 
 // sprints (FBMCPF-120) -------------------------------------------------------
 server.registerTool(
@@ -206,6 +206,30 @@ server.registerTool(
     } catch { /* blend plan is additive/best-effort */ }
     return result;
   })
+);
+
+server.registerTool(
+  "routing_scorecard",
+  {
+    title: "Routing scorecard",
+    description:
+      "Which model tier should actually run your tickets, measured instead of guessed (FBMCPF-351). Scores every Done ticket from data the board " +
+      "already keeps \u2014 work-log tokens + model, ticket_events status transitions, and bugs filed with ref:<ticket> \u2014 and reports, per tier: " +
+      "closed tickets, median tokens, median $ cost, median cycle time (In Progress -> Done), rework rate (reopened, or a follow-up bug filed after " +
+      "close-out), and the headline COST PER CLEAN TICKET (dollars per ticket that stayed closed). Cross-cut by effort:low/medium/high so the answer " +
+      "is 'which tier for THIS size of ticket', not one global average. A tier with fewer than minSamples closed tickets gets NO verdict \u2014 the readout " +
+      "says 'insufficient data' with the sample count rather than guessing. Advice only: it never writes a model:/cap: label, so intake stays " +
+      "deterministic. Pair with plan_budget (what the queue will cost) and daily_plan (what to run today).",
+    inputSchema: {
+      project: z.string(),
+      windowDays: z.number().int().positive().optional().describe("Only score tickets completed in the last N days (default: all history). Advice from an older model generation is worse than none."),
+      minSamples: z.number().int().min(1).optional().default(3).describe("Closed tickets a tier needs before it earns a verdict (default 3)."),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project, windowDays, minSamples }) =>
+    routingScorecard(getBoard(), project, { windowDays: windowDays ?? null, minSamples })
+  )
 );
 
 server.registerTool(

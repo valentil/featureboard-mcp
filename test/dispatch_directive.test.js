@@ -25,20 +25,37 @@ test("haiku → subAgent true", () => {
   assert.equal(d.parallelizable, true);
 });
 
-test("opus → subAgent false, orchestrator instruction", () => {
+// FBMCPF-350: opus (Opus 5) is dispatchable — it shipped as the Claude Max
+// default at the same $5/$25 rate as Opus 4.8, so it fans out to parallel
+// sub-agents like sonnet. fable is the only orchestrator-only tier left.
+test("opus → subAgent true, parallelizable, sub-agent instruction", () => {
   const t = { labels: ["model:opus", "cap:120000"] };
   const d = buildDispatchDirective(t);
   assert.equal(d.model, "opus");
-  assert.equal(d.subAgent, false);
-  assert.equal(d.parallelizable, false);
-  assert.match(d.instruction, /orchestrator context/i);
+  assert.equal(d.subAgent, true);
+  assert.equal(d.parallelizable, true);
+  assert.match(d.instruction, /opus sub-agent/i);
+  assert.match(d.instruction, /NEVER writes the board or commits/);
 });
 
-test("fable → subAgent false", () => {
+test("opus + blocked → dispatchable but not parallelizable", () => {
+  const d = buildDispatchDirective({ labels: ["model:opus"] }, { blocked: true });
+  assert.equal(d.subAgent, true);
+  assert.equal(d.parallelizable, false);
+});
+
+test("versioned opus label still routes as opus", () => {
+  const d = buildDispatchDirective({ labels: ["model:opus-5"] });
+  assert.equal(d.subAgent, true);
+  assert.equal(d.parallelizable, true);
+});
+
+test("fable → subAgent false, orchestrator instruction", () => {
   const t = { labels: ["model:fable"] };
   const d = buildDispatchDirective(t);
   assert.equal(d.subAgent, false);
   assert.equal(d.parallelizable, false);
+  assert.match(d.instruction, /orchestrator context/i);
 });
 
 test("blocked:true forces parallelizable false even for a sub-agent model", () => {

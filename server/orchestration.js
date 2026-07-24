@@ -25,6 +25,7 @@ import {
   suggestEffort,
   rosterModel,
 } from "./budget.js";
+import { isDispatchable } from "./routing.js";
 
 /** Token cap assigned per resolved effort tier at intake. Deliberately
  *  conservative — this ticket's (FBMCPF-159) own cap is 80k, the "medium" tier,
@@ -45,7 +46,8 @@ const INTAKE_HARD_KEYWORDS = /ui[- ]heavy|multi[- ]file|\bparity\b/i;
  *     below);
  *   - bugs default toward sonnet (see budget.js suggestModel);
  *   - hard keywords (architecture/schema/migration/orchestration/etc., plus
- *     UI-heavy/multi-file/parity here) push toward opus and "high" effort;
+ *     UI-heavy/multi-file/parity here) push toward opus; effort follows from
+ *     the ticket's own keywords rather than from the model tier (FBMCPF-350);
  *   - docs/copy/rename/typo-style light keywords push toward haiku (or
  *     sonnet, when the ticket is a bug) and "low" effort;
  *   - anything else defaults to sonnet / "medium" effort.
@@ -68,19 +70,35 @@ export function suggestModelAndCap(ticketLike) {
   const hasExplicitModelLabel = modelBasis === "model label";
   const hasExplicitEffortLabel = eff.basis === "effort label";
 
-  if (!hasExplicitModelLabel && model !== "opus" && model !== "fable") {
-    const text = `${t.title || ""} ${t.description || ""}`;
-    if (INTAKE_HARD_KEYWORDS.test(text)) {
-      model = "opus";
-      modelBasis = "intake hard keywords (UI-heavy/multi-file/parity)";
-    }
+  // FBMCPF-350: the intake heaviness cues now feed model and effort as two
+  // independent signals. They used to feed only the model, and effort came
+  // along for the ride because opus implied "high" — with opus decoupled from
+  // effort, the cue has to say "this ticket is big" in its own right, which is
+  // what FBMCPF-159 meant by it all along.
+  const intakeHard = INTAKE_HARD_KEYWORDS.test(`${t.title || ""} ${t.description || ""}`);
+
+  // Only bump UP: a ticket already routed at opus or above isn't made heavier
+  // by these cues.
+  if (!hasExplicitModelLabel && intakeHard && model !== "opus" && model !== "fable") {
+    model = "opus";
+    modelBasis = "intake hard keywords (UI-heavy/multi-file/parity)";
   }
 
-  // A ticket heavy enough to warrant opus/fable is heavy enough to warrant
-  // "high" effort (and its cap) too — whether opus came from budget.js's own
-  // hard-keyword regex (e.g. "refactor") or the intake-specific bump above —
-  // unless the creator pinned effort explicitly.
-  if (!hasExplicitEffortLabel && (model === "opus" || model === "fable") && effort !== "high") {
+  if (!hasExplicitEffortLabel && intakeHard && effort !== "high") {
+    effort = "high";
+  }
+
+  // A ticket that can't leave the orchestrator at all (fable — see routing.js)
+  // is by definition cross-cutting, so it gets "high" effort and its cap unless
+  // the creator pinned effort explicitly.
+  //
+  // FBMCPF-350: opus USED to be bumped here too, back when it was orchestrator-
+  // tier and priced near fable. Opus 5 is a dispatchable workhorse at half
+  // fable's rate, so routing a ticket to opus no longer implies it is a big
+  // ticket. Genuinely heavy work still reaches "high" on its own merits —
+  // suggestEffort's hard-keyword regex (architecture/schema/migration/…) fires
+  // on the same titles that push the model to opus in the first place.
+  if (!hasExplicitEffortLabel && !isDispatchable(model) && effort !== "high") {
     effort = "high";
   }
 

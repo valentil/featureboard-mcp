@@ -1,7 +1,7 @@
 // FBMCPF-157: model-aware cost tracking — a small, override-friendly pricing
 // table plus helpers that turn work-log token counts into dollar costs.
 //
-// Defaults reflect Anthropic's published API pricing as of 2026-07-16
+// Defaults reflect Anthropic's published API pricing as of 2026-07-24
 // (https://platform.claude.com/docs/en/about-claude/pricing). Work-log
 // entries only ever carry a loose model hint (see budget.js MODEL_LABEL_RE /
 // suggestModel / rosterModel — "sonnet", "opus", "haiku", "fable", or a full
@@ -15,7 +15,13 @@
 //
 // Rates in effect on the source date (input / output, $ per MTok):
 //   Claude Fable 5                         $10 / $50
-//   Claude Opus 4.8 / 4.7 / 4.6 / 4.5      $5  / $25
+//   Claude Opus 5                          $5  / $25   (confirmed 2026-07-24:
+//     / Opus 4.8 / 4.7 / 4.6 / 4.5                      Opus 5 launched at the
+//                                                       same rate as Opus 4.8 —
+//                                                       half of Fable 5 — and is
+//                                                       the Claude Max default,
+//                                                       so the "opus" tier below
+//                                                       needs no change)
 //   Claude Sonnet 5 (introductory,          $2  / $10   (through 2026-08-31;
 //     through 2026-08-31)                                standard rate after
 //                                                         is $3 / $15 — bump
@@ -30,6 +36,7 @@
 // the (higher) standard $3/$15 rate and should override "sonnet" to that.
 
 import { getProjectConfig } from "./metadata.js";
+import { normalizeTier } from "./routing.js";
 
 /** $/MTok input, output, and a blended fallback rate, per model tier. */
 export const DEFAULT_PRICING = {
@@ -42,13 +49,6 @@ export const DEFAULT_PRICING = {
   default: { inputPerMTok: 2, outputPerMTok: 10, blendedPerMTok: 6 },
 };
 
-const TIER_PATTERNS = [
-  ["fable", /fable|mythos/i],
-  ["opus", /opus/i],
-  ["sonnet", /sonnet/i],
-  ["haiku", /haiku/i],
-];
-
 /**
  * Normalize a loose or full model string ("sonnet", "Sonnet 4.5",
  * "claude-opus-4-5-20260101", "model:haiku", ...) down to one of the pricing
@@ -57,13 +57,9 @@ const TIER_PATTERNS = [
  * callers fall back to the "default" pricing tier in that case.
  */
 export function normalizeModelName(raw) {
-  if (!raw) return null;
-  const s = String(raw).trim().toLowerCase();
-  if (!s) return null;
-  for (const [tier, re] of TIER_PATTERNS) {
-    if (re.test(s)) return tier;
-  }
-  return null;
+  // FBMCPF-350: one tier vocabulary for the whole server — routing.js owns the
+  // patterns so pricing and dispatch can never disagree about what "opus 5" is.
+  return normalizeTier(raw);
 }
 
 /**

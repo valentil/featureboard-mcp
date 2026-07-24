@@ -22,6 +22,7 @@ import { matchKbForTicket, getKbDoc, slugify } from "./kb.js";
 import { ragSearch } from "./rag.js";
 import { unresolvedReviewComments } from "./reviews.js";
 import { worktreeForTicket } from "./worktrees.js";
+import { DEFAULT_TIER, isDispatchable, ORCHESTRATOR_TIERS } from "./routing.js";
 
 const WORK_LOG = "agent_work_log.md";
 const LEGACY_CONFIG = "project_config.json";
@@ -676,11 +677,11 @@ export const DISPATCH_EFFORT_RE = /^effort:(low|medium|high)$/i;
 const ETA_HINT_SENTENCE = "etaHints is on: before starting any step expected to exceed ~2 minutes, tell the human the expected duration.";
 
 /**
- * Pure directive builder: sonnet/haiku tickets are cheap enough to hand to a
- * sub-agent (which edits code and runs tests but never writes the board or
- * commits); opus/fable tickets are orchestrator-tier and run sequentially
- * with review. `blocked` (when known) forces parallelizable to false even
- * for an otherwise-dispatchable ticket. `etaHints` (default true — callers
+ * Pure directive builder: dispatchable tickets (haiku/sonnet/opus — see
+ * routing.js MODEL_TIERS) are handed to a sub-agent, which edits code and runs
+ * tests but never writes the board or commits; orchestrator-only tickets
+ * (fable) run inline with review. `blocked` (when known) forces parallelizable
+ * to false even for an otherwise-dispatchable ticket. `etaHints` (default true — callers
  * thread in the project's resolved etaHints config, defaulting ON) appends
  * ETA_HINT_SENTENCE to the instruction.
  *
@@ -707,12 +708,16 @@ export function buildDispatchDirective(task, { blocked = false, etaHints = true,
       if (m) effort = m[1].toLowerCase();
     }
   }
-  if (!model) model = "sonnet";
-  const subAgent = model === "sonnet" || model === "haiku";
+  if (!model) model = DEFAULT_TIER;
+  // FBMCPF-350: tier policy lives in routing.js, not here. Opus 5 is
+  // dispatchable (Max default, same $5/$25 rate as Opus 4.8), so the only
+  // orchestrator-only tier left is fable — whose value IS holding the plan in
+  // context, which a sub-agent cannot do by definition.
+  const subAgent = isDispatchable(model);
   const parallelizable = subAgent && !blocked;
   let instruction = subAgent
     ? `Dispatch this ticket to a ${model} sub-agent with this packet (cap ~${cap} tokens). The sub-agent edits code and runs tests but NEVER writes the board or commits — the orchestrator reviews, sets status, logs work, and commits.`
-    : `Work this ticket in the orchestrator context (model tier ${model}); review carefully before close-out.`;
+    : `Work this ticket in the orchestrator context (model tier ${model} is orchestrator-only: ${ORCHESTRATOR_TIERS.join("/")}); review carefully before close-out.`;
   if (etaHints) instruction += ` ${ETA_HINT_SENTENCE}`;
   if (blend && blend.verdict === "fable-hot") {
     instruction += ` Fable meter is running hot (${blend.fablePct}% vs ${blend.allModelsPct}%): dispatch this ticket to a sonnet/opus sub-agent, keep orchestrator turns terse, and batch board ops.`;

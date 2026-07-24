@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { Board } from "../server/storage.js";
 import { estimateWork, planBudget, suggestModel, capOfTask } from "../server/budget.js";
+import { COST_UNITS } from "../server/routing.js";
 import { logWork } from "../server/metadata.js";
 
 function tmpBoard() {
@@ -56,7 +57,10 @@ test("planBudget: cutline, day spread, model split, sprint filter", () => {
   assert.equal(plan.unplanned[0].ticket, t3.ticketNumber);
   assert.equal(plan.totals.byModel.opus, 100000);
   assert.equal(plan.totals.byModel.sonnet, 100000);
-  assert.equal(plan.totals.costUnits, 100000 * 5 + 100000 * 1);
+  // FBMCPF-350: cost units come from routing.js MODEL_TIERS — opus dropped
+  // 5 -> 2.5 (Opus 5 bills at half of fable, not near-parity with it).
+  assert.equal(plan.totals.costUnits, 100000 * COST_UNITS.opus + 100000 * COST_UNITS.sonnet);
+  assert.equal(COST_UNITS.opus, 2.5);
   const days = plan.plan.map((x) => x.day).sort();
   assert.deepEqual(days, [1, 2]); // spread across both days
   // spent tokens reduce remaining
@@ -105,8 +109,11 @@ test("effort + roster + dailyPlan (FBMCPF-152)", async (t) => {
   assert.equal(p1.effort, "high");
   assert.equal(p1.model, "opus");
   assert.equal(p2.model, "haiku");
-  assert.ok(dp.dispatch.sequential.includes(t1.ticketNumber));
+  // FBMCPF-350: opus is dispatchable now, so the opus ticket joins the parallel
+  // wave; sequential is fable-only.
+  assert.ok(dp.dispatch.parallel.includes(t1.ticketNumber));
   assert.ok(dp.dispatch.parallel.includes(t2.ticketNumber));
+  assert.deepEqual(dp.dispatch.sequential, []);
   // labels written
   assert.ok(b.getTask("Proj", t1.ticketNumber).labels.includes("model:opus"));
   assert.ok(b.getTask("Proj", t1.ticketNumber).labels.includes("effort:high"));
