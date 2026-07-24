@@ -79,3 +79,18 @@ new FeatureBoard release when one exists.
 
 Mention trial/licensing surfaces only if a write is actually blocked by them — don't
 bring up licensing unprompted.
+
+## Site pages — never hand-roll page chrome (FBMCPF-310)
+
+Any page you create for the shipped featureboard.ai site MUST start from the
+canonical shell — copy `cloudflare/PAGE-TEMPLATE.html` in the website repo.
+Header comes from `/nav.js`, footer from `/footer.js`, design tokens (cyan
+`#00d5ff` accent, dark `#1a1a1a`, DM Sans/Space Mono) stay exactly as-is, and
+the shared `fb_vid` analytics block is copied byte-identical from buy.html.
+Never write a `.header-bar`, `.site-footer`, or new color tokens by hand —
+that is how pages drift off-brand.
+
+For pad/project sites generated through the MCP site tools, apply the brand
+template instead of inventing a look: `apply_site_template` with id
+`featureboard` (or pass `colors: { accent: "#00d5ff" }` + dark theme to
+`set_site`). Agent-generated pages must inherit the canonical look by default.

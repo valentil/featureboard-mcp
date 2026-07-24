@@ -238,7 +238,7 @@ test("set_site_analytics injects into rendered pages and toggles off", () => {
 // FBMCPF-97 — starter templates
 test("listSiteTemplates + templateConfig build known templates and reject junk", () => {
   const ids = listSiteTemplates().templates.map((t) => t.id);
-  assert.deepEqual(ids, ["landing", "docs", "blog"]);
+  assert.deepEqual(ids, ["landing", "docs", "blog", "featureboard"]);
   const docs = templateConfig("docs", { title: "My Docs" });
   assert.equal(docs.title, "My Docs");
   assert.equal(docs.pages.length, 3);

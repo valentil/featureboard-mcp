@@ -509,6 +509,7 @@ export const SITE_TEMPLATES = [
   { id: "landing", name: "Landing page", description: "Marketing splash: hero, features, pricing, and a contact section." },
   { id: "docs", name: "Documentation", description: "Docs site: an overview home plus Getting Started, Guides, and API pages." },
   { id: "blog", name: "Blog", description: "Blog home plus a couple of starter posts as pages." },
+  { id: "featureboard", name: "FeatureBoard brand", description: "On-brand FeatureBoard shell: dark theme, cyan #00d5ff accent, DM Sans — the canonical look of featureboard.ai (FBMCPF-310). Use for any FeatureBoard-family page so agent-generated sites never drift off-brand." },
 ];
 
 /** List the available starter templates. */
@@ -545,6 +546,20 @@ export function templateConfig(id, { title } = {}) {
         { slug: "guides", title: "Guides", sections: [{ heading: "Guides", body: "Task-based how-tos." }] },
         { slug: "api", title: "API", sections: [{ heading: "Reference", body: "API reference." }] },
       ],
+    };
+  }
+  if (t === "featureboard") {
+    return {
+      title: name || "FeatureBoard",
+      tagline: "The local-first project management MCP - a native board UI for Claude, over markdown you own.",
+      theme: "dark",
+      colors: { accent: "#00d5ff", primary: "#00d5ff" },
+      font: "DM Sans, system-ui, -apple-system, sans-serif",
+      sections: [
+        { heading: "What it is", body: "One paragraph on the value. Keep it fact-dense and quotable." },
+        { heading: "Pricing", body: "Free for personal & public work. $9.99/seat/mo or $99.99/yr commercial." },
+      ],
+      pages: [],
     };
   }
   if (t === "blog") {
