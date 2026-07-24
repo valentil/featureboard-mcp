@@ -85,15 +85,26 @@ function defaultExec(cmd, args, opts = {}) {
 /** Step 2: create the GitHub release iff it doesn't already exist. */
 export function ensureGhRelease({ tag, assets, notes, exec = defaultExec, dryRun = false }) {
   const view = exec("gh", ["release", "view", tag, "--json", "tagName"]);
-  if (view.status === 0) return { step: "release", did: false, reason: `release ${tag} already exists` };
   if (view.error && view.error.code === "ENOENT") return { step: "release", did: false, error: "gh CLI not installed" };
   const files = assets.filter((a) => fs.existsSync(a));
   if (!files.length) return { step: "release", did: false, error: "no built assets found — run scripts/release.mjs first" };
+  // Only the four explicitly listed artifacts are ever uploaded — never a glob,
+  // never repo files, and no GitHub secrets are involved (auth is the local gh login).
+  if (view.status === 0) {
+    // Release exists: REFRESH its assets so the page always carries the current
+    // builds (previously we short-circuited and v0.7's assets went stale).
+    const args = ["release", "upload", tag, ...files, "--clobber"];
+    if (dryRun) return { step: "release", did: false, dryRun: true, wouldRun: `gh ${args.join(" ")}` };
+    const up = exec("gh", args);
+    return up.status === 0
+      ? { step: "release", did: true, tag, refreshed: true, assets: files.map((f) => path.basename(f)) }
+      : { step: "release", did: false, error: (up.stderr || "gh release upload failed").trim() };
+  }
   const args = ["release", "create", tag, ...files, "--title", tag, "--notes", notes || `FeatureBoard ${tag}`];
   if (dryRun) return { step: "release", did: false, dryRun: true, wouldRun: `gh ${args.join(" ")}` };
   const r = exec("gh", args);
   return r.status === 0
-    ? { step: "release", did: true, tag, assets: files.map((f) => path.basename(f)) }
+    ? { step: "release", did: true, tag, created: true, assets: files.map((f) => path.basename(f)) }
     : { step: "release", did: false, error: (r.stderr || "gh release create failed").trim() };
 }
 

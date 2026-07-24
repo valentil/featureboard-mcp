@@ -28,11 +28,20 @@ test("planServerJsonSync repoints identifier off the dead downloads host and pin
   assert.equal(again.changed.length, 0);
 });
 
-test("ensureGhRelease is idempotent: existing release short-circuits", () => {
-  const exec = (cmd, args) => (args[0] === "release" && args[1] === "view" ? { status: 0, stdout: "{}" } : { status: 1 });
-  const r = ensureGhRelease({ tag: "v0.7.1", assets: [], exec });
-  assert.equal(r.did, false);
-  assert.match(r.reason, /already exists/);
+test("ensureGhRelease refreshes assets on an existing release (upload --clobber)", () => {
+  const calls = [];
+  const exec = (cmd, args) => {
+    calls.push(args);
+    if (args[1] === "view") return { status: 0, stdout: "{}" };
+    return { status: 0, stdout: "" };
+  };
+  // use this test file itself as an existing asset path
+  const r = ensureGhRelease({ tag: "v0.7.1", assets: [new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1")], exec });
+  assert.equal(r.did, true);
+  assert.equal(r.refreshed, true);
+  const upload = calls.find((a) => a[1] === "upload");
+  assert.ok(upload, "ran gh release upload");
+  assert.ok(upload.includes("--clobber"), "clobbers stale assets");
 });
 
 test("ensureGhRelease refuses with no built assets", () => {
