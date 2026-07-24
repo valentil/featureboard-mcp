@@ -8,7 +8,7 @@
   "packages": [
     {
       "registryType": "mcpb",
-      "identifier": "https://featureboard.ai/downloads/featureboard.plugin",
+      "identifier": "https://github.com/valentil/featureboard-mcp/releases/download/v0.7/featureboard.plugin",
       "fileSha256": "8f197622b4e141fe3d77f1522e42f607c987838d4fbbefaff329178db18c11f4",
       "transport": {
         "type": "stdio"

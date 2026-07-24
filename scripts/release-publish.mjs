@@ -102,7 +102,11 @@ export function publishRegistry({ exec = defaultExec, dryRun = false }) {
   if (dryRun) return { step: "publish", did: false, dryRun: true, wouldRun: "mcp-publisher publish" };
   const r = exec("mcp-publisher", ["publish"]);
   if (r.error && r.error.code === "ENOENT") {
-    return { step: "publish", did: false, error: "mcp-publisher CLI not installed — `brew install mcp-publisher` / see registry docs, then re-run (idempotent)" };
+    const hint =
+      process.platform === "win32"
+        ? "PowerShell: $arch = if ([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture -eq 'Arm64') { 'arm64' } else { 'amd64' }; Invoke-WebRequest -Uri \"https://github.com/modelcontextprotocol/registry/releases/download/v1.1.0/mcp-publisher_1.1.0_windows_$arch.tar.gz\" -OutFile mcp-publisher.tar.gz; tar xf mcp-publisher.tar.gz mcp-publisher.exe — then put mcp-publisher.exe on PATH"
+        : "`brew install mcp-publisher` (macOS/Linux/WSL) or grab a binary from github.com/modelcontextprotocol/registry/releases";
+    return { step: "publish", did: false, error: `mcp-publisher CLI not installed — ${hint} — then re-run (idempotent)` };
   }
   return r.status === 0
     ? { step: "publish", did: true }
@@ -158,7 +162,10 @@ async function main() {
 
   console.log(JSON.stringify(report, null, 2));
   const failed = report.steps.some((s) => s.error || s.ok === false);
-  process.exit(failed ? 1 : 0);
+  // Do NOT process.exit() here: on Windows, exiting immediately after spawnSync
+  // trips a libuv teardown assertion (win/async.c UV_HANDLE_CLOSING). Setting
+  // exitCode lets the event loop drain and the process exit cleanly.
+  process.exitCode = failed ? 1 : 0;
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
