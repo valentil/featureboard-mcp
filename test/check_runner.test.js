@@ -149,7 +149,7 @@ test("startChecks spawns a detached runner that finishes to a terminal status", 
 // (c) getCheckResults + audit event -------------------------------------------
 
 function placeRun(board, project, run) {
-  const dir = path.join(board.projectDir(project), "checks");
+  const dir = path.join(board.projectDir(project), ".featureboard", "checks");
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, `${run.runId}.json`), JSON.stringify(run, null, 2) + "\n");
 }

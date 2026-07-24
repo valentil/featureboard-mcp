@@ -26,7 +26,12 @@ import { fileURLToPath } from "node:url";
 import { getProjectConfig, resolveGitTargets } from "./metadata.js";
 import { appendEvent, eventsForTicket } from "./events.js";
 
-const CHECKS_DIR = "checks";
+// FBMCPB-55: the runner's transient files (<runId>.args.json, results json,
+// the staged run-checks.mjs) must live OUTSIDE the Cowork-watched projectpad
+// root, or the host staples each newly-written file onto a fresh chat. Keep
+// them user-owned + in-project (FBMCPB-39's requirement) but hidden under the
+// dot-prefixed .featureboard/ dir, which file pickers/watchers ignore.
+const CHECKS_DIR = path.join(".featureboard", "checks");
 
 // The cheap default when a project has no explicit `checks` block but its code
 // repo has a package.json: syntax-check changed .js/.mjs/.cjs files, nothing
