@@ -104,7 +104,7 @@ export function publishRegistry({ exec = defaultExec, dryRun = false }) {
   if (r.error && r.error.code === "ENOENT") {
     const hint =
       process.platform === "win32"
-        ? "PowerShell: $arch = if ([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture -eq 'Arm64') { 'arm64' } else { 'amd64' }; Invoke-WebRequest -Uri \"https://github.com/modelcontextprotocol/registry/releases/download/v1.1.0/mcp-publisher_1.1.0_windows_$arch.tar.gz\" -OutFile mcp-publisher.tar.gz; tar xf mcp-publisher.tar.gz mcp-publisher.exe — then put mcp-publisher.exe on PATH"
+        ? "PowerShell: $arch = if ([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture -eq 'Arm64') { 'arm64' } else { 'amd64' }; Invoke-WebRequest -Uri \"https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_windows_$arch.tar.gz\" -OutFile mcp-publisher.tar.gz; tar xf mcp-publisher.tar.gz mcp-publisher.exe — then put mcp-publisher.exe on PATH"
         : "`brew install mcp-publisher` (macOS/Linux/WSL) or grab a binary from github.com/modelcontextprotocol/registry/releases";
     return { step: "publish", did: false, error: `mcp-publisher CLI not installed — ${hint} — then re-run (idempotent)` };
   }
