@@ -296,15 +296,29 @@ function main() {
   fs.writeFileSync(readmePath, refreshed, "utf8");
   console.log("Refreshed README.md numeric claims.");
 
-  // 4. Pack the .mcpb the same way the existing scripts do it.
+  // 4. Pack the .mcpb.
+  // FBMCPB-59: the mcpb CLI's 2.x default output name is the DIRECTORY name
+  // (featureboard-mcp.mcpb), not <manifest-name>-<version> — pass the output
+  // path explicitly, and pin the CLI major so `npx --yes` can't float us onto
+  // the next breaking release mid-release. (The 143MB-bundle half of that
+  // incident is handled in .mcpbignore: dist/, releases/, and the optional
+  // embedding/PDF dependency closure never ship.)
   sh("npm run build");
-  sh("npm run bundle");
   const mcpbPath = rel(`featureboard-${newVersion}.mcpb`);
+  sh(`npx --yes @anthropic-ai/mcpb@2 pack . "featureboard-${newVersion}.mcpb"`);
   if (!fs.existsSync(mcpbPath)) {
     console.error(`Expected packed bundle not found: ${mcpbPath}`);
     process.exit(1);
   }
-  console.log(`Packed ${path.basename(mcpbPath)}.`);
+  const mcpbMB = fs.statSync(mcpbPath).size / (1024 * 1024);
+  // FBMCPB-59 guard: 0.7.0 packed at ~3.5MB; anything past 20MB means the
+  // ignore list has a hole (a fresh optional-dep install ballooned it to
+  // 143MB once). Fail loudly rather than publish a bloated bundle.
+  if (mcpbMB > 20) {
+    console.error(`Packed bundle is suspiciously large (${mcpbMB.toFixed(1)}MB > 20MB) — check .mcpbignore (FBMCPB-59).`);
+    process.exit(1);
+  }
+  console.log(`Packed ${path.basename(mcpbPath)} (${mcpbMB.toFixed(1)}MB).`);
 
   // 4b. Build the stable-named Cowork plugin + IDE zip + latest.json so the
   // GitHub release carries durable `releases/latest/download/<name>` URLs.

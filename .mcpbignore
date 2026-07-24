@@ -14,3 +14,44 @@ DESIGN.md
 *.tmp-*
 .featureboard/
 *.mcpb
+
+# FBMCPB-59: build/release outputs — never ship the shipping machinery.
+# ANCHORED to the bundle root: a bare `dist/` would also strip
+# node_modules/@modelcontextprotocol/sdk/dist (the entire SDK runtime).
+/dist/
+/releases/
+
+# FBMCPB-59: OPTIONAL deps (embeddings + PDF ingest) and their transitive
+# closure. The server degrades gracefully without them (every release through
+# 0.7.0 shipped without: 11MB unpacked); with them the bundle balloons to
+# 385MB of multi-platform binaries + a cached ONNX model. Users who want
+# local embeddings run npm i in the install dir (see validate-embeddings.*).
+node_modules/.bin/
+node_modules/.pdf-parse-*/
+node_modules/.pdfjs-dist-*/
+node_modules/@xenova/
+node_modules/@huggingface/
+node_modules/onnxruntime-node/
+node_modules/onnxruntime-web/
+node_modules/onnxruntime-common/
+node_modules/onnx-proto/
+node_modules/@napi-rs/
+node_modules/@img/
+node_modules/sharp/
+node_modules/pdfjs-dist/
+node_modules/protobufjs/
+node_modules/@protobufjs/
+node_modules/@types/
+node_modules/flatbuffers/
+node_modules/long/
+node_modules/guid-typescript/
+node_modules/platform/
+node_modules/detect-libc/
+node_modules/semver/
+node_modules/color/
+node_modules/color-convert/
+node_modules/color-name/
+node_modules/color-string/
+node_modules/simple-swizzle/
+node_modules/is-arrayish/
+node_modules/undici-types/

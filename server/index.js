@@ -9,6 +9,7 @@
  * ideas, these tools write them to the board.
  */
 
+import fs from "node:fs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -254,8 +255,19 @@ const CLIENT_NEUTRAL = /^(1|true|yes|on)$/.test(
   (process.env.FEATUREBOARD_CLIENT_NEUTRAL || "").toLowerCase()
 );
 
+// FBMCPB-59 (drive-by): serverInfo.version was hardcoded "0.3.3" and had
+// drifted four minors behind — read the real version from package.json so
+// release.mjs's bump covers it automatically.
+const SERVER_VERSION = (() => {
+  try {
+    return JSON.parse(
+      fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")
+    ).version || "0.0.0";
+  } catch (e) { return "0.0.0"; }
+})();
+
 const server = new McpServer(
-  { name: "featureboard", version: "0.3.3" },
+  { name: "featureboard", version: SERVER_VERSION },
   { instructions: CLIENT_NEUTRAL ? NEUTRAL_INSTRUCTIONS : INSTRUCTIONS }
 );
 
