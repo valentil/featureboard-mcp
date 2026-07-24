@@ -10,7 +10,9 @@
  *
  * Egress: exactly one deliberate outbound call, to the featureboard.ai registrations
  * listener (FEATUREBOARD_REGISTRATION_URL, default https://featureboard.ai/api/registrations
- * — the receiving endpoint is built in FBMCPF-131; the path here must match it). The
+ * — the receiver landed in the featureboard.ai worker in FBMCPB-63; the path here must
+ * match it exactly, and did not for the whole window between the Cloudflare migration and
+ * that fix, during which every submission was silently dropped). The
  * board is otherwise local-only; see docs/compliance/PRIVACY.md for the full disclosure.
  *
  * Local-first: the email is written to local state (.featureboard/registration.json)
@@ -31,7 +33,7 @@ const STATE_FILE = "registration.json";
 const POST_TIMEOUT_MS = 5000;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-/** Base URL for the featureboard.ai registrations listener (FBMCPF-131 builds the receiver). */
+/** Base URL for the featureboard.ai registrations listener (receiver: FBMCPB-63, worker.js POST /api/registrations). */
 export const REGISTRATION_URL =
   process.env.FEATUREBOARD_REGISTRATION_URL || "https://featureboard.ai/api/registrations";
 
