@@ -318,6 +318,53 @@ function clobberGuard(dir, force) {
   };
 }
 
+/**
+ * FBMCPB-64: detect a site directory this renderer does not own.
+ *
+ * getSite() reads the site.json sidecar and falls back to defaultSite() when it is
+ * missing — which reads as "empty site, nothing built yet" even when the directory
+ * holds a full hand-built site. That false reading is what authored FBMCPF-282
+ * (closed obsolete: it described featureboard.ai as "a title with empty tagline and
+ * 0 sections" while the directory held a 193KB homepage), and it is the same pad-vs-
+ * shipped duality behind FBMCPB-56.
+ *
+ * The clobber guard (FBMCPB-34) already protects the FILES. This protects the agent's
+ * PICTURE of them — so nobody plans a rebuild of a site that already exists, or reaches
+ * for force:true to get past a refusal they did not understand.
+ *
+ * Returns null when the directory is absent, has no index.html, or is renderer-owned.
+ */
+export function unmanagedSite(board, project) {
+  const dir = siteDir(board, project);
+  let existing;
+  try {
+    existing = fs.readFileSync(path.join(dir, SITE_HTML), "utf8");
+  } catch {
+    return null; // no index.html — genuinely nothing built here
+  }
+  if (existing.includes(GENERATED_MARKER)) return null; // ours; getSite is accurate
+  let htmlFiles = [];
+  try {
+    htmlFiles = fs.readdirSync(dir).filter((f) => f.toLowerCase().endsWith(".html")).sort();
+  } catch { /* unreadable dir — still report what we could read */ }
+  const bytes = Buffer.byteLength(existing);
+  const others = Math.max(0, htmlFiles.length - 1);
+  return {
+    unmanaged: true,
+    siteDir: dir,
+    indexBytes: bytes,
+    htmlFileCount: htmlFiles.length,
+    htmlFiles: htmlFiles.slice(0, 12),
+    warning:
+      `${dir} contains an index.html (${bytes} bytes) that FeatureBoard did not generate` +
+      (others ? `, alongside ${others} other HTML file(s)` : "") +
+      `. The config returned here is the site.json sidecar, NOT this rendered site — an empty ` +
+      `tagline or 0 sections means "no sidecar", not "no website". Read the directory before ` +
+      `planning any site work. set_site / apply_site_template / scaffold_site will refuse to ` +
+      `overwrite it (FBMCPB-34); do not pass force:true to get past that refusal without checking.`,
+  };
+}
+
 /** Re-render the whole site (home + all pages) from the current config. */
 export function renderSite(board, project, { now = new Date(), force = false } = {}) {
   return persist(board, project, getSite(board, project), now, { force });

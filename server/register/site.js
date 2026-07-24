@@ -1,6 +1,6 @@
 // Auto-extracted from server/index.js (FBMCPF-224). Registration blocks moved verbatim.
 export function registerSiteTools(server, ctx) {
-  const { addPage, addRawPage, applySiteTemplate, autoConfigureAnalytics, commitFeature, createCampaign, draftEmail, editSection, getBoard, getCampaign, getEmail, getMedia, getPackagingConfig, getSite, getSiteTraffic, listAssets, listCampaigns, listMail, listPages, listSiteTemplates, markSent, maybeLint, meta, recordOpen, removePage, renderSite, saveAsset, savePackagingConfig, scaffoldSite, setAnalyticsConfig, setLoginGate, setPageSeo, setSite, setSiteAnalytics, siteRoot, suggestPackaging, tryTool, validatePackaging, writeTool, z } = ctx;
+  const { addPage, addRawPage, applySiteTemplate, autoConfigureAnalytics, commitFeature, createCampaign, draftEmail, editSection, getBoard, getCampaign, getEmail, getMedia, getPackagingConfig, getSite, getSiteTraffic, listAssets, listCampaigns, listMail, listPages, listSiteTemplates, markSent, maybeLint, meta, recordOpen, removePage, renderSite, saveAsset, savePackagingConfig, scaffoldSite, setAnalyticsConfig, setLoginGate, setPageSeo, setSite, setSiteAnalytics, siteRoot, suggestPackaging, tryTool, unmanagedSite, validatePackaging, writeTool, z } = ctx;
 
 // Mail ---------------------------------------------------------------------
 
@@ -162,14 +162,17 @@ server.registerTool(
   "get_site",
   {
     title: "Get the project website",
-    description: "Read the project's splash/website config (title, tagline, theme, sections, login gate). Returns defaults if none built yet.",
+    description: "Read the project's splash/website config (title, tagline, theme, sections, login gate). Returns defaults if none built yet. FBMCPB-64: when the resolved site directory (websiteLocation, else <project>/site/) holds an index.html FeatureBoard did not generate, the response carries an `unmanaged` block — the config is only the site.json sidecar, so treat empty tagline/0 sections as \"no sidecar\", not \"no website\".",
     inputSchema: { project: z.string() },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
   tryTool(({ project }) => {
     const board = getBoard();
     if (!board.projectExists(project)) throw new Error(`Project "${project}" not found.`);
-    return getSite(board, project);
+    // FBMCPB-64: never report an "empty site" for a directory we do not own.
+    const cfg = getSite(board, project);
+    const unmanaged = unmanagedSite(board, project);
+    return unmanaged ? { ...cfg, unmanaged } : cfg;
   })
 );
 

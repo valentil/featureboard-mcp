@@ -728,7 +728,7 @@
     },
     {
       "name": "get_site",
-      "description": "Read the project's splash/website config (title, tagline, theme, sections, login gate). Returns defaults if none built yet."
+      "description": "Read the project's splash/website config (title, tagline, theme, sections, login gate). Returns defaults if none built yet. FBMCPB-64: when the resolved site directory (websiteLocation, else <project>/site/) holds an index.html FeatureBoard did not generate, the response carries an `unmanaged` block — the config is only the site.json sidecar, so treat empty tagline/0 sections as \"no sidecar\", not \"no website\"."
     },
     {
       "name": "set_site",
