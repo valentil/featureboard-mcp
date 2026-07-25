@@ -93,10 +93,56 @@ export function resolveChecksConfig(board, project) {
   return null;
 }
 
+/**
+ * FBMCPB-65: retire the pre-FBMCPB-55 checks directory.
+ *
+ * FBMCPB-55 moved CHECKS_DIR from <projectDir>/checks/ to <projectDir>/.featureboard/checks/
+ * precisely so the runner's transient files would sit outside the Cowork-watched pad root.
+ * The relocation worked but shipped no migration, so every pad that had ever run checks kept
+ * its old directory forever — unreachable by any tool (getCheckResults and listRuns both
+ * resolve the new CHECKS_DIR), yet still the most-recently-modified visible files in the pad.
+ * Cowork consequently kept offering them as chat attachments. Measured on the reporter's
+ * machine: 122 orphans across three pads (CADSolver 72, FeatureBoardMCP 49, SlopRadar 1).
+ *
+ * GUARDED HARD. A user may legitimately keep their own checks/ folder, so this deletes ONLY
+ * a directory whose every entry matches the runner's own artifact names. Anything
+ * unrecognised — even one file — and the whole directory is left completely alone. It also
+ * never touches a directory containing subdirectories.
+ *
+ * Returns { removed, files } for the caller to report, or null when there was nothing to do.
+ * Never throws: a hygiene sweep must not be able to break a checks run.
+ */
+const LEGACY_ARTIFACT_RE = /^\d+-[a-z0-9]+\.(args\.)?json$/;
+const LEGACY_ALLOWED_EXTRAS = new Set(["run-checks.mjs"]);
+
+export function sweepLegacyChecksDir(board, project) {
+  try {
+    const legacy = path.join(board.projectDir(project), "checks");
+    if (!fs.existsSync(legacy)) return null;
+
+    const entries = fs.readdirSync(legacy, { withFileTypes: true });
+    if (!entries.length) {
+      fs.rmSync(legacy, { recursive: true, force: true });
+      return { removed: legacy, files: 0 };
+    }
+    for (const e of entries) {
+      if (!e.isFile()) return null;                                  // a subdir → not ours
+      if (LEGACY_ALLOWED_EXTRAS.has(e.name)) continue;
+      if (!LEGACY_ARTIFACT_RE.test(e.name)) return null;             // anything unknown → leave it
+    }
+    const count = entries.length;
+    fs.rmSync(legacy, { recursive: true, force: true });
+    return { removed: legacy, files: count };
+  } catch {
+    return null; // never let hygiene break a run
+  }
+}
+
 /** Ensure and return <projectDir>/.featureboard/checks/. */
 function checksDir(board, project) {
   const dir = path.join(board.projectDir(project), CHECKS_DIR);
   fs.mkdirSync(dir, { recursive: true });
+  sweepLegacyChecksDir(board, project); // FBMCPB-65: retire the pre-FBMCPB-55 location
   // FBMCPF-339: keep the runner's transient artifacts (and anything else under
   // .featureboard/) out of the projectpad git repo — a one-line `*` .gitignore
   // in .featureboard/ ignores the whole internal dir. Best-effort, idempotent.

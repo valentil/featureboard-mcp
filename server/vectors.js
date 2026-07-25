@@ -83,33 +83,66 @@ const sha1 = (s) => crypto.createHash("sha1").update(s, "utf8").digest("hex");
 
 // ---------------------------------------------------------------------------
 // Vector cache — content-hash keyed, JSON sidecar under .featureboard/
+//
+// FBMCPB-67: the argument here is the directory the cache lives IN, and it must be the
+// PROJECT's pad, not the boards root. It was previously called with board.dataDir, so all
+// projects shared one file: 2.4MB at projectpads/.featureboard/vector-cache.json with zero
+// per-project caches. That was not merely untidy — CACHE_MAX_ENTRIES applied to the single
+// shared object, so 27 projects competed for one 8,000-chunk budget and evicted each other.
+// A rag_search on a big board wiped a smaller board's vectors, which were then re-embedded
+// from scratch on the next switch. The per-project intent already existed in rag.js, whose
+// indexCache is keyed by dataDir + project.
 // ---------------------------------------------------------------------------
 
-function cachePath(dataDir) {
-  return path.join(dataDir, ".featureboard", CACHE_FILE);
+function cachePath(cacheDir) {
+  return path.join(cacheDir, ".featureboard", CACHE_FILE);
 }
 
-export function readVectorCache(dataDir) {
+/**
+ * FBMCPB-67: remove the orphaned boards-root vector cache.
+ *
+ * Before this fix the cache was written to <boardsRoot>/.featureboard/vector-cache.json, one
+ * shared file for every project (2.4MB on the reporter's machine). Now that each project owns
+ * its own sidecar, that file is unreachable and pure dead weight — and it CANNOT be migrated:
+ * entries are content-hash keyed with no project attribution, so there is no way to work out
+ * which project any vector belonged to. Abandon and re-embed is the only correct move.
+ *
+ * Targets the single FILE, never the directory: the boards-root .featureboard/ legitimately
+ * holds license.json, index.json and registration.json. Never throws.
+ */
+export function sweepRootVectorCache(dataDir) {
   try {
-    const parsed = JSON.parse(fs.readFileSync(cachePath(dataDir), "utf8"));
+    const orphan = path.join(dataDir, ".featureboard", CACHE_FILE);
+    if (!fs.existsSync(orphan)) return null;
+    const bytes = fs.statSync(orphan).size;
+    fs.rmSync(orphan, { force: true });
+    return { removed: orphan, bytes };
+  } catch {
+    return null;
+  }
+}
+
+export function readVectorCache(cacheDir) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(cachePath(cacheDir), "utf8"));
     return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
   } catch {
     return {};
   }
 }
 
-export function writeVectorCache(dataDir, cache) {
+export function writeVectorCache(cacheDir, cache) {
   const keys = Object.keys(cache);
   // crude size guard: drop oldest-inserted entries beyond the cap (object key
   // order is insertion order for string keys — good enough for a cache)
   if (keys.length > CACHE_MAX_ENTRIES) {
     for (const k of keys.slice(0, keys.length - CACHE_MAX_ENTRIES)) delete cache[k];
   }
-  const dir = path.dirname(cachePath(dataDir));
+  const dir = path.dirname(cachePath(cacheDir));
   fs.mkdirSync(dir, { recursive: true });
-  const tmp = cachePath(dataDir) + ".tmp";
+  const tmp = cachePath(cacheDir) + ".tmp";
   fs.writeFileSync(tmp, JSON.stringify(cache));
-  fs.renameSync(tmp, cachePath(dataDir));
+  fs.renameSync(tmp, cachePath(cacheDir));
 }
 
 /**
@@ -117,10 +150,14 @@ export function writeVectorCache(dataDir, cache) {
  * Returns Array<Float lists> aligned with input, or null when semantic mode
  * is unavailable. Never throws.
  */
-export async function embedTexts(texts, { dataDir = null } = {}) {
+export async function embedTexts(texts, { cacheDir = null, dataDir = null } = {}) {
+  // FBMCPB-67: cacheDir is the project pad. dataDir is accepted as a legacy alias only so an
+  // out-of-tree caller does not silently lose caching — but passing the boards root is what
+  // caused the shared-cache thrash, so prefer cacheDir.
+  const dir = cacheDir || dataDir;
   const embedder = await getEmbedder();
   if (!embedder) return null;
-  const cache = dataDir ? readVectorCache(dataDir) : {};
+  const cache = dir ? readVectorCache(dir) : {};
   const out = new Array(texts.length);
   const missing = [];
   texts.forEach((t, i) => {
@@ -138,8 +175,8 @@ export async function embedTexts(texts, { dataDir = null } = {}) {
   } catch {
     return null; // mid-flight failure → caller stays lexical this query
   }
-  if (dataDir && missing.length) {
-    try { writeVectorCache(dataDir, cache); } catch { /* cache write is best-effort */ }
+  if (dir && missing.length) {
+    try { writeVectorCache(dir, cache); } catch { /* cache write is best-effort */ }
   }
   return out;
 }

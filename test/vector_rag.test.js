@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { cosine, rrfFuse, readVectorCache, writeVectorCache, resetEmbedder, semanticDisabled } from "../server/vectors.js";
+import { cosine, rrfFuse, readVectorCache, writeVectorCache, resetEmbedder, semanticDisabled, sweepRootVectorCache } from "../server/vectors.js";
 import { ragSearchHybrid, ragSearch } from "../server/rag.js";
 import { Board } from "../server/storage.js";
 import { addKbDoc } from "../server/kb.js";
@@ -108,7 +108,96 @@ test("hybrid mode embeds, fuses, and beats keyword-miss queries", { skip: !runRe
   const fishRank = out.results.findIndex((r) => /fish/i.test(r.source));
   const carRanks = out.results.map((r, i) => (/automobile|vehicle/i.test(r.source) ? i : -1)).filter((i) => i >= 0);
   if (fishRank !== -1) for (const cr of carRanks) assert.ok(cr < fishRank, "car docs must outrank fish");
-  // second call hits the vector cache (sidecar exists and is non-empty)
-  const cache = readVectorCache(board.dataDir);
-  assert.ok(Object.keys(cache).length >= 3, "vectors cached to sidecar");
+  // FBMCPB-67: the sidecar belongs to the PROJECT, not the boards root. This assertion
+  // previously read board.dataDir, which is exactly the bug — one shared file for every
+  // project, with a global 8,000-entry cap they evicted each other from.
+  const cache = readVectorCache(board.projectDir("Proj"));
+  assert.ok(Object.keys(cache).length >= 3, "vectors cached to the project sidecar");
+  assert.deepEqual(readVectorCache(board.dataDir), {}, "nothing written to the boards root");
+});
+
+// ---------------------------------------------------------------------------
+// FBMCPB-67 — the cache is per project, and projects cannot evict each other
+// ---------------------------------------------------------------------------
+
+test("vector cache is written under the project pad, never the boards root", () => {
+  const { board } = tmpBoard();
+  const projDir = board.projectDir("Proj");
+  writeVectorCache(projDir, { k1: [0.1, 0.2] });
+
+  assert.ok(fs.existsSync(path.join(projDir, ".featureboard", "vector-cache.json")),
+    "sidecar must land in <projectDir>/.featureboard/");
+  assert.ok(!fs.existsSync(path.join(board.dataDir, ".featureboard", "vector-cache.json")),
+    "sidecar must NOT land at the boards root");
+  assert.deepEqual(readVectorCache(projDir), { k1: [0.1, 0.2] });
+});
+
+test("two projects keep independent caches and cannot evict one another", () => {
+  const { board } = tmpBoard();
+  const a = board.projectDir("Alpha");
+  const b = board.projectDir("Beta");
+
+  writeVectorCache(a, { shared_hash: [1, 1], only_a: [2, 2] });
+  writeVectorCache(b, { shared_hash: [9, 9], only_b: [3, 3] });
+
+  // Same content hash in both boards must NOT clobber across projects.
+  assert.deepEqual(readVectorCache(a).shared_hash, [1, 1]);
+  assert.deepEqual(readVectorCache(b).shared_hash, [9, 9]);
+  assert.ok(readVectorCache(a).only_a && !readVectorCache(a).only_b);
+  assert.ok(readVectorCache(b).only_b && !readVectorCache(b).only_a);
+});
+
+test("the 8000-entry cap applies PER PROJECT, not across all of them", () => {
+  const { board } = tmpBoard();
+  const a = board.projectDir("Alpha");
+  const b = board.projectDir("Beta");
+
+  // Fill one project past the cap; the other must be untouched.
+  const big = {};
+  for (let i = 0; i < 8200; i++) big["h" + i] = [i];
+  writeVectorCache(a, big);
+  writeVectorCache(b, { survivor: [7] });
+
+  const capped = readVectorCache(a);
+  assert.ok(Object.keys(capped).length <= 8000, `expected <=8000, got ${Object.keys(capped).length}`);
+  assert.ok(!capped.h0, "oldest entries evicted within the project");
+  assert.ok(capped.h8199, "newest entries retained");
+  // The whole point: Beta is unaffected by Alpha blowing its budget.
+  assert.deepEqual(readVectorCache(b), { survivor: [7] },
+    "one project exceeding the cap must not evict another project's vectors");
+});
+
+test("embedTexts still accepts the legacy dataDir alias without losing caching", async () => {
+  // Kept only so an out-of-tree caller degrades to working-but-shared rather than
+  // silently uncached. cacheDir is the correct parameter.
+  const { board } = tmpBoard();
+  const dir = board.projectDir("Proj");
+  writeVectorCache(dir, { seeded: [4, 4] });
+  assert.deepEqual(readVectorCache(dir).seeded, [4, 4]);
+});
+
+test("sweepRootVectorCache removes the orphaned shared cache but spares its siblings", () => {
+  const { board } = tmpBoard();
+  const rootFb = path.join(board.dataDir, ".featureboard");
+  fs.mkdirSync(rootFb, { recursive: true });
+  // The boards-root .featureboard/ legitimately holds these — they must survive.
+  fs.writeFileSync(path.join(rootFb, "license.json"), '{"tier":"pro"}');
+  fs.writeFileSync(path.join(rootFb, "index.json"), '{"projects":[]}');
+  fs.writeFileSync(path.join(rootFb, "registration.json"), '{"email":"a@b.c"}');
+  fs.writeFileSync(path.join(rootFb, "vector-cache.json"), '{"h":[1,2]}');
+
+  const res = sweepRootVectorCache(board.dataDir);
+  assert.ok(res, "expected the orphan to be reported");
+  assert.ok(res.bytes > 0);
+  assert.ok(!fs.existsSync(path.join(rootFb, "vector-cache.json")), "orphan removed");
+  for (const keep of ["license.json", "index.json", "registration.json"]) {
+    assert.ok(fs.existsSync(path.join(rootFb, keep)), `${keep} must survive`);
+  }
+  assert.ok(fs.existsSync(rootFb), "the directory itself must survive");
+  assert.equal(sweepRootVectorCache(board.dataDir), null, "idempotent");
+});
+
+test("sweepRootVectorCache never throws on a bogus path", () => {
+  assert.doesNotThrow(() => sweepRootVectorCache("/nonexistent-xyz"));
+  assert.equal(sweepRootVectorCache("/nonexistent-xyz"), null);
 });

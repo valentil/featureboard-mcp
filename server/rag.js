@@ -38,7 +38,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { embedTexts, cosine, rrfFuse, unavailableReason } from "./vectors.js";
+import { embedTexts, cosine, rrfFuse, unavailableReason, sweepRootVectorCache } from "./vectors.js";
 
 // ---------------------------------------------------------------------------
 // Tokenizer
@@ -313,7 +313,7 @@ const indexCache = new Map(); // "<dataDir>\0<project>" -> built index
 // Key by the board's absolute data dir AND the project so two boards that share
 // a project name (e.g. temp fixtures both called "Proj") never collide.
 function cacheKeyFor(board, project) {
-  return `${board.dataDir} ${project}`;
+  return `${board.dataDir}\0${project}`;  // FBMCPB-67: escape, not a literal NUL byte
 }
 
 /**
@@ -427,7 +427,11 @@ export async function ragSearchHybrid(board, project, query, opts = {}) {
     return { mode: "lexical", note: opts.mode === "lexical" ? "lexical mode requested" : undefined, results: lexical };
   }
 
-  const vecs = await embedTexts([query, ...pool.map((c) => `${c.heading} ${c.text}`)], { dataDir: board.dataDir });
+  // FBMCPB-67: the cache belongs to the PROJECT, not the boards root. Passing
+  // board.dataDir made all projects share one file and evict each other.
+  sweepRootVectorCache(board.dataDir); // retire the orphan left by the old shared cache
+  const vecs = await embedTexts([query, ...pool.map((c) => `${c.heading} ${c.text}`)],
+    { cacheDir: board.projectDir(project) });
   if (!vecs) {
     return { mode: "lexical", note: unavailableReason() || "semantic embeddings unavailable — BM25 only", results: lexical };
   }
