@@ -1,6 +1,6 @@
 // Auto-extracted from server/index.js (FBMCPF-224). Registration blocks moved verbatim.
 export function registerBoardTools(server, ctx) {
-  const { BOARD_HTML_PATH, RAG_EXPLORER_HTML_PATH, Board, applyStandard, steerProject, getSteeringStatus, resolveStandard, standardPacketBlock, StatusEnum, applyTriage, autoAssignSprintFields, blendStatus, compactView, completedAtForTask, computeWaves, createFeedbackTickets, estimateTicketMinutes, evaluateRules, extractBoardToolNames, fail, fullView, getBoard, getGlobalConfig, isBlocked, meta, notifySlack, parseFeedback, parseImport, parsePmImport, readFileSync, sprintOfTask, suggestModel, ticketsWithUnresolvedReviews, tryTool, withOrchestrationLabels, writeTool, z } = ctx;
+  const { BOARD_HTML_PATH, RAG_EXPLORER_HTML_PATH, Board, applyStandard, steerProject, getSteeringStatus, buildWave, uncollectedCheckRuns, lastDispatchForTicket, resolveStandard, standardPacketBlock, StatusEnum, applyTriage, autoAssignSprintFields, blendStatus, compactView, completedAtForTask, computeWaves, createFeedbackTickets, estimateTicketMinutes, evaluateRules, extractBoardToolNames, fail, fullView, getBoard, getGlobalConfig, isBlocked, meta, notifySlack, parseFeedback, parseImport, parsePmImport, readFileSync, sprintOfTask, suggestModel, ticketsWithUnresolvedReviews, tryTool, withOrchestrationLabels, writeTool, z } = ctx;
 
 // projects -----------------------------------------------------------------
 
@@ -627,6 +627,56 @@ server.registerTool(
     return res;
   })
 );
+
+
+server.registerTool(
+  "next_wave",
+  {
+    title: "Next wave of work (fill every lane)",
+    description:
+      "The PLURAL of next_task: return the whole dispatchable set at once, already partitioned into file-disjoint lanes, " +
+      "so every sub-agent lane can be filled in ONE call instead of N sequential next_task round-trips. " +
+      "Use this — not repeated next_task — whenever you are working a board with more than one open ticket. " +
+      "`lanes[]` are mutually file-disjoint and safe to run as CONCURRENT sub-agents; tickets WITHIN a lane share files " +
+      "and must run serially in the order given. `sequential[]` holds orchestrator-only tickets (fable) that run inline. " +
+      "Each ticket carries its own `dispatch` block ({subAgent, model, cap, parallelizable, instruction}) so no second lookup is needed. " +
+      "Pass `occupied` with the tickets your sub-agents are still working and call it again to REFILL just the lanes that freed up — " +
+      "lanes containing a running ticket come back under `busyLanes` and are never re-served. " +
+      "`stopCondition` is the authority on whether the loop is over: an empty wave is a steer_project event, NOT a stop.",
+    inputSchema: {
+      project: z.string(),
+      type: z.enum(["all", "feature", "bug"]).optional().default("all"),
+      occupied: z.array(z.string()).optional().describe("Ticket ids currently being worked by a sub-agent — excluded from the wave, and their lanes withheld."),
+      maxLanes: z.coerce.number().int().optional().describe("Cap concurrent lanes returned. Omit to saturate — the default is every lane the board can safely run."),
+      laneDepth: z.coerce.number().int().optional().describe("Cap tickets returned per lane. Omit for the full serial list."),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  tryTool(({ project, type, occupied, maxLanes, laneDepth }) => {
+    const board = getBoard();
+    // FBMCPF-278: same plan-meter blend next_task threads into its dispatch
+    // sentence, resolved once for the whole wave. Best-effort; never blocks.
+    let blend = null;
+    try { blend = blendStatus(getGlobalConfig(board), new Date()); } catch { blend = null; }
+    return buildWave(
+      board,
+      project,
+      {
+        getProjectConfig: (b, p) => meta.getProjectConfig(b, p),
+        buildDispatchDirective: (t, o) => meta.buildDispatchDirective(t, o),
+        isBlocked,
+        ticketsWithUnresolvedReviews,
+        lastDispatchForTicket,
+        getSteeringStatus,
+        uncollectedChecks: uncollectedCheckRuns,
+        compactView,
+        blend,
+      },
+      { type, occupied: occupied || [], maxLanes: maxLanes ?? null, laneDepth: laneDepth ?? null }
+    );
+  })
+);
+
 
 // mutating -----------------------------------------------------------------
 

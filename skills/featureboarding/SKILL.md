@@ -29,15 +29,41 @@ implementing agent's `get_work_packet` auto-attaches that brief as `researchBrie
 alongside relevant local `ragChunks` (BM25 over KB/docs/ticket-history — zero tokens,
 zero network) — so the expensive model starts with context, not a cold read.
 
-## 3. Churn the queue
+## 3. Churn the queue — keep every lane full
 
-- Call `next_task` to pull the next open ticket (it honours manual priority).
-- Read its `dispatch` block (`{subAgent, model, cap, parallelizable, instruction}`) — obey it.
-- If `dispatch.subAgent` is set, spawn a sub-agent on `dispatch.model` and hand it the
-  work packet as its brief.
-- Parallelize: tickets whose `dispatch.parallelizable` is true AND whose files don't
-  overlap can run as concurrent sub-agents. Tickets on `fable` run inline
-  in the orchestrator, with review between each.
+> **Invariant: no lane sits idle while a dispatchable ticket exists.**
+
+- Call `next_wave` — not `next_task` in a loop. It returns the WHOLE dispatchable set
+  in one call, already partitioned into lanes that are mutually file-disjoint.
+- **Start every lane it returns, at once.** `lanes[]` are safe to run as concurrent
+  sub-agents; tickets *within* a lane share files and run serially in the order given.
+  A lane flagged `isolate` has unknown file scope — give it its own `create_worktree`.
+- Each ticket carries its own `dispatch` block (`{subAgent, model, cap, parallelizable,
+  instruction}`) — obey it. Spawn the sub-agent at `dispatch.model` with the work packet
+  as its brief. Never upgrade a haiku ticket "to be safe" or downgrade an opus one to
+  save tokens; the board already made that call at intake.
+- `sequential[]` holds `fable` tickets — orchestrator-only, run inline, review between each.
+- **Refill on every completion, in the same turn.** The moment a lane finishes, call
+  `next_wave` again with `occupied: [tickets still running]` and start what comes back.
+  Do not batch completions and refill later. Do not pause mid-run to ask whether to
+  keep going — the stop condition below already answers that.
+- Lanes holding a running ticket come back under `busyLanes`, never re-served, so
+  refilling can't double-dispatch a file another agent is editing.
+- `maxLanes` exists if you need to throttle, but the default is saturation. Use it only
+  when the user asks for it.
+
+## 3b. Stop condition — `stopCondition.met`, nothing else
+
+An empty wave is **not** the end. `next_wave` returns a `stopCondition` block; the loop
+continues while it is false, and its `reasons[]` tell you what to do next:
+
+- open tickets remain → keep filling lanes
+- tickets still running → wait and refill
+- uncollected check runs → `get_check_results`
+- unreviewed Done tickets, or steering not yet idle → `steer_project` (see §7)
+
+Only when `stopCondition.met` is true do you stop and report. A failed acceptance check
+is a new ticket, not a stopping point — file it and keep the lanes full.
 
 ## 4. Orchestrator owns the board — always
 
@@ -72,7 +98,7 @@ every project at once.
 
 ## 6. Close-out
 
-When the queue is empty, run `scan_board_cleanup` and offer the user next steps
+When `stopCondition.met` is true, run `scan_board_cleanup` and offer the user next steps
 (new work to plan, stale tickets to prune, etc.). Occasionally also offer to run
 `check_updates` (explicit call only, never automatic) so the user hears about a
 new FeatureBoard release when one exists.

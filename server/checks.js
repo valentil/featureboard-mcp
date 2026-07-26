@@ -309,6 +309,34 @@ function ageSecondsOf(results) {
  * ticket's history. Deduped by rewriting the run file with collected:true, so
  * re-reading the same failed run never re-fires the event.
  */
+/**
+ * FBMCPF-361: finished check runs whose results nobody has collected yet.
+ *
+ * commit_feature starts checks DETACHED so the churn loop never waits on them;
+ * the cost of that is a run can finish, fail, and be forgotten. next_wave's
+ * stop condition reads this so "the queue is empty" can never be mistaken for
+ * "we are done" while a failed run sits uncollected on disk.
+ *
+ * A run counts as uncollected when it has finished (status is not "running")
+ * and carries no `collected` marker — the same marker getCheckResults sets on
+ * first collection of a failed run. Never throws; an unreadable checks dir just
+ * means nothing is outstanding.
+ */
+export function uncollectedCheckRuns(board, project) {
+  try {
+    return listRuns(board, project)
+      .filter((r) => r.results && r.results.status && r.results.status !== "running" && !r.results.collected)
+      .map((r) => ({
+        runId: r.results.runId,
+        ticket: r.results.ticket || null,
+        status: r.results.status,
+        failedChecks: (r.results.checks || []).filter((c) => c.status === "failed").map((c) => c.name),
+      }));
+  } catch {
+    return [];
+  }
+}
+
 export function getCheckResults(board, project, { runId = null, ticket = null } = {}) {
   const dir = path.join(board.projectDir(project), CHECKS_DIR);
   let file = null;
