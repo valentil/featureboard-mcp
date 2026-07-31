@@ -1,11 +1,27 @@
 ---
 name: featureboarding
-description: Board substantive dev requests on FeatureBoard automatically and churn them with parallel sub-agents. Use when the user asks to build, fix, ship, implement, refactor, or "work on" anything non-trivial in a project — they should NOT have to say "put it on the board".
+description: Board substantive dev requests on FeatureBoard automatically and churn them with parallel sub-agents — with verified dispatch, heartbeat liveness, and per-completion merging. Use when the user asks to build, fix, ship, implement, refactor, "work on", or "swarm" anything non-trivial in a project — they should NOT have to say "put it on the board".
 ---
 
 # Featureboarding
 
-Run the FeatureBoard churn loop end to end: board the work, then work the board.
+Run the FeatureBoard churn loop end to end: board the work, then work the board —
+and PROVE the work is moving. Four failure modes this skill exists to prevent
+(all observed in real runs): lanes narrated as dispatched but never spawned;
+finished work sitting uncommitted in worktrees; sub-agents ending early to "ask
+for guidance" nobody can hear; and a blind agent monitor because nobody heartbeats.
+
+## 0. Pre-flight sweep — before dispatching anything
+
+- `get_agent_monitor` (stallMinutes: 15). Any ticket already In Progress and
+  stalled with no live agent from THIS session behind it is a zombie from a dead
+  run: reset it to Todo (`set_status`, note why via `log_work`) so `next_wave`
+  can re-serve it. Zombie In Progress tickets silently shrink every wave.
+- `list_worktrees`. A worktree branch with commits (or dirty files) not on the
+  main branch is orphaned finished work: review, `commit_feature`, then
+  `cleanup_worktree` before starting new lanes.
+- Check the work packet's `gitTargets` — code commits and projectpad commits can
+  target DIFFERENT repos. Never assume.
 
 ## 1. Board it — no permission needed
 
@@ -32,6 +48,7 @@ zero network) — so the expensive model starts with context, not a cold read.
 ## 3. Churn the queue — keep every lane full
 
 > **Invariant: no lane sits idle while a dispatchable ticket exists.**
+> **Invariant: no ticket is In Progress unless a verified-live agent (or the orchestrator) is working it.**
 
 - Call `next_wave` — not `next_task` in a loop. It returns the WHOLE dispatchable set
   in one call, already partitioned into lanes that are mutually file-disjoint.
@@ -42,17 +59,49 @@ zero network) — so the expensive model starts with context, not a cold read.
   instruction}`) — obey it. Spawn the sub-agent at `dispatch.model` with the work packet
   as its brief. Never upgrade a haiku ticket "to be safe" or downgrade an opus one to
   save tokens; the board already made that call at intake.
+- **Build every sub-agent prompt from `references/dispatch-prompt.md`.** Its three
+  MANDATORY blocks (heartbeats, no-pausing, no-commits) are not optional garnish —
+  omitting them recreates the failure modes above.
 - `sequential[]` holds `fable` tickets — orchestrator-only, run inline, review between each.
-- **Refill on every completion, in the same turn.** The moment a lane finishes, call
-  `next_wave` again with `occupied: [tickets still running]` and start what comes back.
-  Do not batch completions and refill later. Do not pause mid-run to ask whether to
-  keep going — the stop condition below already answers that.
-- Lanes holding a running ticket come back under `busyLanes`, never re-served, so
-  refilling can't double-dispatch a file another agent is editing.
 - `maxLanes` exists if you need to throttle, but the default is saturation. Use it only
   when the user asks for it.
 
-## 3b. Stop condition — `stopCondition.met`, nothing else
+## 3a. Verify the dispatch — narrated ≠ spawned
+
+Do this in the SAME turn as every wave dispatch:
+
+1. Per ticket handed off: `set_status` "In Progress", then `record_dispatch`
+   (`worker: "sub-agent"`, `model`, `parallel: true`, note: lane id). When a
+   within-lane serial ticket starts later, `record_dispatch` it then too.
+2. **Count Agent tool calls actually issued vs lanes returned.** If they differ,
+   dispatch the missing lanes NOW. Never narrate six agents and launch three.
+3. `get_agent_monitor`: every lane-lead ticket must show a `lastDispatch` younger
+   than this wave. An In Progress ticket with `lastDispatch: null` that is not a
+   within-lane successor was never spawned — spawn it.
+
+## 3b. Refill and watchdog
+
+- **Refill on every completion, in the same turn.** The moment a lane finishes:
+  handle it per §4, then call `next_wave` with `occupied: [only tickets VERIFIED
+  still running]` and start (and verify, §3a) what comes back. Do not batch
+  completions. Do not pause mid-run to ask whether to keep going.
+- **`occupied` hygiene:** a ticket you merely believe is running does not belong in
+  `occupied` — lanes come back under `busyLanes` and are never re-served, so hiding
+  a dead lane as "busy" is exactly how lanes vanish from a run.
+- While long lanes run, poll `get_agent_monitor` (stallMinutes: 15) every ~10-15 min:
+
+| Signal | Meaning | Action |
+|---|---|---|
+| In Progress, `lastDispatch: null`, not a lane successor | never spawned | dispatch it |
+| stalled, no heartbeat, its Agent call still running | quiet but alive | wait one cycle |
+| stalled, no heartbeat, no corresponding running agent | dead lane | reset to Todo, re-dispatch |
+| stalled mid-heartbeat-trail | agent stuck | collect result if returned; else re-dispatch |
+
+- A sub-agent whose final report is a QUESTION instead of finished work is a failed
+  dispatch, not a conversation: answer it yourself if within ticket scope and
+  re-dispatch, or park the ticket (Todo + `log_work` note) and keep the lanes full.
+
+## 3c. Stop condition — `stopCondition.met`, nothing else
 
 An empty wave is **not** the end. `next_wave` returns a `stopCondition` block; the loop
 continues while it is false, and its `reasons[]` tell you what to do next:
@@ -64,10 +113,13 @@ continues while it is false, and its `reasons[]` tell you what to do next:
 
 Only when `stopCondition.met` is true do you stop and report. A failed acceptance check
 is a new ticket, not a stopping point — file it and keep the lanes full.
+Before declaring done: one final `list_worktrees` (no orphaned branches) and
+`get_agent_monitor` (nothing In Progress). Then ONE consolidated report — not one per ticket.
 
 ## 4. Orchestrator owns the board — always
 
-Sub-agents NEVER write the board and NEVER commit. Only the orchestrator:
+Sub-agents NEVER write the board (except `log_heartbeat`) and NEVER commit. Only the
+orchestrator:
 
 1. Sets status to `In Progress` before dispatching a ticket, then calls
    `record_dispatch` (`worker: "sub-agent"`, `model`, `parallel`) right after
@@ -76,7 +128,10 @@ Sub-agents NEVER write the board and NEVER commit. Only the orchestrator:
    again with `worker: "orchestrator"` when taking the ticket back for this.
 3. Sets status to `Done` with a one-line `completionSummary`.
 4. Calls `log_work` with tokens/additions/deletions/model.
-5. Calls `commit_feature` for that ticket before pulling the next one.
+5. Calls `commit_feature` for that ticket **the moment its lane returns and review
+   passes — never batched to the end of the wave**. Finished work waiting
+   uncommitted in a worktree is invisible work; merge it, `cleanup_worktree`,
+   THEN refill the lane.
 6. After `commit_feature`, background static checks (syntax, lint, any configured
    commands) start AUTOMATICALLY and DETACHED — pure CPU, zero tokens. Don't wait:
    pull the next ticket immediately. Between tickets, and before ending the session,
@@ -86,15 +141,17 @@ Sub-agents NEVER write the board and NEVER commit. Only the orchestrator:
 
 ## 5. Live visibility
 
-Sub-agents never write the board mid-flight, so between "In Progress" and "Done" the
-filesystem is the only truth. When dispatching a ticket, tell the sub-agent in its
-brief to append one-line timestamped notes to `.fb-progress` in its worktree (or the
-repo root, if it's not on a worktree) at each major step — e.g. `12:03 created parser`,
-`12:11 tests written`, `12:19 suite green`. `.fb-progress` is gitignored by convention;
-it's a scratch channel, not project history. `get_live_activity` (and Mission Control)
-read it, along with dirty files, recent commits, and other git worktrees, to answer
-"is anything actually moving?" for a stalled-looking ticket — per project or across
-every project at once.
+Two channels, both mandatory in every sub-agent brief (see `references/dispatch-prompt.md`):
+
+- **`log_heartbeat`** at a few natural milestones (oriented / fix written / tests
+  green) with the ticket and elapsed minutes. This is the ONLY board tool a
+  sub-agent may call; it feeds `get_agent_monitor`'s liveness and stall banners —
+  without it every healthy long-running lane looks identical to a dead one.
+- **`.fb-progress`** one-line timestamped notes in the worktree (or repo root) at
+  each major step — e.g. `12:03 created parser`, `12:19 suite green`. Gitignored
+  by convention; `get_live_activity` and Mission Control read it, along with dirty
+  files, recent commits, and other git worktrees, to answer "is anything actually
+  moving?" for a stalled-looking ticket.
 
 ## 6. Close-out
 
