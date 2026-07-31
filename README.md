@@ -39,7 +39,7 @@ drift on open-ended asks. See [docs/EVAL-BOARD-VS-CHAT.md](docs/EVAL-BOARD-VS-CH
 
 ## Quickstart
 
-1. Install the extension: double-click `featureboard-0.8.0.mcpb`, or Claude Desktop →
+1. Install the extension: double-click `featureboard-0.8.2.mcpb`, or Claude Desktop →
    **Settings → Extensions → Advanced → Install Extension**.
 2. On first run it asks for your **Boards folder**. Each subfolder with a `featurelist.md` or
    `buglist.md` is a board.
