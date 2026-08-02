@@ -136,6 +136,26 @@ export function formatReleaseNotes({ commitCount, prevTag, toolsPrev, toolsNow, 
   return `full release notes: ${commitCount} commits since ${prevTag}, ${tp}→${tn} tools, ${sp}→${sn} tests, organized as ${themes}.`;
 }
 
+/**
+ * FBMCPF-372: rewrite artifact/board.html's BOARD_VERSION constant.
+ *
+ * The constant is declared "mirrors package.json's version — bump alongside a
+ * release" and nothing enforced it, so it sat at 0.6.2 through 0.7, 0.7.1, 0.8
+ * and 0.8.2. It rides along on every bug report the board artifact POSTs to
+ * featureboard.ai, which meant four releases' worth of reports were labelled
+ * with the wrong version. Now the release does it, so it cannot drift.
+ *
+ * Returns the text unchanged when the constant is absent (a board.html that
+ * predates FBMCPF-253 is not a release-blocking condition).
+ */
+export function syncBoardVersion(text, version) {
+  if (version == null) return text;
+  return String(text).replace(
+    /(const\s+BOARD_VERSION\s*=\s*)"(\d+\.\d+\.\d+)"/,
+    (_m, head) => `${head}"${version}"`
+  );
+}
+
 /** Build the exact `gh release create` argv (used both to print and to run it). */
 export function buildGhArgs({ tag, assets, mcpbPath, title, notes }) {
   // Accept a list of asset paths (stable-named .plugin/.zip/latest.json + the
@@ -246,6 +266,11 @@ function main() {
     console.log("\n--dry-run: no files written, nothing committed/tagged/released.\n");
     console.log(`README.md numeric claims would change: ${changed}`);
     console.log(`manifest.json/package.json version would become: ${newVersion}`);
+    try {
+      const boardNow = fs.readFileSync(rel("artifact/board.html"), "utf8");
+      const cur = /const\s+BOARD_VERSION\s*=\s*"(\d+\.\d+\.\d+)"/.exec(boardNow);
+      if (cur) console.log(`artifact/board.html BOARD_VERSION: ${cur[1]} -> ${newVersion}`);
+    } catch { /* board artifact is optional */ }
     console.log("Would run: npm run docs (if present), then npm run build && npm run bundle && npm run plugin");
     const mcpbPath = rel(`featureboard-${newVersion}.mcpb`);
 
@@ -279,6 +304,18 @@ function main() {
   manifest.version = newVersion;
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n", "utf8");
   console.log(`Wrote version ${newVersion} to package.json + manifest.json.`);
+
+  // FBMCPF-372: keep the board artifact's self-reported version honest. It ships
+  // inside the .mcpb packed below, so this has to happen before the pack step.
+  const boardPath = rel("artifact/board.html");
+  if (fs.existsSync(boardPath)) {
+    const boardText = fs.readFileSync(boardPath, "utf8");
+    const boardSynced = syncBoardVersion(boardText, newVersion);
+    if (boardSynced !== boardText) {
+      fs.writeFileSync(boardPath, boardSynced, "utf8");
+      console.log(`Synced artifact/board.html BOARD_VERSION to ${newVersion}.`);
+    }
+  }
 
   // Regenerate docs (also re-syncs manifest.json's tools array from server/index.js).
   if (fs.existsSync(rel("scripts/gen-docs.mjs"))) {

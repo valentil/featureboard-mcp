@@ -10,6 +10,7 @@ import {
   formatReleaseNotes,
   buildGhArgs,
   formatGhCommand,
+  syncBoardVersion,
 } from "../scripts/release.mjs";
 
 // FBMCPF-160 — release automation (pure-helper unit tests)
@@ -143,4 +144,21 @@ test("buildGhArgs + formatGhCommand build the exact gh release create invocation
   const cmd = formatGhCommand(args);
   assert.match(cmd, /^gh release create v0\.6 /);
   assert.match(cmd, /--title "FeatureBoard 0\.6\.0"/);
+});
+
+// FBMCPF-372 — BOARD_VERSION drifted four releases (0.6.2 while shipping 0.8.2)
+// because "bump alongside a release" was a comment, not a step.
+test("syncBoardVersion rewrites the board artifact's version constant", () => {
+  const before = 'const FB = "x";\n// mirrors package.json\nconst BOARD_VERSION = "0.6.2";\nconst $ = 1;\n';
+  const after = syncBoardVersion(before, "0.8.3");
+  assert.match(after, /const BOARD_VERSION = "0\.8\.3";/);
+  assert.ok(!after.includes('"0.6.2"'), "old version must be gone");
+  // only the constant moves — surrounding source is untouched
+  assert.ok(after.includes('const FB = "x";') && after.includes("const $ = 1;"));
+});
+
+test("syncBoardVersion is a no-op without a version or without the constant", () => {
+  const src = 'const BOARD_VERSION = "0.6.2";';
+  assert.equal(syncBoardVersion(src, null), src);
+  assert.equal(syncBoardVersion("no constant here", "0.8.3"), "no constant here");
 });
