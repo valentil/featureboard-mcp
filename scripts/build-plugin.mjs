@@ -242,6 +242,11 @@ const manifest = {
   version: pkg.version,
   releasedAt: new Date().toISOString(),
   artifacts: {
+    // FBMCPF-373: mcpb is the Cowork/Desktop install and leads the list; the
+    // stable name is what makes the latest/download URL durable (release.mjs
+    // copies featureboard-<ver>.mcpb to releases/featureboard.mcpb). plugin
+    // stays published for anyone already pointing at it.
+    mcpb: "https://github.com/valentil/featureboard-mcp/releases/latest/download/featureboard.mcpb",
     plugin: "https://github.com/valentil/featureboard-mcp/releases/latest/download/featureboard.plugin",
     mcpZip: "https://github.com/valentil/featureboard-mcp/releases/latest/download/featureboard-mcp.zip",
   },

@@ -282,7 +282,7 @@ function main() {
         toolsPrev, toolsNow, testsPrev, testsNow, themes: opts.themes,
       });
       const title = `FeatureBoard ${newVersion}`;
-      const assets = [mcpbPath, rel("releases/featureboard.plugin"), rel("releases/featureboard-mcp.zip"), rel("releases/latest.json")];
+      const assets = [mcpbPath, rel("releases/featureboard.mcpb"), rel("releases/featureboard.plugin"), rel("releases/featureboard-mcp.zip"), rel("releases/latest.json")];
       const ghArgs = buildGhArgs({ tag, assets, title, notes });
       console.log(`\nCommit message: release: v${newVersion} — ${opts.themes}`);
       console.log(`Tag: ${tag}`);
@@ -364,6 +364,16 @@ function main() {
   const ideZipPath = rel("releases/featureboard-mcp.zip");
   const latestManifestPath = rel("releases/latest.json");
 
+  // FBMCPF-373: ship a stable-named copy of the bundle alongside the versioned
+  // one. featureboard.ai linked at `releases/latest/download/featureboard-0.8.0.mcpb`
+  // — `latest/download/` plus a VERSIONED filename, which 404s the moment the
+  // next release becomes latest. The homepage's primary download was dead for a
+  // week before anyone noticed. A stable name makes the durable URL actually
+  // durable; the versioned file still ships for anyone pinning a release.
+  const stableMcpbPath = rel("releases/featureboard.mcpb");
+  fs.copyFileSync(mcpbPath, stableMcpbPath);
+  console.log(`Copied ${path.basename(mcpbPath)} -> releases/featureboard.mcpb (durable latest/download URL).`);
+
   // 5. Release notes.
   const notes = formatReleaseNotes({
     commitCount: commitCount ?? "0", prevTag: prevTag ?? "(none)",
@@ -395,7 +405,7 @@ function main() {
     lm.notes = notes;
     fs.writeFileSync(latestManifestPath, JSON.stringify(lm, null, 2) + "\n", "utf8");
   } catch { /* manifest stamp is best-effort */ }
-  const assets = [mcpbPath, pluginPath, ideZipPath, latestManifestPath].filter((f) => fs.existsSync(f));
+  const assets = [mcpbPath, stableMcpbPath, pluginPath, ideZipPath, latestManifestPath].filter((f) => fs.existsSync(f));
   const ghArgs = buildGhArgs({ tag, assets, title, notes });
   console.log(`Running: ${formatGhCommand(ghArgs)}`);
   execFileSync("gh", ghArgs, { cwd: root, stdio: "inherit" });
