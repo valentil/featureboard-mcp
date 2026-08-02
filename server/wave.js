@@ -377,7 +377,9 @@ export function buildWave(board, project, deps = {}, opts = {}) {
     instruction:
       `Fill ALL ${lanes.length} lane(s) NOW as concurrent sub-agents — no lane sits idle while a dispatchable ticket exists. ` +
       "Tickets WITHIN a lane share files and must run serially; lanes are file-disjoint and safe to run at once. " +
-      "For each ticket: set_status In Progress, get_work_packet, dispatch at its dispatch.model, then record_dispatch. " +
+      "For each ticket: set_status In Progress, dispatch at its dispatch.model, then record_dispatch. " +
+      "DISPATCH BY TICKET ID (FBMCPB-83): the sub-agent prompt you write is rendered in the user's chat, so never paste a work packet, " +
+      "researchBrief or ragChunks into it — tell the sub-agent to call get_work_packet itself as its first action. One line per dispatch. " +
       "When a lane finishes, re-call next_wave with occupied=[still-running tickets] and refill it immediately. " +
       (sequential.length ? `${sequential.length} orchestrator-only ticket(s) in sequential[] run inline, one at a time. ` : "") +
       "Stop only when stopCondition.met is true.",

@@ -206,8 +206,36 @@ test("routingScorecard: dispatch events name the tier when the work log doesn't"
   appendEvent(b, "Proj", { ticket: t.ticketNumber, field: "dispatch", to: "sub-agent", worker: "sub-agent", model: "claude-opus-5-20260724" });
   logWork(b, "Proj", { ticket: t.ticketNumber, summary: "work", tokens: 1000 }); // no model recorded
   b.setStatus("Proj", t.ticketNumber, "Done");
-  const sc = routingScorecard(b, "Proj");
+  const sc = routingScorecard(b, "Proj", { includeRows: true });
   assert.equal(sc.rows[0].tier, "opus");
+});
+
+// FBMCPB-84: rows are the bulk of the response on a mature board (411 tickets =
+// 124KB, past the MCP result cap), so they are opt-in and capped.
+test("routingScorecard: rows are omitted by default and capped when requested", () => {
+  const b = tmpBoard();
+  for (let i = 0; i < 5; i++) {
+    const t = b.addTask("Proj", "feature", { title: `t${i}`, labels: ["model:opus"] });
+    b.setStatus("Proj", t.ticketNumber, "In Progress");
+    logWork(b, "Proj", { ticket: t.ticketNumber, summary: "w", tokens: 1000 * (i + 1), model: "opus" });
+    b.setStatus("Proj", t.ticketNumber, "Done");
+  }
+
+  const lean = routingScorecard(b, "Proj");
+  assert.equal(lean.rows, undefined, "rows must not ride along by default");
+  assert.equal(lean.ticketsScored, 5, "stats still cover every ticket");
+  assert.equal(lean.overall.opus.n, 5);
+  assert.match(lean.rowsOmitted, /includeRows/);
+
+  const full = routingScorecard(b, "Proj", { includeRows: true });
+  assert.equal(full.rows.length, 5);
+  assert.equal(full.rowsTruncated, undefined);
+
+  const capped = routingScorecard(b, "Proj", { includeRows: true, rowLimit: 2 });
+  assert.equal(capped.rows.length, 2);
+  assert.equal(capped.rowsTruncated.of, 5);
+  // worst-first: the costliest ticket survives the cap
+  assert.ok(capped.rows[0].cost >= capped.rows[1].cost);
 });
 
 test("routingScorecard: windowDays drops older and undated completions", () => {

@@ -716,7 +716,7 @@ export function buildDispatchDirective(task, { blocked = false, etaHints = true,
   const subAgent = isDispatchable(model);
   const parallelizable = subAgent && !blocked;
   let instruction = subAgent
-    ? `Dispatch this ticket to a ${model} sub-agent with this packet (cap ~${cap} tokens). The sub-agent edits code and runs tests but NEVER writes the board or commits — the orchestrator reviews, sets status, logs work, and commits.`
+    ? `Dispatch this ticket to a ${model} sub-agent (cap ~${cap} tokens) BY TICKET ID — tell it to call get_work_packet itself as its first action rather than pasting this packet into its prompt, which would dump the whole packet into the user's chat (FBMCPB-83). The sub-agent edits code and runs tests but NEVER writes the board or commits — the orchestrator reviews, sets status, logs work, and commits.`
     : `Work this ticket in the orchestrator context (model tier ${model} is orchestrator-only: ${ORCHESTRATOR_TIERS.join("/")}); review carefully before close-out.`;
   if (etaHints) instruction += ` ${ETA_HINT_SENTENCE}`;
   if (blend && blend.verdict === "fable-hot") {

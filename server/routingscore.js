@@ -202,15 +202,29 @@ export function recommendTier(stats, { minSamples = DEFAULT_MIN_SAMPLES } = {}) 
 /**
  * Build the scorecard for one project.
  *
- *   windowDays  - only count tickets completed within the last N days (null =
- *                 all history). Routing advice from two-month-old runs on a
- *                 different model generation is worse than no advice.
- *   minSamples  - closed tickets a tier needs before it gets a verdict (3).
+ *   windowDays   - only count tickets completed within the last N days (null =
+ *                  all history). Routing advice from two-month-old runs on a
+ *                  different model generation is worse than no advice.
+ *   minSamples   - closed tickets a tier needs before it gets a verdict (3).
+ *   includeRows  - FBMCPB-84: return the per-ticket rows. OFF by default. Every
+ *                  Done ticket produces a row, so on a mature board rows[] is
+ *                  the whole response — 411 tickets came to 124KB, past the MCP
+ *                  result cap, which made the scorecard unreadable in exactly
+ *                  the situation it is most useful. The stats above rows are
+ *                  computed from every row either way; this only controls
+ *                  whether the raw evidence rides along.
+ *   rowLimit     - cap on rows when includeRows is on (default 200), worst
+ *                  first: rework, then costliest. A truncated list says so.
  *
  * Returns { project, windowDays, minSamples, ticketsScored, overall,
- *           byEffort, recommendations, rows, summary }.
+ *           byEffort, recommendations, summary } plus rows/rowsTruncated when
+ * includeRows is on.
  */
-export function routingScorecard(board, project, { windowDays = null, minSamples = DEFAULT_MIN_SAMPLES } = {}) {
+export function routingScorecard(
+  board,
+  project,
+  { windowDays = null, minSamples = DEFAULT_MIN_SAMPLES, includeRows = false, rowLimit = 200 } = {}
+) {
   const tasks = board.listTasks(project, {});
   const pricing = getPricing(board, project);
 
@@ -283,7 +297,7 @@ export function routingScorecard(board, project, { windowDays = null, minSamples
         ? `${rows.length} closed ticket${rows.length === 1 ? "" : "s"} scored; ${rec.tier} is cheapest per clean ticket ($${rec.costPerCleanTicket}, n=${rec.n}${rec.runnerUp ? `, ${Math.round((rec.marginVsRunnerUp || 0) * 100)}% under ${rec.runnerUp.tier}` : ""}).`
         : `${rows.length} closed ticket${rows.length === 1 ? "" : "s"} scored, but no tier has ${minSamples}+ samples with recorded spend — no routing verdict.`;
 
-  return {
+  const out = {
     project,
     windowDays,
     minSamples,
@@ -292,8 +306,25 @@ export function routingScorecard(board, project, { windowDays = null, minSamples
     overall,
     byEffort,
     recommendations,
-    rows,
     advisory: "Advice only — this never changes a model:/cap: label. Intake stays deterministic (server/orchestration.js).",
     summary,
   };
+
+  // FBMCPB-84: rows are evidence, not the answer — opt in, and cap it. Sorted
+  // worst-first (rework, then dollars) so a truncated list is still the useful
+  // half of the tail rather than an arbitrary slice.
+  if (includeRows) {
+    const cap = Number.isFinite(rowLimit) && rowLimit > 0 ? Math.floor(rowLimit) : 200;
+    const ordered = rows
+      .slice()
+      .sort((a, b) => (b.rework ? 1 : 0) - (a.rework ? 1 : 0) || (b.cost || 0) - (a.cost || 0));
+    out.rows = ordered.slice(0, cap);
+    if (ordered.length > cap) {
+      out.rowsTruncated = { returned: cap, of: ordered.length, order: "rework first, then costliest" };
+    }
+  } else {
+    out.rowsOmitted = `${rows.length} per-ticket row(s) not returned — pass includeRows:true (rowLimit caps at ${rowLimit}) if you need the raw evidence.`;
+  }
+
+  return out;
 }

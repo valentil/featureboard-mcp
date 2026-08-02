@@ -219,16 +219,19 @@ server.registerTool(
       "close-out), and the headline COST PER CLEAN TICKET (dollars per ticket that stayed closed). Cross-cut by effort:low/medium/high so the answer " +
       "is 'which tier for THIS size of ticket', not one global average. A tier with fewer than minSamples closed tickets gets NO verdict \u2014 the readout " +
       "says 'insufficient data' with the sample count rather than guessing. Advice only: it never writes a model:/cap: label, so intake stays " +
-      "deterministic. Pair with plan_budget (what the queue will cost) and daily_plan (what to run today).",
+      "deterministic. Pair with plan_budget (what the queue will cost) and daily_plan (what to run today). Returns the per-tier and per-effort " +
+      "STATS by default; the per-ticket evidence rows are opt-in via includeRows (a mature board has hundreds and they blow the result cap).",
     inputSchema: {
       project: z.string(),
       windowDays: z.number().int().positive().optional().describe("Only score tickets completed in the last N days (default: all history). Advice from an older model generation is worse than none."),
       minSamples: z.number().int().min(1).optional().default(3).describe("Closed tickets a tier needs before it earns a verdict (default 3)."),
+      includeRows: z.boolean().optional().default(false).describe("Include the per-ticket evidence rows. Off by default — every Done ticket is a row, so this can be hundreds of entries; the stats are computed from all of them regardless."),
+      rowLimit: z.number().int().min(1).max(1000).optional().default(200).describe("Max rows when includeRows is on, worst-first (rework, then costliest). Default 200."),
     },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
-  tryTool(({ project, windowDays, minSamples }) =>
-    routingScorecard(getBoard(), project, { windowDays: windowDays ?? null, minSamples })
+  tryTool(({ project, windowDays, minSamples, includeRows, rowLimit }) =>
+    routingScorecard(getBoard(), project, { windowDays: windowDays ?? null, minSamples, includeRows, rowLimit })
   )
 );
 

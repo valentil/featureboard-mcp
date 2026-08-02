@@ -1759,24 +1759,160 @@ function anWindowStats(entries,startISO,endISO){ const startMs=Date.parse(startI
 function anCompletionsInRange(completedByDate,startISO,endISO){ const startMs=Date.parse(startISO),endMs=Date.parse(endISO); let n=0; Object.keys(completedByDate||{}).forEach(function(d){ const ms=Date.parse(d); if(!isNaN(ms)&&ms>=startMs&&ms<endMs) n+=completedByDate[d]||0; }); return n; }
 function anMomentum(completedByDate,entries){ const pad=function(x){return String(x).padStart(2,"0");}; const fmt=function(d){return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate());}; const today=new Date(); today.setHours(0,0,0,0); const end=new Date(today); end.setDate(end.getDate()+1); const curStart=new Date(today); curStart.setDate(curStart.getDate()-6); const prevEnd=new Date(curStart); const prevStart=new Date(curStart); prevStart.setDate(prevStart.getDate()-7); const curStartISO=fmt(curStart),endISO=fmt(end),prevStartISO=fmt(prevStart),prevEndISO=fmt(prevEnd); const curWL=anWindowStats(entries,curStartISO,endISO); const prevWL=anWindowStats(entries,prevStartISO,prevEndISO); const curC=anCompletionsInRange(completedByDate,curStartISO,endISO); const prevC=anCompletionsInRange(completedByDate,prevStartISO,prevEndISO); const mk=function(cur,prev){return {cur:cur,prev:prev,delta:cur-prev};}; return { completions:mk(curC,prevC), tokens:mk(curWL.tokens,prevWL.tokens), additions:mk(curWL.additions,prevWL.additions), deletions:mk(curWL.deletions,prevWL.deletions) }; }
 function anMomentumChips(m){ const rows=[ {l:"Completions",k:"completions",fmt:function(n){return String(n);}}, {l:"Tokens",k:"tokens",fmt:anFmt}, {l:"Lines added",k:"additions",fmt:anFmt}, {l:"Lines deleted",k:"deletions",fmt:anFmt} ]; return rows.map(function(r){ const d=m[r.k]||{cur:0,prev:0,delta:0}; const flat=d.delta===0; const up=d.delta>0; const arrow=flat?"·":(up?"▲":"▼"); const cls=flat?"":(up?"pos":"neg"); const pct=d.prev>0?Math.round(Math.abs(d.delta)/d.prev*100):(d.cur>0?100:0); const deltaTxt=(d.prev>0)?(' ('+pct+'%)'):""; return '<div class="anMChip"><div class="l">'+esc(r.l)+'</div><div class="v">'+r.fmt(d.cur)+' <span class="'+cls+'" style="font-size:12px;font-weight:600">'+arrow+' '+r.fmt(Math.abs(d.delta))+deltaTxt+'</span></div></div>'; }).join(""); }
+/* ---------- FBMCPF-369: routing scorecard panel ----------
+   routing_scorecard has always been computed and never shown. It answers the
+   one question the token/cost charts above cannot: whether the money spent on a
+   tier actually bought CLOSED work. Headline is cost per clean ticket (dollars
+   / tickets that stayed closed), because a tier that is cheap per token but
+   needs a second pass is not cheap. Tiers below minSamples render greyed with
+   their sample count rather than a verdict — the tool's honesty rule, kept in
+   the UI. Rows are deliberately NOT requested (FBMCPB-84: hundreds of them). */
+const AN_TIER_ORDER = ["haiku","sonnet","opus","fable","unknown"];
+function anMoney(n){ return n==null?"—":"$"+(n<1?n.toFixed(3):n.toFixed(2)); }
+function anPct(n){ return n==null?"—":Math.round(n*100)+"%"; }
+function anDur(mins){ if(mins==null) return "—"; if(mins<60) return Math.round(mins)+"m"; if(mins<1440) return (mins/60).toFixed(1)+"h"; return (mins/1440).toFixed(1)+"d"; }
+function anTierRows(stats,best){
+  const tiers=Object.keys(stats||{}).sort((a,b)=>{ const ia=AN_TIER_ORDER.indexOf(a),ib=AN_TIER_ORDER.indexOf(b); return (ia<0?99:ia)-(ib<0?99:ib); });
+  if(!tiers.length) return '<div class="l" style="padding:10px 0">No scored tickets yet.</div>';
+  return '<div class="anRsTable"><div class="anRsRow anRsHead"><span>Tier</span><span>Closed</span><span>$ / clean ticket</span><span>Rework</span><span>Median cycle</span><span>Median tokens</span></div>'+
+    tiers.map(k=>{ const s=stats[k]||{}; const thin=!s.sufficient; const win=(k===best);
+      return '<div class="anRsRow'+(thin?" thin":"")+(win?" win":"")+'">'+
+        '<span><b>'+esc(k)+'</b>'+(win?' <span class="anRsWin">best</span>':"")+'</span>'+
+        '<span>'+(s.n||0)+(thin?' <span class="anRsNote">low n</span>':"")+'</span>'+
+        '<span>'+anMoney(s.costPerCleanTicket)+'</span>'+
+        '<span class="'+((s.reworkRate||0)>=0.25?"neg":"")+'">'+anPct(s.reworkRate)+'</span>'+
+        '<span>'+anDur(s.medianCycleMinutes)+'</span>'+
+        '<span>'+(s.medianTokens!=null?anFmt(s.medianTokens):"—")+'</span>'+
+      '</div>'; }).join("")+'</div>';
+}
+function anRoutingPanel(sc){
+  if(!sc) return '<div class="anPanel"><h2>Routing scorecard</h2><div class="l">Not available — this FeatureBoard server predates routing_scorecard, or the call failed.</div></div>';
+  const rec=(sc.recommendations&&sc.recommendations.overall)||{};
+  const best=rec.verdict==="prefer"?rec.tier:null;
+  const verdict=rec.verdict==="prefer"
+    ? '<b class="pos">Prefer '+esc(rec.tier)+'</b> — '+anMoney(rec.costPerCleanTicket)+' per clean ticket over '+rec.n+' closed'+(rec.runnerUp?', '+Math.round((rec.marginVsRunnerUp||0)*100)+'% under '+esc(rec.runnerUp.tier):"")+'.'
+    : '<b>No verdict</b> — '+esc(rec.note||"insufficient data")+'';
+  const effortKeys=Object.keys(sc.byEffort||{}).filter(k=>k!=="unknown");
+  const effortHTML=effortKeys.length
+    ? '<div class="l" style="margin:14px 0 6px">By effort — which tier for THIS size of ticket</div>'+
+      effortKeys.map(k=>{ const r=(sc.recommendations||{})[k]||{}; const b=r.verdict==="prefer"?r.tier:null;
+        return '<div class="anRsEffort"><div class="l" style="text-transform:none;margin-bottom:4px">effort:'+esc(k)+' — '+(b?'prefer <b>'+esc(b)+'</b> at '+anMoney(r.costPerCleanTicket):'no verdict (n='+Object.values(sc.byEffort[k]||{}).reduce((a,s)=>a+(s.n||0),0)+')')+'</div>'+anTierRows(sc.byEffort[k],b)+'</div>'; }).join("")
+    : "";
+  return '<div class="anPanel"><h2>Routing scorecard <span class="l" style="text-transform:none">'+(sc.ticketsScored||0)+' closed ticket(s) scored</span></h2>'+
+    '<div class="anRsVerdict">'+verdict+'</div>'+
+    anTierRows(sc.overall,best)+effortHTML+
+    '<div class="l" style="margin-top:10px;text-transform:none;opacity:.75">Advice only — never writes a model:/cap: label.</div></div>';
+}
+
+/* ---------- FBMCPF-370: cycle time + backlog aging ----------
+   Completions-per-day says how much shipped; neither chart above says how LONG
+   anything took, or how old the stuff that hasn't shipped is. Both come free
+   from created/completed dates already loaded for the timeline chart. p90 is
+   reported next to the median because lead time is right-skewed and the median
+   alone flatters the board. */
+function anQuantile(sorted,q){ if(!sorted.length) return null; const pos=(sorted.length-1)*q, lo=Math.floor(pos), hi=Math.ceil(pos); return lo===hi?sorted[lo]:sorted[lo]+(sorted[hi]-sorted[lo])*(pos-lo); }
+function anDaysTxt(d){ return d==null?"—":(d<1?"<1d":(d<10?d.toFixed(1):Math.round(d))+"d"); }
+const AN_AGE_BUCKETS=[{l:"<1d",max:1},{l:"1–2d",max:3},{l:"3–7d",max:8},{l:"1–2w",max:15},{l:"2–4w",max:31},{l:"30d+",max:Infinity}];
+function anBucket(days){ for(const b of AN_AGE_BUCKETS) if(days<b.max) return b.l; return "30d+"; }
+function anCyclePanel(tasks,pal){
+  const done=(tasks||[]).filter(t=>t.completed&&t.created);
+  const spans=done.map(t=>anDays(t.created,t.completed)).filter(n=>n!=null&&n>=0).sort((a,b)=>a-b);
+  if(!spans.length) return '<div class="anPanel"><h2>Lead time</h2><div class="l">No tickets have both a created and a completed date yet.</div></div>';
+  const counts={}; AN_AGE_BUCKETS.forEach(b=>counts[b.l]=0); spans.forEach(d=>{counts[anBucket(d)]++;});
+  const rows=AN_AGE_BUCKETS.map(b=>({label:b.l,value:counts[b.l],color:pal.accent,valueLabel:counts[b.l]+" ("+Math.round(counts[b.l]/spans.length*100)+"%)"}));
+  const sameDay=spans.filter(d=>d<1).length;
+  return '<div class="anPanel"><h2>Lead time — created → completed</h2>'+
+    '<div class="anTiles">'+
+      '<div class="anTile"><div class="v">'+anDaysTxt(anQuantile(spans,0.5))+'</div><div class="l">Median</div></div>'+
+      '<div class="anTile"><div class="v">'+anDaysTxt(anQuantile(spans,0.9))+'</div><div class="l">p90</div></div>'+
+      '<div class="anTile"><div class="v">'+Math.round(sameDay/spans.length*100)+'%</div><div class="l">Same day</div></div>'+
+      '<div class="anTile"><div class="v">'+anDaysTxt(spans[spans.length-1])+'</div><div class="l">Slowest</div></div>'+
+    '</div>'+
+    '<div class="l" style="margin:10px 0 6px">Distribution ('+spans.length+' tickets)</div>'+
+    anHBars(rows,{width:600,labelW:52,valueW:96,axisColor:pal.tick,emptyColor:pal.tick})+'</div>';
+}
+function anAgingPanel(tasks,pal){
+  const openT=(tasks||[]).filter(t=>t.status!=="Done");
+  if(!openT.length) return '<div class="anPanel"><h2>Backlog aging</h2><div class="l pos">Nothing open — the board is clear.</div></div>';
+  const now=new Date().toISOString().slice(0,10);
+  const withAge=openT.map(t=>({t,age:t.created?anDays(t.created,now):null})).filter(x=>x.age!=null&&x.age>=0);
+  const counts={}; AN_AGE_BUCKETS.forEach(b=>counts[b.l]=0); withAge.forEach(x=>{counts[anBucket(x.age)]++;});
+  const stale=withAge.filter(x=>x.age>=30).length;
+  const rows=AN_AGE_BUCKETS.map(b=>({label:b.l,value:counts[b.l],color:b.l==="30d+"?pal.red:pal.accent,valueLabel:String(counts[b.l])}));
+  const oldest=withAge.slice().sort((a,b)=>b.age-a.age).slice(0,8);
+  const wip=openT.filter(t=>t.status==="In Progress").length;
+  return '<div class="anPanel"><h2>Backlog aging</h2>'+
+    '<div class="anTiles">'+
+      '<div class="anTile"><div class="v">'+openT.length+'</div><div class="l">Open</div></div>'+
+      '<div class="anTile"><div class="v">'+wip+'</div><div class="l">In progress (WIP)</div></div>'+
+      '<div class="anTile"><div class="v'+(stale?" neg":"")+'">'+stale+'</div><div class="l">Older than 30d</div></div>'+
+      '<div class="anTile"><div class="v">'+anDaysTxt(anQuantile(withAge.map(x=>x.age).sort((a,b)=>a-b),0.5))+'</div><div class="l">Median age</div></div>'+
+    '</div>'+
+    '<div class="l" style="margin:10px 0 6px">Age of open tickets</div>'+
+    anHBars(rows,{width:600,labelW:52,valueW:64,axisColor:pal.tick,emptyColor:pal.tick})+
+    '<div class="l" style="margin:12px 0 4px">Oldest open</div>'+
+    oldest.map(x=>'<div class="anHot"><span style="width:96px" class="tick">'+esc(x.t.ticket)+'</span><span style="flex:1">'+esc(anShort(x.t.title,54))+'</span><span class="'+(x.age>=30?"neg":"")+'">'+anDaysTxt(x.age)+'</span></div>').join("")+
+    '</div>';
+}
+
+/* ---------- FBMCPF-371: CSV export ----------
+   Everything above is a picture. This is the same numbers as data, so they can
+   go into a spreadsheet without re-querying the MCP server by hand. data: URL
+   rather than Blob/createObjectURL because the artifact runs sandboxed. */
+function anCsvCell(v){ const s=v==null?"":String(v); return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s; }
+function anCsv(rows){ return rows.map(r=>r.map(anCsvCell).join(",")).join("\r\n"); }
+function anDownload(name,text){
+  const a=document.createElement("a");
+  a.href="data:text/csv;charset=utf-8,"+encodeURIComponent("﻿"+text);
+  a.download=name; document.body.appendChild(a); a.click(); a.remove();
+}
+function anExportDaily(){
+  if(!anDATA){ toast("Analytics still loading"); return; }
+  const dates=anWindowDates(anRange), cbd=anDATA.completedByDate||{}, bd=anDATA.byDate||{};
+  const rows=[["date","completed","tokens","additions","deletions"]].concat(
+    dates.map(d=>[d,cbd[d]||0,(bd[d]&&bd[d].tokens)||0,(bd[d]&&bd[d].additions)||0,(bd[d]&&bd[d].deletions)||0]));
+  anDownload((state.board||"board")+"-daily-"+today()+".csv",anCsv(rows));
+  toast("Exported "+dates.length+" day(s)");
+}
+function anExportTickets(){
+  if(!anDATA){ toast("Analytics still loading"); return; }
+  const now=today();
+  const rows=[["ticket","type","status","title","product","created","completed","leadTimeDays","ageDays","labels"]].concat(
+    (anDATA.tasks||[]).map(t=>{
+      const lead=(t.created&&t.completed)?anDays(t.created,t.completed):null;
+      const age=(t.status!=="Done"&&t.created)?anDays(t.created,now):null;
+      return [t.ticket,t.type,t.status,t.title,t.product||"",t.created||"",t.completed||"",
+        lead==null?"":lead.toFixed(2), age==null?"":age.toFixed(2), (t.labels||[]).join(" ")];
+    }));
+  anDownload((state.board||"board")+"-tickets-"+now+".csv",anCsv(rows));
+  toast("Exported "+((anDATA.tasks||[]).length)+" ticket(s)");
+}
+
 function anDestroy(){ Object.keys(anCharts).forEach(k=>{ try{anCharts[k].destroy();}catch{} delete anCharts[k]; }); }
 function closeAnalytics(){ anDestroy(); const o=document.getElementById("anOverlay"); if(o) o.remove(); }
 function anStyle(){
   if (document.getElementById("anStyleTag")) return;
   const s=document.createElement("style"); s.id="anStyleTag";
-  s.textContent="#anOverlay{position:fixed;inset:0;z-index:60;background:#faf9f5;color:#262624;overflow:auto}html[data-theme=\"dark\"] #anOverlay{background:#1f1e1c;color:#f2f0e9}#anOverlay .anHead{position:sticky;top:0;display:flex;align-items:center;gap:12px;padding:14px 18px;background:#faf9f5;border-bottom:1px solid #e5e2da}html[data-theme=\"dark\"] #anOverlay .anHead{background:#262624;border-color:#37352f}#anOverlay h1{font-size:16px;margin:0;flex:1}#anOverlay .anBody{padding:16px 18px;max-width:1100px;margin:0 auto}.anTiles{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}.anTile{flex:1;min-width:120px;background:#f3f1ea;border:1px solid #e5e2da;border-radius:10px;padding:10px 12px}html[data-theme=\"dark\"] .anTile{background:#302f2b;border-color:#3d3b35}.anTile .l{font-size:11px;color:#6b6862;text-transform:uppercase;letter-spacing:.03em}html[data-theme=\"dark\"] .anTile .l{color:#a8a49a}.anTile .v{font-size:22px;font-weight:700;margin-top:2px}.anPanel{background:#fff;border:1px solid #e5e2da;border-radius:12px;padding:14px 16px;margin-bottom:16px}html[data-theme=\"dark\"] .anPanel{background:#262624;border-color:#37352f}.anPanel h2{font-size:13px;margin:0 0 10px;text-transform:uppercase;letter-spacing:.03em;color:#6b6862;display:flex;justify-content:space-between;align-items:center}html[data-theme=\"dark\"] .anPanel h2{color:#a8a49a}.anGrid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}@media(max-width:760px){.anGrid2{grid-template-columns:1fr}}.anChartbox{position:relative;height:230px}.anChartbox.tall{height:300px}#anOverlay .pos{color:#3f9163}#anOverlay .neg{color:#c8503a}html[data-theme=\"dark\"] #anOverlay .pos{color:#5bb37f}html[data-theme=\"dark\"] #anOverlay .neg{color:#e8877a}.anHot{display:flex;align-items:center;gap:8px;margin:3px 0;font-size:12px}.anHot .bar{height:9px;background:#d97757;border-radius:4px}.anFeed .dh{font-size:11px;color:#8a867c;margin:10px 0 4px;text-transform:uppercase;letter-spacing:.04em}html[data-theme=\"dark\"] .anFeed .dh{color:#a8a49a}.anFeed .ev{display:grid;grid-template-columns:84px 1fr auto;gap:8px;padding:5px 0;border-top:1px solid #eef0f5;font-size:12px}html[data-theme=\"dark\"] .anFeed .ev{border-top-color:#37352f}.anFeed .tick{font-weight:600;color:#6b6862}html[data-theme=\"dark\"] .anFeed .tick{color:#c8c3b5}.anChip{display:inline-block;background:#efece4;border-radius:6px;padding:2px 7px;margin:2px;font-size:11px}html[data-theme=\"dark\"] .anChip{background:#3a3830;color:#c8c3b5}.anSparkBox{height:90px}.anSparkBox.tall{height:110px}.anSpark{width:100%;height:100%;display:block}.anSparkAxis{font-size:9px}.anSparkEmpty{font-size:11px}.anMGrid{display:flex;gap:10px;flex-wrap:wrap}.anMChip{flex:1;min-width:130px;background:#f3f1ea;border:1px solid #e5e2da;border-radius:10px;padding:8px 10px}html[data-theme=\"dark\"] .anMChip{background:#302f2b;border-color:#3d3b35}.anMChip .l{font-size:11px;color:#6b6862;text-transform:uppercase;letter-spacing:.03em}html[data-theme=\"dark\"] .anMChip .l{color:#a8a49a}.anMChip .v{font-size:16px;font-weight:700;margin-top:2px}.anCtl{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap}.anCtl .l{font-size:11px;color:#6b6862;text-transform:uppercase;letter-spacing:.03em}html[data-theme=\"dark\"] .anCtl .l{color:#a8a49a}.anSeg{display:inline-flex;border:1px solid #e5e2da;border-radius:8px;overflow:hidden}html[data-theme=\"dark\"] .anSeg{border-color:#3d3b35}.anSeg button{border:none;background:transparent;color:#6b6862;font:inherit;font-size:12px;padding:5px 13px;cursor:pointer}.anSeg button:not(:last-child){border-right:1px solid #e5e2da}html[data-theme=\"dark\"] .anSeg button{color:#a8a49a}html[data-theme=\"dark\"] .anSeg button:not(:last-child){border-right-color:#3d3b35}.anSeg button.on{background:#d97757;color:#fff}";
+  s.textContent="#anOverlay{position:fixed;inset:0;z-index:60;background:#faf9f5;color:#262624;overflow:auto}html[data-theme=\"dark\"] #anOverlay{background:#1f1e1c;color:#f2f0e9}#anOverlay .anHead{position:sticky;top:0;display:flex;align-items:center;gap:12px;padding:14px 18px;background:#faf9f5;border-bottom:1px solid #e5e2da}html[data-theme=\"dark\"] #anOverlay .anHead{background:#262624;border-color:#37352f}#anOverlay h1{font-size:16px;margin:0;flex:1}#anOverlay .anBody{padding:16px 18px;max-width:1100px;margin:0 auto}.anTiles{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}.anTile{flex:1;min-width:120px;background:#f3f1ea;border:1px solid #e5e2da;border-radius:10px;padding:10px 12px}html[data-theme=\"dark\"] .anTile{background:#302f2b;border-color:#3d3b35}.anTile .l{font-size:11px;color:#6b6862;text-transform:uppercase;letter-spacing:.03em}html[data-theme=\"dark\"] .anTile .l{color:#a8a49a}.anTile .v{font-size:22px;font-weight:700;margin-top:2px}.anPanel{background:#fff;border:1px solid #e5e2da;border-radius:12px;padding:14px 16px;margin-bottom:16px}html[data-theme=\"dark\"] .anPanel{background:#262624;border-color:#37352f}.anPanel h2{font-size:13px;margin:0 0 10px;text-transform:uppercase;letter-spacing:.03em;color:#6b6862;display:flex;justify-content:space-between;align-items:center}html[data-theme=\"dark\"] .anPanel h2{color:#a8a49a}.anGrid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}@media(max-width:760px){.anGrid2{grid-template-columns:1fr}}.anChartbox{position:relative;height:230px}.anChartbox.tall{height:300px}#anOverlay .pos{color:#3f9163}#anOverlay .neg{color:#c8503a}html[data-theme=\"dark\"] #anOverlay .pos{color:#5bb37f}html[data-theme=\"dark\"] #anOverlay .neg{color:#e8877a}.anHot{display:flex;align-items:center;gap:8px;margin:3px 0;font-size:12px}.anHot .bar{height:9px;background:#d97757;border-radius:4px}.anFeed .dh{font-size:11px;color:#8a867c;margin:10px 0 4px;text-transform:uppercase;letter-spacing:.04em}html[data-theme=\"dark\"] .anFeed .dh{color:#a8a49a}.anFeed .ev{display:grid;grid-template-columns:84px 1fr auto;gap:8px;padding:5px 0;border-top:1px solid #eef0f5;font-size:12px}html[data-theme=\"dark\"] .anFeed .ev{border-top-color:#37352f}.anFeed .tick{font-weight:600;color:#6b6862}html[data-theme=\"dark\"] .anFeed .tick{color:#c8c3b5}.anChip{display:inline-block;background:#efece4;border-radius:6px;padding:2px 7px;margin:2px;font-size:11px}html[data-theme=\"dark\"] .anChip{background:#3a3830;color:#c8c3b5}.anSparkBox{height:90px}.anSparkBox.tall{height:110px}.anSpark{width:100%;height:100%;display:block}.anSparkAxis{font-size:9px}.anSparkEmpty{font-size:11px}.anMGrid{display:flex;gap:10px;flex-wrap:wrap}.anMChip{flex:1;min-width:130px;background:#f3f1ea;border:1px solid #e5e2da;border-radius:10px;padding:8px 10px}html[data-theme=\"dark\"] .anMChip{background:#302f2b;border-color:#3d3b35}.anMChip .l{font-size:11px;color:#6b6862;text-transform:uppercase;letter-spacing:.03em}html[data-theme=\"dark\"] .anMChip .l{color:#a8a49a}.anMChip .v{font-size:16px;font-weight:700;margin-top:2px}.anCtl{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap}.anCtl .l{font-size:11px;color:#6b6862;text-transform:uppercase;letter-spacing:.03em}html[data-theme=\"dark\"] .anCtl .l{color:#a8a49a}.anSeg{display:inline-flex;border:1px solid #e5e2da;border-radius:8px;overflow:hidden}html[data-theme=\"dark\"] .anSeg{border-color:#3d3b35}.anSeg button{border:none;background:transparent;color:#6b6862;font:inherit;font-size:12px;padding:5px 13px;cursor:pointer}.anSeg button:not(:last-child){border-right:1px solid #e5e2da}html[data-theme=\"dark\"] .anSeg button{color:#a8a49a}html[data-theme=\"dark\"] .anSeg button:not(:last-child){border-right-color:#3d3b35}.anSeg button.on{background:#d97757;color:#fff}.anRsVerdict{font-size:13px;padding:8px 10px;border-radius:8px;background:#f3f1ea;margin-bottom:12px}html[data-theme=\"dark\"] .anRsVerdict{background:#302f2b}.anRsTable{font-size:12px}.anRsRow{display:grid;grid-template-columns:1.3fr .8fr 1.1fr .8fr 1fr 1fr;gap:8px;padding:6px 4px;border-top:1px solid #eceae3;align-items:center}html[data-theme=\"dark\"] .anRsRow{border-top-color:#37352f}.anRsRow.anRsHead{border-top:none;font-size:11px;text-transform:uppercase;letter-spacing:.03em;color:#6b6862}html[data-theme=\"dark\"] .anRsRow.anRsHead{color:#a8a49a}.anRsRow.thin{opacity:.5}.anRsRow.win{background:#eef7f1;border-radius:6px}html[data-theme=\"dark\"] .anRsRow.win{background:#26332b}.anRsWin{font-size:10px;font-weight:700;background:#3f9163;color:#fff;border-radius:5px;padding:1px 5px;vertical-align:middle}.anRsNote{font-size:10px;opacity:.7}.anRsEffort{margin-top:10px;padding-top:6px;border-top:1px dashed #e5e2da}html[data-theme=\"dark\"] .anRsEffort{border-top-color:#3d3b35}";
   document.head.appendChild(s);
 }
 async function openAnalytics(){
   anStyle(); closeAnalytics();
   const o=document.createElement("div"); o.id="anOverlay";
-  o.innerHTML='<div class="anHead"><h1>📊 '+esc(state.board)+' — Analytics</h1><button class="ghost" onclick="closeAnalytics()">✕ Close</button></div><div class="anBody" id="anBody"><div class="loading">Loading analytics…</div></div>';
+  o.innerHTML='<div class="anHead"><h1>📊 '+esc(state.board)+' — Analytics</h1>'+
+    '<button class="ghost" onclick="anExportDaily()" title="Download the per-day series for the selected range">⬇ Daily CSV</button>'+
+    '<button class="ghost" onclick="anExportTickets()" title="Download every ticket with lead time and age">⬇ Tickets CSV</button>'+
+    '<button class="ghost" onclick="closeAnalytics()">✕ Close</button></div><div class="anBody" id="anBody"><div class="loading">Loading analytics…</div></div>';
   document.body.appendChild(o);
   try {
-    const [metrics, wl, all] = await Promise.all([
+    // routing_scorecard is best-effort: older servers don't have it, and it must
+    // never take the rest of the dashboard down with it. includeRows stays off
+    // (FBMCPB-84) — the panel only ever renders the per-tier stats.
+    const [metrics, wl, all, scorecard] = await Promise.all([
       call("get_metrics", { project: state.board }),
       call("get_work_log", { project: state.board, limit: 300 }).catch(()=>({entries:[]})),
       call("list_tasks", { project: state.board, limit: 500, compact: true }),
+      call("routing_scorecard", { project: state.board, includeRows: false }).catch(()=>null),
     ]);
     const f=metrics.features||{}, b=metrics.bugs||{}, vel=metrics.velocity||{}, v=vel.totals||{}, byDate=vel.tokensByDate||{}; const completedByDate=metrics.completedByDate||{}, byModel=vel.byModel||{}, pal=anPal();
     anWL=(wl&&wl.entries)||[];
@@ -1831,13 +1967,16 @@ async function openAnalytics(){
       '<div class="anPanel"><h2>Tokens / day trend</h2><div class="anChartbox"><canvas id="anTok"></canvas></div></div>';
     const modelHTML='<div class="anPanel"><h2>Tokens &amp; cost by model</h2>'+anHBars(modelBarRows,{width:600,axisColor:pal.tick,emptyColor:pal.tick})+'</div>';
     const momentumHTML='<div class="anPanel"><h2>Momentum — last 7d vs prior 7d</h2><div class="anMGrid">'+anMomentumChips(momentum)+'</div></div>';
+    // FBMCPF-370: flow (how long things take, how old the queue is) sits directly
+    // under the throughput charts — it is the same question from the other side.
+    const flowHTML='<div class="anGrid2">'+anCyclePanel(tasks,pal)+anAgingPanel(tasks,pal)+'</div>';
     document.getElementById("anBody").innerHTML=
-      tilesHTML+ctlHTML+barHTML+trendsHTML+momentumHTML+modelHTML+
+      tilesHTML+ctlHTML+barHTML+trendsHTML+momentumHTML+flowHTML+anRoutingPanel(scorecard)+modelHTML+
       '<div class="anGrid2"><div class="anPanel"><h2>Velocity — lines &amp; tokens/day</h2><div class="anChartbox"><canvas id="anVel"></canvas></div></div>'+
       '<div class="anPanel"><h2>Timeline — created vs completed</h2><div class="anChartbox"><canvas id="anTl"></canvas></div></div></div>'+
       '<div class="anGrid2"><div class="anPanel"><h2>Effort by ticket — lines</h2><div class="anChartbox tall"><canvas id="anEff"></canvas></div></div>'+bugHTML+'</div>'+
       '<div class="anPanel"><h2>Work log <span>'+filterSel+'</span></h2><div class="anFeed" id="anFeed"></div></div>'+chips;
-    anDATA={ byDate, completedByDate, tasks, effRows };
+    anDATA={ byDate, completedByDate, tasks, effRows, scorecard };
     anRenderCharts(); anRenderWorkLog("");
     const sel=document.getElementById("anWlFilter"); if(sel) sel.addEventListener("change",e=>anRenderWorkLog(e.target.value));
     const seg=document.getElementById("anRangeSeg"); if(seg) seg.addEventListener("click",e=>{ const b=e.target.closest("button"); if(!b)return; anRange=b.dataset.r==="all"?"all":parseInt(b.dataset.r,10); [...seg.children].forEach(c=>c.classList.toggle("on",c===b)); anRenderCharts(); });

@@ -40,7 +40,8 @@ PARALLEL; each returns a collated markdown brief (≤ ~150 lines): recommended
 approach + runners-up, prior-art pointers, one competitor idea, risks/invariants.
 
 The ORCHESTRATOR — never the sub-agent — saves each returned brief via `add_kb_doc`
-with title `research/<ticket>` BEFORE dispatching implementation. From then on, the
+with title `research/<ticket>` BEFORE dispatching implementation, and reports it in one
+line rather than reprinting it. From then on, the
 implementing agent's `get_work_packet` auto-attaches that brief as `researchBrief`,
 alongside relevant local `ragChunks` (BM25 over KB/docs/ticket-history — zero tokens,
 zero network) — so the expensive model starts with context, not a cold read.
@@ -56,12 +57,17 @@ zero network) — so the expensive model starts with context, not a cold read.
   sub-agents; tickets *within* a lane share files and run serially in the order given.
   A lane flagged `isolate` has unknown file scope — give it its own `create_worktree`.
 - Each ticket carries its own `dispatch` block (`{subAgent, model, cap, parallelizable,
-  instruction}`) — obey it. Spawn the sub-agent at `dispatch.model` with the work packet
-  as its brief. Never upgrade a haiku ticket "to be safe" or downgrade an opus one to
-  save tokens; the board already made that call at intake.
+  instruction}`) — obey it. Spawn the sub-agent at `dispatch.model`. Never upgrade a
+  haiku ticket "to be safe" or downgrade an opus one to save tokens; the board already
+  made that call at intake.
+- **Dispatch by ticket ID, never by pasting the packet (FBMCPB-83).** The Agent prompt
+  is rendered in the user's chat. Tell the sub-agent to call `get_work_packet` as its
+  first action instead of inlining scope, definition of done, `researchBrief` or
+  `ragChunks` — same context for the agent, a readable transcript for the user.
 - **Build every sub-agent prompt from `references/dispatch-prompt.md`.** Its three
   MANDATORY blocks (heartbeats, no-pausing, no-commits) are not optional garnish —
-  omitting them recreates the failure modes above.
+  omitting them recreates the failure modes above, and its quiet-chat rules are what
+  keep a saturated wave from burying the user in JSON.
 - `sequential[]` holds `fable` tickets — orchestrator-only, run inline, review between each.
 - `maxLanes` exists if you need to throttle, but the default is saturation. Use it only
   when the user asks for it.
@@ -118,7 +124,8 @@ Before declaring done: one final `list_worktrees` (no orphaned branches) and
 
 ## 4. Orchestrator owns the board — always
 
-Sub-agents NEVER write the board (except `log_heartbeat`) and NEVER commit. Only the
+Sub-agents may READ the board through `get_work_packet` (that is how they get their
+brief), but they NEVER write it except `log_heartbeat`, and they NEVER commit. Only the
 orchestrator:
 
 1. Sets status to `In Progress` before dispatching a ticket, then calls
@@ -144,9 +151,9 @@ orchestrator:
 Two channels, both mandatory in every sub-agent brief (see `references/dispatch-prompt.md`):
 
 - **`log_heartbeat`** at a few natural milestones (oriented / fix written / tests
-  green) with the ticket and elapsed minutes. This is the ONLY board tool a
-  sub-agent may call; it feeds `get_agent_monitor`'s liveness and stall banners —
-  without it every healthy long-running lane looks identical to a dead one.
+  green) with the ticket and elapsed minutes. This is the only board tool a
+  sub-agent may WRITE through; it feeds `get_agent_monitor`'s liveness and stall
+  banners — without it every healthy long-running lane looks identical to a dead one.
 - **`.fb-progress`** one-line timestamped notes in the worktree (or repo root) at
   each major step — e.g. `12:03 created parser`, `12:19 suite green`. Gitignored
   by convention; `get_live_activity` and Mission Control read it, along with dirty
