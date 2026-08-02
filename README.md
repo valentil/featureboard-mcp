@@ -39,7 +39,7 @@ drift on open-ended asks. See [docs/EVAL-BOARD-VS-CHAT.md](docs/EVAL-BOARD-VS-CH
 
 ## Quickstart
 
-1. Install the extension: double-click `featureboard-0.8.2.mcpb`, or Claude Desktop →
+1. Install the extension: double-click `featureboard-0.8.3.mcpb`, or Claude Desktop →
    **Settings → Extensions → Advanced → Install Extension**.
 2. On first run it asks for your **Boards folder**. Each subfolder with a `featurelist.md` or
    `buglist.md` is a board.
@@ -310,7 +310,7 @@ Requires Node 18+.
 ```bash
 npm install                       # MCP SDK + zod
 npm run check                     # syntax-check every server module
-node --test                       # unit tests (1189)
+node --test                       # unit tests (1192)
 npm run smoke                     # end-to-end stdio smoke test (no Claude Desktop needed)
 npm run build && npm run bundle   # preflight, then pack featureboard-<version>.mcpb
 ```

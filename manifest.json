@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "featureboard",
   "display_name": "FeatureBoard",
-  "version": "0.8.2",
+  "version": "0.8.3",
   "description": "A local, file-backed feature/bug board for agentic projects. Claude reads and writes your featurelist.md / buglist.md boards directly.",
   "long_description": "FeatureBoard turns your project's markdown task files into a first-class board that Claude can manage. It keeps the same `featurelist.md` / `buglist.md` format used by the original FeatureBoard app, with FBF-/FBB- ticket IDs, statuses (Todo / In Progress / Done), due dates, products, labels, linked issues and completion summaries. Because Claude is now the agent, workflow tools like brainstorm (bulk-add) and decompose fit naturally: Claude generates the ideas, the board persists them. Read-only analytics summarize velocity and open/closed counts.",
   "author": {
@@ -140,7 +140,7 @@
     },
     {
       "name": "routing_scorecard",
-      "description": "Which model tier should actually run your tickets, measured instead of guessed (FBMCPF-351). Scores every Done ticket from data the board already keeps \\u2014 work-log tokens + model, ticket_events status transitions, and bugs filed with ref:<ticket> \\u2014 and reports, per tier: closed tickets, median tokens, median $ cost, median cycle time (In Progress -> Done), rework rate (reopened, or a follow-up bug filed after close-out), and the headline COST PER CLEAN TICKET (dollars per ticket that stayed closed). Cross-cut by effort:low/medium/high so the answer is 'which tier for THIS size of ticket', not one global average. A tier with fewer than minSamples closed tickets gets NO verdict \\u2014 the readout says 'insufficient data' with the sample count rather than guessing. Advice only: it never writes a model:/cap: label, so intake stays deterministic. Pair with plan_budget (what the queue will cost) and daily_plan (what to run today)."
+      "description": "Which model tier should actually run your tickets, measured instead of guessed (FBMCPF-351). Scores every Done ticket from data the board already keeps \\u2014 work-log tokens + model, ticket_events status transitions, and bugs filed with ref:<ticket> \\u2014 and reports, per tier: closed tickets, median tokens, median $ cost, median cycle time (In Progress -> Done), rework rate (reopened, or a follow-up bug filed after close-out), and the headline COST PER CLEAN TICKET (dollars per ticket that stayed closed). Cross-cut by effort:low/medium/high so the answer is 'which tier for THIS size of ticket', not one global average. A tier with fewer than minSamples closed tickets gets NO verdict \\u2014 the readout says 'insufficient data' with the sample count rather than guessing. Advice only: it never writes a model:/cap: label, so intake stays deterministic. Pair with plan_budget (what the queue will cost) and daily_plan (what to run today). Returns the per-tier and per-effort STATS by default; the per-ticket evidence rows are opt-in via includeRows (a mature board has hundreds and they blow the result cap)."
     },
     {
       "name": "daily_plan",
