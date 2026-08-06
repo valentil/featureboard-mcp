@@ -43,6 +43,10 @@ export const GIT_MODES = ["commit-only", "commit-push", "ask"];
 
 export const DEFAULT_GLOBAL_CONFIG = {
   gitMode: "commit-only",
+  // FBMCPF-378: anonymous usage telemetry (see server/telemetry.js). true by
+  // default (opt-out); `telemetry:false` here — or FEATUREBOARD_TELEMETRY=0 —
+  // disables all counting and sending.
+  telemetry: true,
 };
 
 export const DEFAULT_GIT_CONFIG = {
@@ -161,6 +165,8 @@ export function getGlobalConfig(board) {
   if (raw && raw.defaultStandard != null) {
     try { const n = normalizeStandard(typeof raw.defaultStandard === "string" ? { level: raw.defaultStandard } : raw.defaultStandard); if (n) cfg.defaultStandard = n; } catch { /* ignore malformed */ }
   }
+  // FBMCPF-378: telemetry kill switch — only an explicit false disables it.
+  if (raw && raw.telemetry === false) cfg.telemetry = false;
   return cfg;
 }
 
@@ -191,6 +197,14 @@ export function setGlobalConfig(board, patch = {}) {
       const n = normalizeStandard(typeof patch.defaultStandard === "string" ? { level: patch.defaultStandard } : patch.defaultStandard);
       cfg.defaultStandard = { ...n, locked: false, source: "default" };
     }
+  }
+  // FBMCPF-378: telemetry opt-out — undefined leaves it, null resets to the
+  // default (enabled), a boolean sets it. Anything else is rejected so a
+  // malformed value can't silently read as "enabled".
+  if (patch.telemetry !== undefined) {
+    if (patch.telemetry == null) cfg.telemetry = DEFAULT_GLOBAL_CONFIG.telemetry;
+    else if (typeof patch.telemetry === "boolean") cfg.telemetry = patch.telemetry;
+    else throw new Error("telemetry must be true, false, or null (reset to default)");
   }
   atomicWrite(p, JSON.stringify(cfg, null, 2) + "\n");
   return cfg;

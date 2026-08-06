@@ -1,6 +1,6 @@
 // Auto-extracted from server/index.js (FBMCPF-224). Registration blocks moved verbatim.
 export function registerAnalyticsTools(server, ctx) {
-  const { Board, addKbDoc, agentMonitorV2, appendEvent, appendHeartbeat, applyDriftRemediation, blendStatus, driftReport, estimateTicketMinutes, existsSync, getBoard, getGitConfig, getGlobalConfig, getHistoryMap, getKbDoc, getLiveActivity, getLatestUpdate, getPricing, getVoiceProfile, lastDispatchForTicket, lintVoice, listKbDocs, listSprints, maybeLint, meta, nodePath, postProjectUpdate, predictDueDates, reconcileChurn, recordDriftScore, rollupCost, prepareResearch, appendResearch, addSource, addSourceFromUrl, addSourceFromFile, listSources, getSource, ragSearch, ragSearchHybrid, searchKb, setSite, startDriftRun, suggestHistoricalFiles, tryTool, writeTool, z } = ctx;
+  const { Board, DATA_DIR, addKbDoc, agentMonitorV2, appendEvent, appendHeartbeat, applyDriftRemediation, blendStatus, driftReport, estimateTicketMinutes, existsSync, getBoard, getGitConfig, getGlobalConfig, getHistoryMap, getKbDoc, getLiveActivity, getLatestUpdate, getPricing, getTelemetryStatus, getVoiceProfile, lastDispatchForTicket, lintVoice, listKbDocs, listSprints, maybeLint, meta, nodePath, postProjectUpdate, predictDueDates, reconcileChurn, recordDriftScore, rollupCost, prepareResearch, appendResearch, addSource, addSourceFromUrl, addSourceFromFile, listSources, getSource, ragSearch, ragSearchHybrid, searchKb, setSite, startDriftRun, suggestHistoricalFiles, tryTool, writeTool, z } = ctx;
 
 // analytics & metadata (v0.3) ----------------------------------------------
 
@@ -721,6 +721,11 @@ server.registerTool(
       const blend = blendStatus(getGlobalConfig(board), new Date());
       if (blend) health.blend = blend;
     } catch { /* blend surfacing is best-effort */ }
+    // FBMCPF-378: surface telemetry state so users/agents can verify the
+    // opt-out took effect ({enabled, installId, lastSentAt, pendingDays}).
+    try {
+      health.telemetry = getTelemetryStatus(DATA_DIR);
+    } catch { /* telemetry surfacing is best-effort */ }
     return health;
   })
 );

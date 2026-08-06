@@ -83,10 +83,15 @@ server.registerTool(
         .nullable()
         .optional()
         .describe("Account-wide default rigor profile for projects without their own standard (set_standard). null clears it."),
+      telemetry: z
+        .boolean()
+        .nullable()
+        .optional()
+        .describe("Anonymous usage telemetry (FBMCPF-378): false disables all counting and the daily batched send (server/telemetry.js), true re-enables, null resets to the default (enabled). The FEATUREBOARD_TELEMETRY env var also disables it regardless of this setting."),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  writeTool(({ gitMode, planLimits, defaultStandard }) => setGlobalConfig(getBoard(), { gitMode, planLimits, defaultStandard }))
+  writeTool(({ gitMode, planLimits, defaultStandard, telemetry }) => setGlobalConfig(getBoard(), { gitMode, planLimits, defaultStandard, telemetry }))
 );
 
 server.registerTool(
