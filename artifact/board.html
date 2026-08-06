@@ -387,7 +387,7 @@
 const FB = "mcp__FeatureBoard__";
 // FBMCPF-253: mirrors package.json's "version" — bump alongside a release.
 // Sent as best-effort context on bug reports; the worker re-validates/caps it.
-const BOARD_VERSION = "0.8.3";
+const BOARD_VERSION = "0.9.0";
 const $ = (s) => document.querySelector(s);
 const store = {
   get: (k, d) => { try { return JSON.parse(localStorage.getItem("fb_"+k)) ?? d; } catch { return d; } },
