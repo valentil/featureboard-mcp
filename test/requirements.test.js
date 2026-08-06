@@ -135,12 +135,13 @@ test("getWorkPacket injects requirements and swaps definitionOfDone", () => {
   assert.ok(packet.requirements, "packet carries parsed requirements");
   assert.equal(packet.requirements.intent, "Ship the widget.");
   assert.equal(packet.requirements.acceptanceCriteria.length, 2);
-  // definitionOfDone becomes ticket-specific: AC-prefixed criteria + generic tail.
-  assert.deepEqual(packet.definitionOfDone, [
-    "AC: Widget renders",
-    "AC: Widget is clickable",
-    "Summarize what was built",
-  ]);
+  // definitionOfDone becomes ticket-specific: AC-prefixed criteria + generic tail
+  // (learnings item rides along since FBMCPF-382).
+  assert.equal(packet.definitionOfDone[0], "AC: Widget renders");
+  assert.equal(packet.definitionOfDone[1], "AC: Widget is clickable");
+  assert.match(packet.definitionOfDone[2], /durable learnings/);
+  assert.equal(packet.definitionOfDone[3], "Summarize what was built");
+  assert.equal(packet.definitionOfDone.length, 4);
 });
 
 test("getWorkPacket keeps the generic definitionOfDone when no requirements exist (back-compat)", () => {
@@ -148,11 +149,11 @@ test("getWorkPacket keeps the generic definitionOfDone when no requirements exis
   const t = b.addTask("Proj", "feature", { title: "Plain ticket" });
   const packet = getWorkPacket(b, "Proj", t.ticketNumber);
   assert.equal(packet.requirements, undefined, "no requirements field when file absent");
-  assert.deepEqual(packet.definitionOfDone, [
-    "Implement the described behaviour",
-    "Verify it works end to end",
-    "Add or adjust a test",
-    "Update docs if user-facing",
-    "Summarize what was built",
-  ]);
+  // Generic list + the FBMCPF-382 learnings item before the wrap-up.
+  assert.equal(packet.definitionOfDone[0], "Implement the described behaviour");
+  assert.equal(packet.definitionOfDone[1], "Verify it works end to end");
+  assert.equal(packet.definitionOfDone[2], "Add or adjust a test");
+  assert.equal(packet.definitionOfDone[3], "Update docs if user-facing");
+  assert.match(packet.definitionOfDone[4], /durable learnings/);
+  assert.equal(packet.definitionOfDone[5], "Summarize what was built");
 });

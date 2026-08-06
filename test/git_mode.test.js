@@ -37,7 +37,7 @@ function tmpBoard() {
 
 test("getGlobalConfig defaults to commit-only when no file exists", () => {
   const { board } = tmpBoard();
-  assert.deepEqual(getGlobalConfig(board), { gitMode: "commit-only" });
+  assert.deepEqual(getGlobalConfig(board), { gitMode: "commit-only", telemetry: true }); // telemetry default: FBMCPF-378
 });
 
 test("setGlobalConfig persists gitMode and round-trips", () => {
@@ -60,13 +60,13 @@ test("setGlobalConfig throws clearly when the board has no resolvable dataDir", 
 
 test("getGlobalConfig tolerates a missing dataDir (returns default, never throws)", () => {
   const fakeBoard = { projectDir: () => "/tmp/whatever" };
-  assert.deepEqual(getGlobalConfig(fakeBoard), { gitMode: "commit-only" });
+  assert.deepEqual(getGlobalConfig(fakeBoard), { gitMode: "commit-only", telemetry: true }); // telemetry default: FBMCPF-378
 });
 
 test("getGlobalConfig tolerates a corrupt (non-JSON) global file", () => {
   const { dataDir, board } = tmpBoard();
   fs.writeFileSync(path.join(dataDir, GLOBAL_CONFIG_FILE), "{ not: valid json,,,");
-  assert.deepEqual(getGlobalConfig(board), { gitMode: "commit-only" });
+  assert.deepEqual(getGlobalConfig(board), { gitMode: "commit-only", telemetry: true }); // telemetry default: FBMCPF-378
 });
 
 test("getGlobalConfig tolerates a global file with an invalid gitMode value (falls back to default)", () => {
@@ -78,7 +78,7 @@ test("getGlobalConfig tolerates a global file with an invalid gitMode value (fal
 test("getGlobalConfig tolerates a global file that isn't a JSON object (e.g. an array)", () => {
   const { dataDir, board } = tmpBoard();
   fs.writeFileSync(path.join(dataDir, GLOBAL_CONFIG_FILE), JSON.stringify([1, 2, 3]));
-  assert.deepEqual(getGlobalConfig(board), { gitMode: "commit-only" });
+  assert.deepEqual(getGlobalConfig(board), { gitMode: "commit-only", telemetry: true }); // telemetry default: FBMCPF-378
 });
 
 // ---------------------------------------------------------------------------
