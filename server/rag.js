@@ -456,6 +456,33 @@ export async function ragSearchHybrid(board, project, query, opts = {}) {
   return { mode: "hybrid", model: "Xenova/all-MiniLM-L6-v2", results };
 }
 
+/**
+ * FBMCPF-383: embed-on-write. Warm the project's vector cache for freshly
+ * written kb content so the NEXT ragSearchHybrid re-ranks with ready-made
+ * embeddings instead of paying the embed cost at query time. Chunks exactly
+ * the way buildIndex does and embeds the same `${heading} ${text}` strings, so
+ * the content-hash cache entries line up with what the query path will ask for.
+ *
+ * Fire-and-forget by contract: never throws, returns { warmed: 0 } when the
+ * optional semantic runtime is absent/disabled (embedTexts -> null) — a doc
+ * write must never fail or block because of embeddings.
+ */
+export async function warmEmbeddings(board, project, docs) {
+  try {
+    const chunks = [];
+    for (const d of docs || []) {
+      if (!d || !d.content) continue;
+      chunks.push(...chunkMarkdown(String(d.content), d.source || "kb"));
+    }
+    if (!chunks.length) return { warmed: 0 };
+    const texts = chunks.map((c) => `${c.heading} ${c.text}`);
+    const vecs = await embedTexts(texts, { cacheDir: board.projectDir(project) });
+    return { warmed: vecs ? texts.length : 0 };
+  } catch {
+    return { warmed: 0 };
+  }
+}
+
 /** Test/maintenance hook: drop the in-memory index cache (all projects, or one by name). */
 export function clearIndexCache(project) {
   if (!project) { indexCache.clear(); return; }
