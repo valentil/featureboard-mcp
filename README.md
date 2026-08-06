@@ -282,9 +282,15 @@ which tier applies. Owners issue keys with the offline generator in `owner/`
 request → contract → issue-key → customer flow.
 
 The same onboarding screen has an **optional email field**. Nothing is stored or sent unless you
-explicitly click "Save email" — that click is the only consent signal used, and there's no usage
-telemetry attached to it. On submit, the email is saved locally and POSTed once to the
-featureboard.ai registrations listener; skip the field and nothing leaves your machine. See
+explicitly click "Save email" — that click is the only consent signal used. On submit, the email
+is saved locally and POSTed once to the featureboard.ai registrations listener; skip the field
+and it never leaves your machine.
+
+FeatureBoard also collects **anonymous usage telemetry**: per-day counts of which of its own
+tools were called (names only — never arguments, results, or board content), batched to
+featureboard.ai at most once per 24h under a random install id that is never joined to your
+email. Opt out anytime with `FEATUREBOARD_TELEMETRY=0` in the environment or
+`set_global_config` `telemetry:false`; verify with `get_health`. See
 `docs/compliance/PRIVACY.md` for the full disclosure.
 
 ## Skills

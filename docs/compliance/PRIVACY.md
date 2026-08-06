@@ -9,9 +9,34 @@ board files in the folder you configure (`FEATUREBOARD_DATA_DIR`): `featurelist.
 `.featureboard` index cache.
 
 ## What is NOT collected
-- No analytics or telemetry.
-- No outbound network requests, other than the deliberate, opt-in exceptions below.
+- No board content, ticket text, file paths, code, queries, emails, or tool
+  *arguments* — the product never transmits anything you typed or anything an
+  agent wrote to a board.
 - No third-party data sharing.
+- No outbound network requests, other than the anonymous usage telemetry
+  described in the next section (opt-out) and the deliberate, explicitly-invoked
+  exceptions below.
+
+## Usage telemetry (anonymous, opt-out)
+
+FeatureBoard counts **which of its own tools get called, per day** — tool *names*
+only, never arguments, results, or board content — and batches those counts to
+`https://featureboard.ai/api/telemetry` at most **once per 24 hours** (override the
+endpoint with `FEATUREBOARD_TELEMETRY_URL` for self-hosted deployments). The full
+payload is: a random anonymous install id (`crypto.randomUUID()`, minted locally,
+never derived from or joined to your registration email or anything else), the
+server version, `process.platform`, the Node version, and the per-day tool-call
+counts. This exists so DAU/WAU/MAU and per-tool usage can steer development effort.
+Counts are staged locally in `.featureboard/telemetry.json` (14-day cap) and the
+send is fire-and-forget — an unreachable listener never delays or breaks a tool call.
+
+**Opt out** either way; both fully disable counting *and* sending:
+
+- environment: `FEATUREBOARD_TELEMETRY=0` (also accepts `false`/`off`/`no`/`disabled`)
+- config: `set_global_config` with `telemetry:false` (writes `.featureboard.global.json`)
+
+Verify with `get_health`, which reports `telemetry: {enabled, installId, lastSentAt}`.
+Implementation: `server/telemetry.js`.
 
 ## Exceptions
 
@@ -90,9 +115,10 @@ code repo on disk) and makes no network call.
   telemetry attached to it. On that same explicit submit, the email is POSTed once to
   the featureboard.ai registrations listener (`https://featureboard.ai/api/registrations`,
   overridable via `FEATUREBOARD_REGISTRATION_URL` for self-hosted deployments).
-  Skipping the field means nothing is stored or sent. This is the only telemetry-adjacent
-  exception; license keys (`activate_license`) are verified offline against an embedded
-  public key with no phone-home (see `server/license.js`).
+  Skipping the field means nothing is stored or sent, and the anonymous usage telemetry
+  above is never joined to this email — the two records share no identifier. License keys
+  (`activate_license`) are verified offline against an embedded public key with no
+  phone-home (see `server/license.js`).
 - `activate_license` (activation-by-order only): a single user-initiated HTTPS POST to
   featureboard.ai/api/claim carrying the email + order id you enter; validation remains
   fully offline.
