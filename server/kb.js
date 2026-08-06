@@ -174,6 +174,65 @@ export function appendKbDoc(board, project, title, content, opts = {}) {
   return { ...res, created: !match, appended: !!match };
 }
 
+/**
+ * FBMCPF-381: canonical learnings — upsert-by-topic knowledge notes.
+ *
+ * The anti-spaghetti primitive: where appendKbDoc ACCRETES (research findings,
+ * work narration), recordLearning REPLACES. One topic = one file =
+ * kb/learning-<slug(topic)>.md, and a repeat call with the same topic swaps in
+ * the new body wholesale — the latest confirmed truth wins, and the history of
+ * how the understanding evolved lives in git, not interleaved in the doc.
+ * Provenance (which tickets touched this learning, when) is the only thing
+ * that accumulates, in the frontmatter, capped so it can't grow unbounded.
+ *
+ * Learning docs are ordinary kb docs to every reader (parseDoc tolerates the
+ * extra frontmatter keys), so they surface in list/search/rag_search and
+ * work-packet injection with zero extra wiring.
+ */
+const LEARNING_PREFIX = "learning-";
+const LEARNING_PROVENANCE_CAP = 20;
+
+function parseLearningProvenance(raw) {
+  if (raw == null) return [];
+  const m = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  const line = m && m[1].match(/^provenance:\s*(.*)$/m);
+  if (!line || !line[1].trim()) return [];
+  return line[1].split(",").map((s) => s.trim()).filter(Boolean);
+}
+
+export function recordLearning(board, project, topic, content, opts = {}) {
+  const t = String(topic || "").trim();
+  if (!t) throw new Error("A learning topic is required.");
+  const body = content == null ? "" : String(content).trim();
+  if (!body) throw new Error("Learning content is required — record the durable truth, not a placeholder.");
+
+  const dir = kbDir(board, project);
+  ensureDir(dir);
+  const slug = LEARNING_PREFIX + slugify(t);
+  const p = path.join(dir, `${slug}.md`);
+  const priorRaw = readFileSafe(p);
+
+  const updatedAt = new Date().toISOString();
+  const ticket = opts.ticket ? String(opts.ticket).trim() : null;
+  const entry = ticket ? `${ticket} (${updatedAt.slice(0, 10)})` : updatedAt.slice(0, 10);
+  const provenance = parseLearningProvenance(priorRaw);
+  if (!provenance.includes(entry)) provenance.push(entry);
+  while (provenance.length > LEARNING_PROVENANCE_CAP) provenance.shift();
+
+  const rendered = `---\ntitle: ${t}\nupdatedAt: ${updatedAt}\nkind: learning\nprovenance: ${provenance.join(", ")}\n---\n${body}`;
+  atomicWrite(p, rendered);
+
+  return {
+    slug,
+    title: t,
+    path: p,
+    bytes: Buffer.byteLength(rendered, "utf8"),
+    created: priorRaw == null,
+    replaced: priorRaw != null,
+    provenance,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Reading
 // ---------------------------------------------------------------------------

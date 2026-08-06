@@ -327,6 +327,10 @@
       "description": "Write a markdown doc into a board's kb/ folder (a per-project knowledge base beyond the scratchpad): title + markdown body, stored as kb/<slugified-title>.md. Calling again with the SAME title updates that doc in place; a different title that slugifies to the same filename gets a numeric suffix instead of clobbering the original. Docs are keyword-matched into work packets automatically via get_work_packet."
     },
     {
+      "name": "record_learning",
+      "description": "Record a durable, re-usable truth discovered while working — an API gotcha, an invariant, a constraint, a design decision confirmed in code (e.g. 'OCC fillets need edge ids re-resolved after every boolean'). One TOPIC = one canonical note (kb/learning-<slug>.md): calling again with the same topic REPLACES the body — latest confirmed truth wins, no appended contradictions; git keeps the history and the frontmatter accumulates ticket provenance. Use this for knowledge the NEXT ticket needs, not work narration (that's log_work) and not in-flight research (that's append_research). Learnings are indexed like any kb doc: they surface in search_kb, rag_search, and are auto-injected into matching work packets."
+    },
+    {
       "name": "list_kb_docs",
       "description": "List a board's kb/ docs: slug, title, updatedAt, size, and a short excerpt of each (not the full body — use get_kb_doc for that)."
     },

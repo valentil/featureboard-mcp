@@ -1,6 +1,6 @@
 // Auto-extracted from server/index.js (FBMCPF-224). Registration blocks moved verbatim.
 export function registerAnalyticsTools(server, ctx) {
-  const { Board, DATA_DIR, addKbDoc, agentMonitorV2, appendEvent, appendHeartbeat, applyDriftRemediation, blendStatus, driftReport, estimateTicketMinutes, existsSync, getBoard, getGitConfig, getGlobalConfig, getHistoryMap, getKbDoc, getLiveActivity, getLatestUpdate, getPricing, getTelemetryStatus, getVoiceProfile, lastDispatchForTicket, lintVoice, listKbDocs, listSprints, maybeLint, meta, nodePath, postProjectUpdate, predictDueDates, reconcileChurn, recordDriftScore, rollupCost, prepareResearch, appendResearch, addSource, addSourceFromUrl, addSourceFromFile, listSources, getSource, ragSearch, ragSearchHybrid, searchKb, setSite, startDriftRun, suggestHistoricalFiles, tryTool, writeTool, z } = ctx;
+  const { Board, DATA_DIR, addKbDoc, agentMonitorV2, appendEvent, appendHeartbeat, applyDriftRemediation, blendStatus, driftReport, estimateTicketMinutes, existsSync, getBoard, getGitConfig, getGlobalConfig, getHistoryMap, getKbDoc, getLiveActivity, getLatestUpdate, getPricing, getTelemetryStatus, getVoiceProfile, recordLearning, warmEmbeddings, lastDispatchForTicket, lintVoice, listKbDocs, listSprints, maybeLint, meta, nodePath, postProjectUpdate, predictDueDates, reconcileChurn, recordDriftScore, rollupCost, prepareResearch, appendResearch, addSource, addSourceFromUrl, addSourceFromFile, listSources, getSource, ragSearch, ragSearchHybrid, searchKb, setSite, startDriftRun, suggestHistoricalFiles, tryTool, writeTool, z } = ctx;
 
 // analytics & metadata (v0.3) ----------------------------------------------
 
@@ -316,7 +316,36 @@ server.registerTool(
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  writeTool(({ project, title, content }) => addKbDoc(getBoard(), project, title, content))
+  writeTool(({ project, title, content }) => {
+    const board = getBoard();
+    const res = addKbDoc(board, project, title, content);
+    // FBMCPF-383: warm the vector cache for the new content (fire-and-forget;
+    // silent no-op when the optional semantic runtime is absent).
+    void warmEmbeddings(board, project, [{ source: `kb/${res.slug}.md`, content }]).catch(() => {});
+    return res;
+  })
+);
+
+server.registerTool(
+  "record_learning",
+  {
+    title: "Record a canonical learning",
+    description:
+      "Record a durable, re-usable truth discovered while working — an API gotcha, an invariant, a constraint, a design decision confirmed in code (e.g. 'OCC fillets need edge ids re-resolved after every boolean'). One TOPIC = one canonical note (kb/learning-<slug>.md): calling again with the same topic REPLACES the body — latest confirmed truth wins, no appended contradictions; git keeps the history and the frontmatter accumulates ticket provenance. Use this for knowledge the NEXT ticket needs, not work narration (that's log_work) and not in-flight research (that's append_research). Learnings are indexed like any kb doc: they surface in search_kb, rag_search, and are auto-injected into matching work packets.",
+    inputSchema: {
+      project: z.string(),
+      topic: z.string().describe("Stable topic name — the canonical key. Re-use the SAME topic to update a truth (e.g. 'cad_fillet edge-id stability')."),
+      content: z.string().describe("The current, complete truth on this topic in markdown. Replaces any previous body wholesale — write it to stand alone."),
+      ticket: z.string().optional().describe("Ticket that produced/confirmed this learning; recorded as provenance."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  writeTool(({ project, topic, content, ticket }) => {
+    const board = getBoard();
+    const res = recordLearning(board, project, topic, content, { ticket });
+    void warmEmbeddings(board, project, [{ source: `kb/${res.slug}.md`, content }]).catch(() => {}); // FBMCPF-383
+    return res;
+  })
 );
 
 server.registerTool(
