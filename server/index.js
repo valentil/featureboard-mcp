@@ -16,6 +16,7 @@ import { z } from "zod";
 import { Board, parseImport, suggestTestStub, generateTestFromPrompt, bugImpactScan, computeRegressions, isBlocked } from "./storage.js";
 import * as license from "./license.js";
 import * as meta from "./metadata.js";
+import * as telemetry from "./telemetry.js";
 import { predictDueDates, estimateTicketMinutes } from "./predictive.js";
 import { createSprint, listSprints, assignSprint, sprintOfTask, planRollover, applyRollover, autoAssignSprintFields } from "./sprints.js";
 import { buildReportPacket, closeSprint, getSprintReport, AUDIENCES } from "./reports.js";
@@ -327,6 +328,32 @@ if (CORE_ONLY) {
   };
 }
 
+// FBMCPF-374/375/376: anonymous, opt-out usage telemetry. Wrap registerTool
+// ONCE (after the core-mode gate, so gated-out tools never register at all)
+// so every tool call — regardless of which register/*.js module owns it —
+// bumps today's per-tool counter and opportunistically triggers the daily
+// batched send. Counts tool NAMES only, never arguments or results; both
+// calls are no-ops when the user has opted out (FEATUREBOARD_TELEMETRY=0 or
+// `telemetry:false` via set_global_config), and neither can throw into, block,
+// or alter a tool response. See server/telemetry.js + docs/compliance/PRIVACY.md.
+{
+  const _registerToolBase = server.registerTool.bind(server);
+  server.registerTool = (name, ...rest) => {
+    const last = rest.length - 1;
+    if (last >= 0 && typeof rest[last] === "function") {
+      const handler = rest[last];
+      rest[last] = async (...args) => {
+        try {
+          telemetry.recordToolCall(DATA_DIR, name);
+          void telemetry.maybeSendTelemetry(DATA_DIR, { version: SERVER_VERSION });
+        } catch { /* telemetry must never break a tool call */ }
+        return handler(...args);
+      };
+    }
+    return _registerToolBase(name, ...rest);
+  };
+}
+
 // helpers ------------------------------------------------------------------
 
 const ok = (obj) => ({
@@ -416,7 +443,7 @@ const StatusEnum = z.enum(["Todo", "In Progress", "Review", "Done"]);
 
 // Shared bindings handed to every register/*.js module (FBMCPF-224).
 const ctx = {
-  AUDIENCES, BOARD_HTML_PATH, RAG_EXPLORER_HTML_PATH, Board, DATA_DIR, McpServer, SERVER_DIR, StatusEnum, StdioServerTransport, UPDATE_HEALTH, addAgreement, addComment, addCompany, addContact, addDecision, addInboxMessage, addInteraction, addKbDoc, addLead, addLeadArea, addPage, addRawPage, addReviewComment, agentMonitorV2, annotateMedia, appendEvent, appendEvidence, appendHeartbeat, applyDriftRemediation, applyRollover, applySiteTemplate, applyStandard, applyTriage, assignSprint, autoAssignSprintFields, autoConfigureAnalytics, blendStatus, blendPlan, book, bugImpactScan, buildCustomerPortal, buildReportPacket, cancelBooking, captureAsk, checkAcceptance, checkUpdates, cleanupWorktree, closeSprint, codeFileMap, commitFeature, compactView, companiesForTicket, companyPriorityTickets, completedAtForTask, computeRegressions, computeWaves, convertLead, coverageByProduct, createCampaign, createFeedbackTickets, createSprint, createWorktree, dailyPlan, decisionsForTicket, dismissCleanupFinding, draftEmail, draftShare, driftReport, editMediaText, editSection, enrichLead, estimateTicketMinutes, estimateWork, evalReport, evaluateChecksGate, evaluateCommitGate, evaluateDoneGates, evaluateRules, existsSync, exportAudit, exportBoard, exportMetricsSeries, exportWorkLog, extractBoardToolNames, fail, fileURLToPath, findUnlabeledTickets, formatEvidenceSection, fullView, generateContract, generateMultiModelTests, generateTestFromPrompt, getBoard, getCampaign, getCompany, getEmail, getGitConfig, getGlobalConfig, getHistoryMap, getKbDoc, getLatestUpdate, getLiveActivity, getMedia, getPackagingConfig, getPricing, getRequirements, getSite, getSiteTraffic, getSprintReport, getTestPage, getTicketDiff, getTicketHistory, getTimelineData, getVoiceProfile, graduateProject, groupBySuite, isBlocked, lastDispatchForTicket, leadsMap, license, linkTicket, lintVoice, listAssets, listBookings, listCampaigns, listCodeTree, listComments, listCompanies, listDecisions, listInbox, listKbDocs, listLeadAreas, listLeads, listMail, listMedia, listPages, listReviewComments, listShares, listSiteTemplates, listSprints, listTemplates, listTestPages, listUploads, listVariants, listVariations, listWorktrees, markSent, maybeLint, mergeBackGuidance, meta, mirrorGraduatedPad, nodePath, notifySlack, notifyTicketEvent, ok, openPullRequest, os, resolveChecksConfig, startChecks, getCheckResults, uncollectedCheckRuns, buildWave, parseFeedback, parseImport, parsePmImport, planBudget, planRollover, platformLimit, postProjectUpdate, predictDueDates, pruneBoard, readCodeFile, readFileSync, readdirSync, reconcileChurn, recordDriftScore, recordOpen, registerEmail, removeAgreement, removeAnnotation, removeComment, removeContact, removePage, removeShare, removeTestPage, renderSite, reportCompanyBug, resolveCompanyBug, resolveGitMode, resolveReviewComment, resolveStandard, standardPacketBlock, revertMedia, reviewInboxMessage, rollupCost, routingScorecard, runVariantMatrix, saveAsset, saveGeneratedTests, saveMedia, savePackagingConfig, saveTestPage, saveUpload, scaffoldSite, scanBoardCleanup, scanTestFiles, prepareResearch, appendResearch, addSource, addSourceFromUrl, addSourceFromFile, listSources, getSource, ragSearch, ragSearchHybrid, searchKb, searchMedia, setAnalyticsConfig, setCompanyProducts, setGitConfig, setGlobalConfig, setLeadStatus, setLoginGate, setPageSeo, setRequirements, setSite, setSiteAnalytics, siteRoot, sprintOfTask, startDriftRun, steerProject, getSteeringStatus, submitIntake, suggestFileSplit, suggestHistoricalFiles, suggestModel, suggestPackaging, suggestTestStub, tagMedia, ticketsWithUnresolvedReviews, trim, tryBrand, tryImageTool, tryTool, unlinkTicket, unmanagedSite, updateAgreement, updateContact, updateLeadLocation, validatePackaging, withOrchestrationLabels, writeHandoff, writeTool, z
+  AUDIENCES, BOARD_HTML_PATH, RAG_EXPLORER_HTML_PATH, Board, DATA_DIR, McpServer, SERVER_DIR, StatusEnum, StdioServerTransport, UPDATE_HEALTH, addAgreement, addComment, addCompany, addContact, addDecision, addInboxMessage, addInteraction, addKbDoc, addLead, addLeadArea, addPage, addRawPage, addReviewComment, agentMonitorV2, annotateMedia, appendEvent, appendEvidence, appendHeartbeat, applyDriftRemediation, applyRollover, applySiteTemplate, applyStandard, applyTriage, assignSprint, autoAssignSprintFields, autoConfigureAnalytics, blendStatus, blendPlan, book, bugImpactScan, buildCustomerPortal, buildReportPacket, cancelBooking, captureAsk, checkAcceptance, checkUpdates, cleanupWorktree, closeSprint, codeFileMap, commitFeature, compactView, companiesForTicket, companyPriorityTickets, completedAtForTask, computeRegressions, computeWaves, convertLead, coverageByProduct, createCampaign, createFeedbackTickets, createSprint, createWorktree, dailyPlan, decisionsForTicket, dismissCleanupFinding, draftEmail, draftShare, driftReport, editMediaText, editSection, enrichLead, estimateTicketMinutes, estimateWork, evalReport, evaluateChecksGate, evaluateCommitGate, evaluateDoneGates, evaluateRules, existsSync, exportAudit, exportBoard, exportMetricsSeries, exportWorkLog, extractBoardToolNames, fail, fileURLToPath, findUnlabeledTickets, formatEvidenceSection, fullView, generateContract, generateMultiModelTests, generateTestFromPrompt, getBoard, getCampaign, getCompany, getEmail, getGitConfig, getGlobalConfig, getHistoryMap, getKbDoc, getLatestUpdate, getLiveActivity, getMedia, getPackagingConfig, getPricing, getRequirements, getSite, getSiteTraffic, getSprintReport, getTelemetryStatus: telemetry.getTelemetryStatus, getTestPage, getTicketDiff, getTicketHistory, getTimelineData, getVoiceProfile, graduateProject, groupBySuite, isBlocked, lastDispatchForTicket, leadsMap, license, linkTicket, lintVoice, listAssets, listBookings, listCampaigns, listCodeTree, listComments, listCompanies, listDecisions, listInbox, listKbDocs, listLeadAreas, listLeads, listMail, listMedia, listPages, listReviewComments, listShares, listSiteTemplates, listSprints, listTemplates, listTestPages, listUploads, listVariants, listVariations, listWorktrees, markSent, maybeLint, mergeBackGuidance, meta, mirrorGraduatedPad, nodePath, notifySlack, notifyTicketEvent, ok, openPullRequest, os, resolveChecksConfig, startChecks, getCheckResults, uncollectedCheckRuns, buildWave, parseFeedback, parseImport, parsePmImport, planBudget, planRollover, platformLimit, postProjectUpdate, predictDueDates, pruneBoard, readCodeFile, readFileSync, readdirSync, reconcileChurn, recordDriftScore, recordOpen, registerEmail, removeAgreement, removeAnnotation, removeComment, removeContact, removePage, removeShare, removeTestPage, renderSite, reportCompanyBug, resolveCompanyBug, resolveGitMode, resolveReviewComment, resolveStandard, standardPacketBlock, revertMedia, reviewInboxMessage, rollupCost, routingScorecard, runVariantMatrix, saveAsset, saveGeneratedTests, saveMedia, savePackagingConfig, saveTestPage, saveUpload, scaffoldSite, scanBoardCleanup, scanTestFiles, prepareResearch, appendResearch, addSource, addSourceFromUrl, addSourceFromFile, listSources, getSource, ragSearch, ragSearchHybrid, searchKb, searchMedia, setAnalyticsConfig, setCompanyProducts, setGitConfig, setGlobalConfig, setLeadStatus, setLoginGate, setPageSeo, setRequirements, setSite, setSiteAnalytics, siteRoot, sprintOfTask, startDriftRun, steerProject, getSteeringStatus, submitIntake, suggestFileSplit, suggestHistoricalFiles, suggestModel, suggestPackaging, suggestTestStub, tagMedia, ticketsWithUnresolvedReviews, trim, tryBrand, tryImageTool, tryTool, unlinkTicket, unmanagedSite, updateAgreement, updateContact, updateLeadLocation, validatePackaging, withOrchestrationLabels, writeHandoff, writeTool, z
 };
 
 // Register all tool/prompt domains (order preserved from the original file).
@@ -437,6 +464,9 @@ registerPrompts(server, ctx);
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
+  // FBMCPF-376: flush any accumulated usage days on start (fire-and-forget —
+  // a slow/unreachable listener must never delay server startup).
+  void telemetry.maybeSendTelemetry(DATA_DIR, { version: SERVER_VERSION });
   // stdio server: keep process alive; errors go to stderr so they don't corrupt stdio JSON-RPC
 }
 
