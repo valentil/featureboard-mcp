@@ -772,10 +772,15 @@ export function getWorkPacket(board, project, ticket, opts = {}) {
   recentWork.forEach((e) => scan(e.text));
   const filesToRead = [cfg.codeLocation, ...mentioned].filter(Boolean);
 
+  // FBMCPF-382: the learnings item rides on BOTH generic lists (and survives the
+  // acceptance-criteria override below) so every dispatched agent is told to
+  // surface durable knowledge for record_learning at close-out.
+  const LEARNINGS_DOD =
+    "Report durable learnings (API gotchas, invariants, design decisions confirmed in code) to the orchestrator so they land in record_learning — knowledge the next ticket needs, not work narration";
   const definitionOfDone =
     task.type === "bug"
-      ? ["Reproduce the issue", "Fix the root cause (edit at the code location, not projectpads)", "Verify the fix", "Add or adjust a test that would have caught it", "Record the fix in the completion summary"]
-      : ["Implement the described behaviour", "Verify it works end to end", "Add or adjust a test", "Update docs if user-facing", "Summarize what was built"];
+      ? ["Reproduce the issue", "Fix the root cause (edit at the code location, not projectpads)", "Verify the fix", "Add or adjust a test that would have caught it", LEARNINGS_DOD, "Record the fix in the completion summary"]
+      : ["Implement the described behaviour", "Verify it works end to end", "Add or adjust a test", "Update docs if user-facing", LEARNINGS_DOD, "Summarize what was built"];
 
   // FBMCPF-138: if a requirements packet exists for this ticket, surface it and
   // make the definition of done ticket-specific — each acceptance criterion
@@ -790,7 +795,8 @@ export function getWorkPacket(board, project, ticket, opts = {}) {
   if (requirements && requirements.acceptanceCriteria.length) {
     effectiveDoD = requirements.acceptanceCriteria
       .map((c) => `AC: ${c.text}`)
-      .concat(definitionOfDone[definitionOfDone.length - 1]);
+      // Keep the learnings item + the generic wrap-up alongside the ACs (FBMCPF-382).
+      .concat(definitionOfDone.slice(-2));
   }
 
   // Project standard (rigor profile): resolved once (project config -> global

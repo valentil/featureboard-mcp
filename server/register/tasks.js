@@ -1,6 +1,6 @@
 // Auto-extracted from server/index.js (FBMCPF-224). Registration blocks moved verbatim.
 export function registerTaskTools(server, ctx) {
-  const { scanTestFiles, StatusEnum, codeFileMap, dismissCleanupFinding, evaluateChecksGate, evaluateCommitGate, evaluateDoneGates, evaluateRules, existsSync, getBoard, listCodeTree, meta, mirrorGraduatedPad, nodePath, notifySlack, notifyTicketEvent, pruneBoard, readCodeFile, readFileSync, readdirSync, scanBoardCleanup, suggestFileSplit, tryTool, writeHandoff, writeTool, z } = ctx;
+  const { scanTestFiles, StatusEnum, codeFileMap, dismissCleanupFinding, evaluateChecksGate, evaluateCommitGate, evaluateDoneGates, evaluateRules, existsSync, getBoard, listCodeTree, meta, mirrorGraduatedPad, nodePath, notifySlack, notifyTicketEvent, pruneBoard, readCodeFile, readFileSync, readdirSync, recordLearning, scanBoardCleanup, suggestFileSplit, tryTool, writeHandoff, writeTool, z } = ctx;
 
 // duplicate-id repair (FBMCPB-11) --------------------------------------------
 server.registerTool(
@@ -44,11 +44,18 @@ server.registerTool(
       additions: z.number().int().optional().describe("Lines added (Done only)."),
       deletions: z.number().int().optional().describe("Lines deleted (Done only)."),
       handoff: z.string().optional().describe("Handoff note for successor tickets, written to handoffs/<TICKET>.md (Done only)."),
+      learnings: z
+        .array(z.object({
+          topic: z.string().describe("Stable topic key — same topic on a later ticket UPDATES the same canonical note."),
+          content: z.string().describe("The durable truth in markdown; replaces any previous body for this topic."),
+        }))
+        .optional()
+        .describe("FBMCPF-382 (Done only): durable, re-usable truths this ticket produced/confirmed (API gotchas, invariants, confirmed design decisions) — routed through record_learning's upsert-by-topic path into kb/. Not work narration."),
       verbose: z.boolean().optional().describe("Return the full ticket view (description, labels, attachments, dates, ...) instead of the default compact ack."),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  writeTool(({ project, ticket, status, approve, completionSummary, model, tokens, inputTokens, outputTokens, additions, deletions, handoff, verbose }) => {
+  writeTool(({ project, ticket, status, approve, completionSummary, model, tokens, inputTokens, outputTokens, additions, deletions, handoff, learnings, verbose }) => {
     const board = getBoard();
     // FBMCPF-189: Done-without-commit gate/warning. evaluateCommitGate is a
     // no-op (missingCommit:false) whenever git is disabled for the project,
@@ -93,6 +100,28 @@ server.registerTool(
     }
     if (checksGate.note) result.checksNote = checksGate.note;
     if (status === "Done" && handoff) writeHandoff(board, project, ticket, handoff); // FBMCPF-144
+    // FBMCPF-382: learnings capture at close-out. Provided learnings are routed
+    // through record_learning's upsert-by-topic path (canonical note per topic,
+    // replace semantics). When a SUBSTANTIVE ticket (effort medium/high) closes
+    // without any, nudge — the moment the knowledge exists is the moment to
+    // bank it. Never blocks or breaks Done.
+    if (status === "Done") {
+      try {
+        if (Array.isArray(learnings) && learnings.length) {
+          result.learnings = learnings.map((l) => {
+            const r = recordLearning(board, project, l.topic, l.content, { ticket });
+            return { topic: r.title, slug: r.slug, replaced: r.replaced };
+          });
+        } else {
+          const t = board.getTask(project, ticket);
+          const substantive = (t.labels || []).some((l) => /^effort:\s*(medium|high)$/i.test(String(l).trim()));
+          if (substantive) {
+            result.learningHint =
+              "substantive ticket closed without learnings — if this work produced durable knowledge (API gotchas, invariants, confirmed design decisions), bank it with record_learning (or pass learnings on set_status) so the next ticket starts from truth.";
+          }
+        }
+      } catch { /* learnings capture is best-effort — never block Done */ }
+    }
     // FBMCPF-155: non-blocking Slack notification on Done/Review (never throws).
     if (status === "Done" || status === "Review") {
       try {
