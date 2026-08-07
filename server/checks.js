@@ -83,6 +83,9 @@ export function resolveChecksConfig(board, project) {
       autoOnCommit: c.autoOnCommit !== false,
       commands: Array.isArray(c.commands) ? c.commands : [],
       syntaxCheckChangedFiles: c.syntaxCheckChangedFiles !== false,
+      // FBMCPF-387: impact-testing config rides inside checks. Normalized to
+      // null when absent so callers can truthy-test it.
+      testImpact: c.testImpact && typeof c.testImpact === "object" ? c.testImpact : null,
       source: "config",
     };
   }
@@ -206,6 +209,16 @@ export function stageRunner(dir) {
   }
 }
 
+/** FBMCPF-387: the project's impact-graph database file. */
+export function impactGraphPath(board, project) {
+  return path.join(checksDir(board, project), "impact-graph.json");
+}
+
+/** FBMCPF-387: read the impact-graph DB ({version:1, entries, files}) or null. */
+export function readImpactGraph(board, project) {
+  return readJsonSafe(impactGraphPath(board, project));
+}
+
 /**
  * Fire-and-forget: spawn the detached background check runner for a project.
  * Allocates a runId, writes the runner's args file, spawns run-checks.mjs
@@ -240,6 +253,12 @@ export function startChecks(board, project, { ticket = null, revision = null, ch
     checks: {
       commands: Array.isArray(resolved.commands) ? resolved.commands : [],
       syntaxCheckChangedFiles: resolved.syntaxCheckChangedFiles !== false,
+      // FBMCPF-387: when impact testing is on, the runner builds/refreshes the
+      // impact-graph database next to the run artifacts (the board owns the DB;
+      // graphPath can be overridden in config).
+      testImpact: resolved.testImpact
+        ? { ...resolved.testImpact, graphPath: resolved.testImpact.graphPath || impactGraphPath(board, project) }
+        : null,
     },
   };
   atomicWrite(argsFile, JSON.stringify(args, null, 2) + "\n");

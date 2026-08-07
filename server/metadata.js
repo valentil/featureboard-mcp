@@ -13,6 +13,7 @@
  */
 
 import fs from "node:fs";
+import { impactedTests as impactedTestsFor } from "../scripts/run-checks.mjs"; // FBMCPF-387
 import { resolveStandard, standardPacketBlock, definitionOfDoneExtras } from "./standards.js";
 import path from "node:path";
 import { getRequirements } from "./requirements.js";
@@ -861,6 +862,31 @@ export function getWorkPacket(board, project, ticket, opts = {}) {
     // branch and merge-back guidance so a parallel sub-agent edits there, not the repo.
     const wt = worktreeForTicket(board, project, task.ticketNumber);
     if (wt) packet.worktree = wt;
+    // FBMCPF-387: when impact testing is configured, resolve the ticket's
+    // mentioned files against the impact-graph database so the agent knows the
+    // exact local test gate up front (full suite stays in CI).
+    if (cfg.checks && cfg.checks.testImpact && mentioned.size) {
+      try {
+        const graphFile = (cfg.checks.testImpact.graphPath && String(cfg.checks.testImpact.graphPath)) ||
+          path.join(board.projectDir(project), ".featureboard", "checks", "impact-graph.json");
+        const graph = JSON.parse(fs.readFileSync(graphFile, "utf8"));
+        const codeLoc = cfg.codeLocation ? String(cfg.codeLocation).replace(/\\/g, "/").replace(/\/+$/, "") + "/" : null;
+        const rels = [...mentioned].map((f) => {
+          let r = String(f).replace(/\\/g, "/");
+          if (codeLoc && r.startsWith(codeLoc)) r = r.slice(codeLoc.length);
+          return r;
+        });
+        const { impacted, unmapped } = impactedTestsFor(graph, rels);
+        if (impacted.length || unmapped.length) {
+          packet.impactedTests = {
+            files: rels,
+            impacted,
+            unmapped,
+            note: "Tests whose dependency closure reaches this ticket's mentioned files (impact-graph DB, FBMCPF-387). Run these locally; the full suite runs in CI.",
+          };
+        }
+      } catch { /* no graph yet — first check run builds it */ }
+    }
     // FBMCPF-263: attach the ticket's research brief when one has been saved to
     // the KB under the research-<ticket> convention (add_kb_doc title
     // "research/<ticket>"). Capped at ~6KB so a long brief never bloats the packet.
